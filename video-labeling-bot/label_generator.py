@@ -142,7 +142,7 @@ def generate_label_from_frames(base64_frames: list[str]) -> str:
 
     if not _api_key():
         print("[API Error]: OPENAI_API_KEY is missing. Returning 'No Action'.")
-        return "No Action
+        return "No Action"
 
     image_contents = [
         {
