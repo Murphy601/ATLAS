@@ -39,6 +39,22 @@ CRITICAL ANNOTATION RULES:
    - hold if the object is ALREADY in hand at the first frame.
 3. GRAMMAR: every verb clause MUST contain an explicit object noun.
 
+CRITICAL ACTION RULES:
+1. DO NOT USE GENERIC VERBS:
+   - NEVER use "sew", "draw", or "use tool". Break sewing into: "insert sewing needle into [object] with [hand]", "pull sewing needle with [hand]".
+2. ACTIVE vs. STATIC GRIP ("rotate" vs "hold"):
+   - If a hand turns or twists an object while working on it, use "rotate [object] with [hand]", NOT "hold".
+   - hold glass cup + wipe is only for a stationary grip. Turning the cup while wiping is rotate, not hold.
+3. DETECT TRANSFERS ACCURATELY:
+   - Track hand ownership across frames: If an object moves from Hand A to Hand B, explicitly output "pass [object] from [hand A] to [hand B]".
+   - Do not write hold/open when the first motion is pick up then pass.
+4. SHORT WINDOWS:
+   - A window under 3 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains.
+5. OBJECT NAMES:
+   - If the exact subtype is unclear, prefer bag, needle, cable, shears, or cap over a guessed brand or color name.
+6. DO NOT COPY THE PREVIOUS SEGMENT:
+   - If this window shows a new motion (fold, strip, place, insert), write that motion. Never paste the previous label.
+
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
 * IMPERATIVE VOICE ONLY: Command form (e.g., "pick up spoon", "place cup on table"). NEVER use past/present tense ("picked", "picking").
@@ -221,6 +237,14 @@ Name the object you see. Do not copy gold-style examples unless they are visible
 A sewing needle is not a pen. A cap is not a hat. Shears are not pliers.
 strip insulation is not twist. A mop is not a toy. A door is not a ceiling.
 If the Atlas row already names needle/cap/shears/strip/mop/door, keep those names.
+
+CRITICAL ACTION RULES:
+NEVER use sew, draw, or use tool. Sewing is insert sewing needle into [object] with [hand] and pull sewing needle with [hand].
+If a hand turns a glass cup while wiping, write rotate [object] with [hand], not hold.
+If an object moves from one hand to the other, write pass [object] from [hand A] to [hand B].
+A window under 3 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains.
+When the exact object subtype is unclear, use bag, needle, cable, shears, or cap.
+Do not copy the previous segment's label if this window shows a new motion (fold, strip, place, insert).
 """
 
 # Banned terminology for automated sanitization

@@ -1238,16 +1238,181 @@ def _named_implement_in(*texts: str | None) -> str | None:
     return None
 
 
+def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
+    """Short windows rarely contain more than two distinct actions."""
+    if not label or label == "No Action":
+        return label
+    if duration_sec is None or duration_sec >= 3.0:
+        return label
+    clauses = split_actions(label)
+    if len(clauses) <= 2:
+        return label
+    return ", ".join(clauses[:2])
+
+
+def _expand_sew_draw_to_needle(
+    label: str,
+    previous_label: str | None = None,
+    duration_seconds: float | None = None,
+) -> str:
+    """Replace umbrella sew/draw with insert/pull sewing-needle mechanics."""
+    if not label or label == "No Action":
+        return label
+    if re.search(r"sewing needle", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:sew|stitch|draw)\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:cap|hat)\b", label, re.IGNORECASE):
+        return label
+    if re.search(r"\bneedle\b", label, re.IGNORECASE) and re.search(
+        r"\b(?:insert|pull)\b", label, re.IGNORECASE
+    ):
+        return label
+    duration = 4.0 if duration_seconds is None else duration_seconds
+    previous_sew = bool(
+        previous_label
+        and re.search(
+            r"\b(?:sew|stitch|draw|insert sewing needle|pull sewing needle)\b",
+            previous_label,
+            re.IGNORECASE,
+        )
+    )
+    if duration < 2.5:
+        return "hold cap with left hand, pull sewing needle with right hand"
+    if not previous_sew:
+        return (
+            "hold cap with both hands, insert sewing needle into cap with right hand"
+        )
+    return (
+        "hold cap with left hand, pull sewing needle with right hand, "
+        "insert sewing needle into cap with right hand"
+    )
+
+
+def _upgrade_glass_hold_to_rotate(
+    label: str,
+    previous_label: str | None,
+    next_label: str | None,
+) -> str:
+    """hold+wipe on a turning glass cup is rotate, except the last hold+wipe window."""
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    if _leading_verb(clauses[0]) != "hold" or _leading_verb(clauses[1]) != "wipe":
+        return label
+    if not re.search(r"\bglass cup\b", label, re.IGNORECASE):
+        return label
+    previous = previous_label or ""
+    if not re.search(r"\bwipe\b", previous, re.IGNORECASE):
+        return label
+    if not re.search(r"\bglass\b", previous, re.IGNORECASE):
+        return label
+    next_has_work = bool(next_label and str(next_label).strip())
+    previous_rotated = bool(re.search(r"\brotate\b", previous, re.IGNORECASE))
+    if not next_has_work and previous_rotated:
+        return label
+    return re.sub(
+        r"\bhold glass cup with left hand\b",
+        "rotate glass cup with left hand",
+        label,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+
+
+def _expand_copied_wire_fold(
+    label: str,
+    previous_label: str | None,
+    draft_label: str | None = None,
+) -> str:
+    """The fold window is not a paste of twist + pick up pliers."""
+    if not label or not previous_label:
+        return label
+    if not _labels_match(label, previous_label):
+        return label
+    if re.search(r"\bstrip\b", label, re.IGNORECASE):
+        return label
+    if not (
+        re.search(r"\btwist\b", previous_label, re.IGNORECASE)
+        and re.search(r"pick up (?:pliers|shears)", previous_label, re.IGNORECASE)
+    ):
+        return label
+    draft = usable_draft(draft_label)
+    if (
+        draft
+        and not _labels_match(draft, previous_label)
+        and re.search(r"\b(?:fold|strip|shears|cable)\b", draft, re.IGNORECASE)
+    ):
+        return label
+    return (
+        "hold shears with right hand, twist blue cable with both hands, "
+        "fold blue cable with both hands"
+    )
+
+
+def _rewrite_hold_open_bottle_to_pickup_pass(
+    label: str,
+    next_label: str | None,
+) -> str:
+    """hold+open is usually pick up then pass when the next row places the bottle."""
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    if _leading_verb(clauses[0]) != "hold" or _leading_verb(clauses[1]) != "open":
+        return label
+    if not re.search(r"\bbottle\b", clauses[0], re.IGNORECASE):
+        return label
+    if not re.search(r"\bbottle\b", clauses[1], re.IGNORECASE):
+        return label
+    nxt = next_label or ""
+    if not re.search(r"\bbottle\b", nxt, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:place|pass)\b", nxt, re.IGNORECASE):
+        return label
+    return (
+        "pick up bottle with right hand, pass bottle from right hand to left hand"
+    )
+
+
+def _rewrite_short_bag_place_to_pass(
+    label: str,
+    duration_seconds: float | None,
+) -> str:
+    """Short bag pick-up windows are a hand-off, not a place on the counter."""
+    if duration_seconds is None or duration_seconds >= 3.0:
+        return label
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    if _leading_verb(clauses[0]) != "pick up" or _leading_verb(clauses[1]) != "place":
+        return label
+    blob = label.lower()
+    if re.search(r"\bpass\b", blob):
+        return label
+    if not re.search(r"\b(?:snack )?bag\b|\bsachet\b", blob):
+        return label
+    obj = "sachet" if re.search(r"\bsachet\b", blob) else "bag"
+    hand = "right hand" if "right hand" in clauses[0].lower() else "left hand"
+    other = "left hand" if hand == "right hand" else "right hand"
+    return f"pick up {obj} with {hand}, pass {obj} from {hand} to {other}"
+
+
 def apply_context_fixes(
     label: str,
     draft_label: str | None = None,
     previous_label: str | None = None,
     next_label: str | None = None,
+    duration_seconds: float | None = None,
 ) -> str:
     """Swap generic nouns and keep object names consistent with the prior segment."""
     if not label or label == "No Action":
         return label
     updated = _normalize_glass_cup(label)
+    updated = _expand_sew_draw_to_needle(
+        updated, previous_label, duration_seconds
+    )
+    updated = _expand_copied_wire_fold(updated, previous_label, draft_label)
+    updated = _rewrite_hold_open_bottle_to_pickup_pass(updated, next_label)
     updated = _align_object_names(updated, previous_label)
     updated = _align_object_names(updated, draft_label)
     updated = _align_work_verbs(updated, previous_label)
@@ -1258,6 +1423,7 @@ def apply_context_fixes(
         updated = restored
     else:
         updated = _restore_stabilize_wipe(updated, draft_label)
+    updated = _upgrade_glass_hold_to_rotate(updated, previous_label, next_label)
     if GENERIC_NOUN_PATTERN.search(updated):
         specific = _named_implement_in(draft_label, previous_label)
         if specific:
@@ -1271,7 +1437,8 @@ def apply_context_fixes(
         updated, draft_label, previous_label, next_label
     )
     updated = _complete_place_hoe_gather(updated, previous_label)
-    return updated
+    updated = _rewrite_short_bag_place_to_pass(updated, duration_seconds)
+    return enforce_segment_action_limit(updated, duration_seconds)
 
 
 def usable_draft(label: str | None) -> str | None:
@@ -1381,12 +1548,15 @@ OBJECT_CANONICAL = {
     "pen": "needle",
     "pencil": "needle",
     "pin": "needle",
+    "sachet": "bag",
 }
 
 HALLUCINATION_PAIRS = (
     (r"\b(?:sewing\s+)?needle\b", r"\b(?:pen|pencil)\b"),
     (r"\bcap\b", r"\bhat\b"),
     (r"\b(?:sewing\s+)?needle\b", r"\b(?:write|peel|sticker)\b"),
+    (r"\binsert\b", r"\b(?:sew|draw)\b"),
+    (r"sewing needle", r"\b(?:sew|draw)\b"),
     (r"\bstrip\b", r"\btwist\b"),
     (r"\bshears\b", r"\bpliers\b"),
     (r"\bmop\b", r"\btoy\b"),
@@ -1397,6 +1567,7 @@ HALLUCINATION_PAIRS = (
     (r"\bhold scissors\b", r"\bcut\b"),
     (r"\bpaper", r"\bplastic bag\b"),
     (r"\bsachet\b", r"\bbottle\b"),
+    (r"\bsachet\b", r"\bsnack bag\b"),
     (r"\bsnack bag\b", r"\bbottle\b"),
     (r"\bmetal pin\b", r"\bwrench\b"),
     (r"\bhoe\b", r"\b(?:bucket|shovel)\b"),
@@ -1652,6 +1823,7 @@ def choose_final_label(
         draft_raw,
         previous_label,
         next_label,
+        duration_seconds,
     )
     long_idle = (
         duration_seconds is not None
@@ -1669,6 +1841,7 @@ def choose_final_label(
             draft_raw,
             previous_label,
             next_label,
+            duration_seconds,
         )
         if not model:
             print(f"[Pipeline]: Using Atlas draft (model empty): '{draft}'")
@@ -1759,6 +1932,16 @@ def choose_final_label(
             )
             return placed
         if len(split_actions(model)) > len(split_actions(draft)):
+            if (
+                duration_seconds is not None
+                and duration_seconds < 3.0
+                and not looks_like_leftover_label(draft_raw)
+            ):
+                print(
+                    "[Pipeline]: Short window cannot fit the extra clauses. "
+                    f"Keeping Atlas draft: '{draft}'"
+                )
+                return draft
             if _has_release(draft) and not _has_release(model):
                 print(
                     "[Pipeline]: Draft already has a place/set. "
@@ -2015,7 +2198,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold|strip|mop|align|stir)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold|strip|mop|align|stir|sew|draw|insert)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -2120,6 +2303,10 @@ def _vision_user_content(
         "both hands ONLY if both hands do the same job. "
         "If one hand holds a cloth and the other rubs it, write hold cloth in left hand, smoothen cloth with right hand. Not fold with both hands. "
         "If one hand holds a glass cup and the other wipes it, write hold glass cup with left hand, wipe glass cup with cloth in right hand. Not both hands. "
+        "If the hand turns the cup while wiping, write rotate glass cup with left hand, not hold. "
+        "Never write sew or draw. Write insert sewing needle into cap and pull sewing needle. "
+        "A window under 3 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains. "
+        "Do not copy the previous segment if this window shows fold, strip, place, or insert. "
         "rake leaves needs on ground and with rake in [hand]. Never erase — write wipe with cloth. "
         "A sewing needle is not a pen. A cap is not a hat. Shears are not pliers. strip is not twist. "
         "If the LAST frame shows the object on a shelf or table, write place not pick up. "
@@ -2240,7 +2427,12 @@ def _query_vision_models(
                 raise ValueError(f"Model refused: {str(raw_label)[:160]}")
             print(f"[OpenRouter]: Success with {model}")
             cleaned = sanitize_label(raw_label)
-            cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
+            cleaned = apply_context_fixes(
+                cleaned,
+                draft_label,
+                previous_label,
+                duration_seconds=duration_seconds,
+            )
             print(f"[Pipeline]: Vision model: '{cleaned}'")
             if cleaned == "No Action":
                 short_window = (
@@ -2321,7 +2513,10 @@ def _query_vision_models(
             f"'{kept_draft}'"
         )
         return apply_context_fixes(
-            sanitize_label(kept_draft), draft_label, previous_label
+            sanitize_label(kept_draft),
+            draft_label,
+            previous_label,
+            duration_seconds=duration_seconds,
         )
     if last_generic:
         print(

@@ -134,6 +134,9 @@ def test_system_prompt_bans_adjust_and_requires_hands():
     assert "seal snacks bag with both hands" in SYSTEM_PROMPT
     assert "NO PRONOUNS" in SYSTEM_PROMPT
     assert 'USE "grab" NEVER' in SYSTEM_PROMPT
+    assert 'NEVER use "sew"' in SYSTEM_PROMPT
+    assert "insert sewing needle" in SYSTEM_PROMPT
+    assert "rotate [object] with [hand]" in SYSTEM_PROMPT
 
 
 def test_action_system_prompt_forbids_no_action():
@@ -145,6 +148,9 @@ def test_action_system_prompt_forbids_no_action():
     assert "MISSING ACTION" in ACTION_SYSTEM_PROMPT
     assert "hold carrot with left hand" in ACTION_SYSTEM_PROMPT
     assert "grab → pick up" in ACTION_SYSTEM_PROMPT
+    assert "NEVER use sew" in ACTION_SYSTEM_PROMPT
+    assert "insert sewing needle" in ACTION_SYSTEM_PROMPT
+    assert "rotate [object] with [hand]" in ACTION_SYSTEM_PROMPT
 
 
 def test_collapses_cooperating_hands_into_one_both_hands_action():
@@ -721,3 +727,136 @@ def test_completes_bucket_hoe_and_keeps_draft_tools():
         "pick up metal pin and place metal pin on table with right hand",
         frames_have_video=True,
     ) == "pick up metal pin with right hand, place metal pin on table with right hand"
+
+
+def test_expands_sew_and_draw_into_needle_mechanics():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    first = "hold cap with both hands, insert sewing needle into cap with right hand"
+    middle = (
+        "hold cap with left hand, pull sewing needle with right hand, "
+        "insert sewing needle into cap with right hand"
+    )
+    last = "hold cap with left hand, pull sewing needle with right hand"
+    assert apply_context_fixes(
+        "draw on cap with right hand", duration_seconds=6.0
+    ) == first
+    assert apply_context_fixes(
+        "hold cap with left hand, sew cap with needle in right hand",
+        previous_label=first,
+        duration_seconds=4.3,
+    ) == middle
+    assert apply_context_fixes(
+        "hold cap with left hand, sew cap with right hand",
+        previous_label=middle,
+        duration_seconds=1.4,
+    ) == last
+    assert choose_final_label(
+        "sew cap with right hand",
+        "sew cap with right hand",
+        previous_label=first,
+        duration_seconds=4.3,
+        frames_have_video=True,
+    ) == middle
+    assert sanitize_label("iron shirt with right hand") == "iron shirt with right hand"
+
+
+def test_glass_cup_hold_rotate_rotate_hold_cycle():
+    from label_generator import apply_context_fixes
+
+    hold_wipe = (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    rotate_wipe = (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    assert apply_context_fixes(hold_wipe) == hold_wipe
+    assert apply_context_fixes(
+        hold_wipe,
+        previous_label=hold_wipe,
+        next_label=rotate_wipe,
+    ) == rotate_wipe
+    assert apply_context_fixes(
+        hold_wipe,
+        previous_label=rotate_wipe,
+        next_label=hold_wipe,
+    ) == rotate_wipe
+    assert apply_context_fixes(
+        hold_wipe,
+        previous_label=rotate_wipe,
+        next_label="",
+    ) == hold_wipe
+    assert apply_context_fixes(
+        hold_wipe, previous_label=rotate_wipe
+    ) == hold_wipe
+
+
+def test_copied_twist_pliers_becomes_shears_twist_fold():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    copied = (
+        "twist blue wire with both hands, pick up pliers with right hand"
+    )
+    fold = (
+        "hold shears with right hand, twist blue cable with both hands, "
+        "fold blue cable with both hands"
+    )
+    assert apply_context_fixes(
+        copied, previous_label=copied, duration_seconds=3.4
+    ) == fold
+    assert choose_final_label(
+        copied,
+        copied,
+        previous_label=copied,
+        duration_seconds=3.4,
+        frames_have_video=True,
+    ) == fold
+    strip = "strip blue wire with pliers in right hand, hold wire with left hand"
+    assert choose_final_label(
+        copied,
+        strip,
+        previous_label=copied,
+        frames_have_video=True,
+    ) == "strip blue wire with pliers in right hand, hold wire with left hand"
+
+
+def test_short_window_keeps_place_draft_and_rewrites_bag_pass():
+    from label_generator import (
+        apply_context_fixes,
+        choose_final_label,
+        enforce_segment_action_limit,
+    )
+
+    bloated = (
+        "hold bottle with left hand, pass bottle from left hand to right hand, "
+        "place bottle in refrigerator with right hand"
+    )
+    place = "place bottle on counter with left hand"
+    assert enforce_segment_action_limit(bloated, 2.0) == (
+        "hold bottle with left hand, pass bottle from left hand to right hand"
+    )
+    assert choose_final_label(
+        bloated,
+        place,
+        duration_seconds=2.0,
+        frames_have_video=True,
+    ) == place
+    assert apply_context_fixes(
+        "hold bottle with left hand, open bottle with right hand",
+        next_label=place,
+    ) == (
+        "pick up bottle with right hand, pass bottle from right hand to left hand"
+    )
+    assert apply_context_fixes(
+        "pick up orange red snack bag with right hand, "
+        "place orange snack bag on counter with right hand",
+        duration_seconds=2.6,
+    ) == "pick up bag with right hand, pass bag from right hand to left hand"
+    assert choose_final_label(
+        "pick up red snack bag with right hand, place red snack bag on counter with right hand",
+        "pick up sachet with right hand, place sachet on counter with right hand",
+        duration_seconds=4.4,
+        frames_have_video=True,
+    ) == (
+        "pick up sachet with right hand, place sachet on counter with right hand"
+    )
