@@ -11,7 +11,7 @@ from config import (
     DEFAULT_SEGMENT_DURATION,
 )
 from frame_extractor import extract_frames_from_video, format_timestamp
-from label_generator import generate_label_from_frames
+from label_generator import apply_context_fixes, generate_label_from_frames, sanitize_label
 
 load_dotenv()
 
@@ -91,11 +91,24 @@ def process_live_task(
             and segment.draft_label
             and segment.draft_label.strip().lower() != "no action"
         ):
+            kept = apply_context_fixes(
+                sanitize_label(segment.draft_label),
+                segment.draft_label,
+                previous_label,
+            )
             print(
                 "[Pipeline]: Model said No Action but an AI draft already describes "
-                f"work. Keeping draft: '{segment.draft_label}'"
+                f"work. Keeping draft: '{kept}'"
             )
-            previous_label = segment.draft_label
+            if kept != "No Action":
+                bot.fill_segment_label(
+                    segment.number,
+                    kept,
+                    start_seconds=segment.start_seconds,
+                )
+                previous_label = kept
+            else:
+                previous_label = segment.draft_label
             continue
 
         bot.fill_segment_label(

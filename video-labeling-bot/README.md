@@ -26,15 +26,18 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 ## Models
 
-OpenRouter free vision models, tried in order:
+OpenRouter free vision models, tried in order (old Gemini/Qwen `:free` slugs 404):
 
-1. `qwen/qwen-2-vl-7b-instruct:free`
-2. `google/gemini-2.5-flash:free`
-3. `google/gemini-2.0-flash-exp:free`
-4. `meta-llama/llama-3.2-11b-vision-instruct:free`
-5. `mistralai/pixtral-12b:free`
-6. `qwen/qwen-2.5-vl-72b-instruct:free`
-7. `openrouter/auto`
+1. `nvidia/nemotron-nano-12b-v2-vl:free`
+2. `google/gemma-4-31b-it:free`
+3. `google/gemma-4-26b-a4b-it:free`
+4. `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
+5. `dots-studio/dots-3-note-preview:free`
+6. `openrouter/free`
+
+If a model returns **No Action** while the Atlas row already has a real draft, the bot tries the next model instead of keeping a bad draft.
+
+Optional paid override in `.env`: `VISION_MODEL=google/gemini-2.5-flash`
 
 Set `OPENROUTER_API_KEY` in `.env`. Do not commit that file.
 

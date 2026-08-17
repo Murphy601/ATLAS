@@ -98,3 +98,31 @@ def test_generate_label_reconciles_trailing_hold_with_draft(monkeypatch):
         draft_label="water plant in bucket with hose in both hands",
         duration_seconds=5.0,
     ) == "water plant in bucket with hose in both hands"
+
+
+def test_skips_no_action_when_draft_describes_work(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == VISION_MODELS[0]:
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="No Action"))]
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="dig soil with hoe in right hand")
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label="dig soil with tool in right hand",
+        previous_label="pick up hoe with right hand",
+    ) == "dig soil with hoe in right hand"
+    assert calls[0] == VISION_MODELS[0]
+    assert calls[1] == VISION_MODELS[1]

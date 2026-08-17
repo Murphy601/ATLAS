@@ -10,8 +10,11 @@ from config import (
     DIGIT_PATTERN,
     FILL_SOURCE_TOOLS,
     FORBIDDEN_WORDS,
+    GENERIC_NOUNS,
     HAND_PATTERN,
     LOOKING_VERBS,
+    NAMED_IMPLEMENTS,
+    NARRATIVE_WORDS,
     NUMBER_MAP,
     OPENROUTER_BASE_URL,
     OPENROUTER_HEADERS,
@@ -37,7 +40,7 @@ LEADING_VERB_PATTERN = re.compile(
     r"tuck|grip|press|push|pull|twist|pinch|turn|straighten|tilt|scoop|"
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
-    r"put|grab|hand)\b",
+    r"put|grab|hand|gather)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
@@ -45,8 +48,12 @@ FILL_SOURCE_PATTERN = re.compile(
     rf"\bfill\s+(.+?)\s+with\s+({'|'.join(FILL_SOURCE_TOOLS)})\b",
     re.IGNORECASE,
 )
-PLACE_ON_GROUND_PATTERN = re.compile(
-    r"\bplace\s+(.+?)\s+on\s+(ground|floor)\b",
+NARRATIVE_PATTERN = re.compile(
+    rf"\b(?:{'|'.join(NARRATIVE_WORDS)})\b",
+    re.IGNORECASE,
+)
+GENERIC_NOUN_PATTERN = re.compile(
+    rf"\b(?:{'|'.join(GENERIC_NOUNS)})\b",
     re.IGNORECASE,
 )
 
@@ -109,8 +116,37 @@ def _fill_with_visible_substance(text: str) -> str:
     return FILL_SOURCE_PATTERN.sub(r"fill \1 with water with \2", text)
 
 
-def _place_ground_to_set(text: str) -> str:
-    return PLACE_ON_GROUND_PATTERN.sub(r"set \1 on \2", text)
+def _strip_narrative_words(text: str) -> str:
+    cleaned = NARRATIVE_PATTERN.sub("", text)
+    cleaned = " ".join(cleaned.split())
+    cleaned = re.sub(r"\s+,", ",", cleaned)
+    return cleaned.strip(" ,")
+
+
+def _named_implement_in(*texts: str | None) -> str | None:
+    blob = " ".join(part or "" for part in texts)
+    if not blob:
+        return None
+    for name in NAMED_IMPLEMENTS:
+        if re.search(rf"\b{re.escape(name)}\b", blob, re.IGNORECASE):
+            return name
+    return None
+
+
+def apply_context_fixes(
+    label: str,
+    draft_label: str | None = None,
+    previous_label: str | None = None,
+) -> str:
+    """Swap generic 'tool' for a specific name seen in the draft or prior segment."""
+    if not label or label == "No Action":
+        return label
+    if not GENERIC_NOUN_PATTERN.search(label):
+        return label
+    specific = _named_implement_in(draft_label, previous_label)
+    if not specific:
+        return label
+    return GENERIC_NOUN_PATTERN.sub(specific, label)
 
 
 def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
@@ -296,9 +332,9 @@ def sanitize_label(text: str) -> str:
     cleaned = SEMICOLON_PATTERN.sub(", ", cleaned)
     cleaned = _fix_plural_only_tools(cleaned)
     cleaned = _drop_mixed_no_action(cleaned)
+    cleaned = _strip_narrative_words(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
-    cleaned = _place_ground_to_set(cleaned)
     cleaned = _fill_with_visible_substance(cleaned)
     cleaned = _collapse_redundant_hold(cleaned)
     cleaned = " ".join(cleaned.split())
@@ -313,7 +349,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -352,13 +388,16 @@ def generate_label_from_frames(
     instruction = (
         "These are consecutive ego-camera keyframes from ONE existing Atlas segment, "
         "in time order. First image is the START of the window. Last image is the END. "
-        "Watch what THE WORKER'S HANDS actually do. "
-        "Count DISTINCT goals, not hands. If both hands cooperate on one tool/one goal, "
-        "output ONE clause with both hands. Do not add a second hold clause. "
-        "pick up = object lifts off a surface. hold = stays in the same hand, no lift. "
-        "set = released onto ground/floor. place = released onto a table/board/shelf or into a container. "
-        "If the current AI draft already has the correct action count, keep it and only fix errors. "
-        "Output No Action ONLY if hands are idle and touching nothing. "
+        "Watch THE WORKER'S HANDS. Name the exact object (hoe not tool, bottle not syrup bottle "
+        "unless two bottles). "
+        "If the object starts in one hand and ends in the other, write "
+        "'pass [object] from [hand] to [hand]'. "
+        "If something is put down AND something else is picked up, write both. "
+        "Never use then/next/after/before/first/other. Never write 'tool'. "
+        "Count DISTINCT goals. Cooperating two-handed work is ONE both-hands clause. "
+        "pick up = lifts off a surface. place = released onto table/counter/floor. "
+        "set = released onto ground. hold = stays gripped, no lift. "
+        "Do NOT output No Action if a tool or object is in the hands. "
         "Output only the raw label or No Action."
     )
     if duration_seconds is not None:
@@ -408,6 +447,18 @@ def generate_label_from_frames(
                 raise ValueError("Empty model response")
             print(f"[OpenRouter]: Success with {model}")
             cleaned = sanitize_label(raw_label)
+            cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
+            if (
+                cleaned == "No Action"
+                and draft_label
+                and draft_label.strip().lower() != "no action"
+                and index + 1 < len(VISION_MODELS)
+            ):
+                print(
+                    f"[OpenRouter]: {model} said No Action while a draft describes work. "
+                    "Trying next model..."
+                )
+                continue
             return reconcile_with_draft(cleaned, draft_label)
         except Exception as e:
             last_error = e

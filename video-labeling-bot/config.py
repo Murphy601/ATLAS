@@ -1,6 +1,10 @@
 import os
 import re
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 # System prompt enforcing Atlas Capture Standard Text Annotation Rules
 SYSTEM_PROMPT = """
 You are an expert video annotation bot for first-person (ego) video task labelling. Your sole job is to process input video keyframes or descriptions and output EXACT, audit-proof task labels according to strict guidelines.
@@ -24,7 +28,10 @@ A segment is ONE continuous interaction with a primary object toward a SINGLE GO
   - DO NOT USE "reach" (except when action is truncated at the exact end of an episode).
   - DO NOT USE "manipulate" (use grip, press, push, pull, twist, squeeze, pinch).
   - USE "grab" SPARINGLY (default to "pick up" unless the grip style is the focus).
-* FORBIDDEN NOUNS: Do NOT use generic nouns like "tool", "object", or "utensil" if the specific item is identifiable (e.g., use "knife", "scissors", "screwdriver").
+* FORBIDDEN NOUNS: Do NOT use generic nouns like "tool", "object", or "utensil" if the specific item is identifiable (e.g., use "hoe", "trowel", "wrench", "knife", "scissors", "screwdriver"). "tool" FAILS audit.
+* NO STORY WORDS: NEVER write then, next, after, before, first, or other. Labels are not narratives.
+  WRONG: move soil from pot to other pot
+  RIGHT: dig soil with hoe in right hand
 * PLURAL-ONLY TOOLS (CRITICAL): Tools with two blades/jaws MUST ALWAYS BE PLURAL: "scissors", "tongs", "pliers" (NEVER "scissor").
 
 ### 3. WATCH THE FRAMES BEFORE YOU WRITE
@@ -34,6 +41,10 @@ Compare the FIRST frame (segment start) to the LAST frame (segment end):
 * set = object is released onto ground or floor.
 * place = object is released onto a table, board, shelf, or INTO a container. place ALWAYS needs a location.
 * If an object is lifted at the end of the window, that is pick up, NOT hold.
+* If an object is lowered onto floor/table at the end of the window, that is place/set, NOT pick up.
+* If the object STARTS in one hand and ENDS in the other, you MUST write a pass:
+  pass bottle from right hand to left hand
+  Never omit the receiving hand.
 * If both hands are on the SAME tool for the SAME goal, that is ONE action with both hands. Do not invent a second hold clause.
 
 ### 4. ACTION COUNT: BOTH HANDS VS HOLD (CRITICAL)
@@ -55,7 +66,13 @@ Then list them (max 3). Off-hand stabilize + working hand IS two actions:
         (left SETS the hose down; right PICKS UP the can — that is not a hold)
 
 CASE C — account for a missed action only when it is real:
-Pass, dip, and a true pick up/place/set must appear. Do not drop a real second action. Do not invent a hold.
+Pass, dip, pick up, and place/set must appear when they happen. Do not drop a put-down at the end of the window.
+  RIGHT: place hoe on ground with right hand, gather soil with both hands
+  WRONG: gather soil with both hands
+If you pick up AND place in one window, write BOTH verbs, attach the object to each, and give place a location:
+  RIGHT: pick up wrench and place wrench on table with right hand
+  WRONG: pick up and place wrench with right hand
+  WRONG: place wrench on bolt with right hand
 
 ### 5. WHAT TO LABEL VS. IGNORE
 * LABEL goal-directed hand–object actions that move the task forward.
@@ -92,6 +109,13 @@ Pass, dip, and a true pick up/place/set must appear. Do not drop a real second a
 * water plant in bucket with hose in both hands
 * fill watering can with water with hose in both hands
 * set hose on ground with left hand, pick up watering can with right hand
+* place bucket on floor with left hand, pick up hoe with right hand
+* dig soil with hoe in right hand
+* place hoe on ground with right hand, gather soil with both hands
+* pick up bottle with right hand, pass bottle from right hand to left hand
+* place bottle on counter with left hand
+* hold wrench with left hand, pass wrench from left hand to right hand, place wrench on table with right hand
+* pick up wrench and place wrench on table with right hand
 
 ### OUTPUT RULE
 Output ONLY the raw label string or "No Action". No explanation, no intro text, no conversational filler, and no markdown wrapping.
@@ -210,6 +234,55 @@ TRANSFER_VERBS = {
 # Visible fill medium when the source is a hose/tap
 FILL_SOURCE_TOOLS = ("hose", "tap", "faucet", "spout")
 
+# Story words the Atlas grader rejects (Rule 3)
+NARRATIVE_WORDS = (
+    "then",
+    "next",
+    "after",
+    "before",
+    "first",
+    "afterwards",
+    "finally",
+    "other",
+)
+
+# Prefer these names when a label says "tool" / "object" / "utensil"
+NAMED_IMPLEMENTS = (
+    "watering can",
+    "nail polish bottle",
+    "plastic bag",
+    "snack bag",
+    "metal pin",
+    "syrup bottle",
+    "refrigerator door",
+    "bicycle wheel",
+    "cutting board",
+    "hoe",
+    "trowel",
+    "shovel",
+    "rake",
+    "wrench",
+    "hammer",
+    "screwdriver",
+    "pliers",
+    "scissors",
+    "tongs",
+    "bottle",
+    "sachet",
+    "bucket",
+    "hose",
+    "knife",
+    "spoon",
+    "fork",
+    "cup",
+    "bowl",
+    "pan",
+    "bag",
+    "pin",
+)
+
+GENERIC_NOUNS = ("tool", "object", "utensil", "item")
+
 # AI API Configuration — OpenRouter free vision models
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_HEADERS = {
@@ -219,16 +292,21 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Primary free VLMs, then fallbacks, then OpenRouter auto-router
-VISION_MODELS = [
-    "qwen/qwen-2-vl-7b-instruct:free",
-    "google/gemini-2.5-flash:free",
-    "google/gemini-2.0-flash-exp:free",
-    "meta-llama/llama-3.2-11b-vision-instruct:free",
-    "mistralai/pixtral-12b:free",
-    "qwen/qwen-2.5-vl-72b-instruct:free",
-    "openrouter/auto",
+# Live free VLMs as of Aug 2026. Old :free Gemini/Qwen/Llama-vision slugs 404.
+_DEFAULT_VISION_MODELS = [
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "dots-studio/dots-3-note-preview:free",
+    "openrouter/free",
 ]
+_primary_model = (os.getenv("VISION_MODEL") or "").strip()
+VISION_MODELS = (
+    [_primary_model] + [m for m in _DEFAULT_VISION_MODELS if m != _primary_model]
+    if _primary_model
+    else list(_DEFAULT_VISION_MODELS)
+)
 # OpenRouter rejects route fallback lists longer than 3.
 OPENROUTER_MAX_ROUTE_FALLBACKS = 3
 

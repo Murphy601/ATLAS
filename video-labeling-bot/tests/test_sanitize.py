@@ -138,7 +138,7 @@ def test_collapses_cooperating_hands_into_one_both_hands_action():
 def test_keeps_two_actions_when_one_hand_sets_and_the_other_holds():
     assert sanitize_label(
         "place hose on ground with left hand, hold watering can with right hand"
-    ) == "set hose on ground with left hand, hold watering can with right hand"
+    ) == "place hose on ground with left hand, hold watering can with right hand"
 
 
 def test_does_not_collapse_stabilize_then_work():
@@ -149,10 +149,28 @@ def test_does_not_collapse_stabilize_then_work():
     assert sanitize_label(gold) == gold
 
 
-def test_place_on_ground_becomes_set():
-    assert sanitize_label("place hose on ground with left hand") == (
-        "set hose on ground with left hand"
+def test_place_on_ground_stays_place():
+    assert sanitize_label("place hoe on ground with right hand") == (
+        "place hoe on ground with right hand"
     )
+    assert sanitize_label("place bucket on floor with left hand") == (
+        "place bucket on floor with left hand"
+    )
+
+
+def test_strips_narrative_words():
+    assert "other" not in sanitize_label(
+        "move soil from pot to other pot with trowel in right hand"
+    ).lower()
+
+
+def test_replaces_generic_tool_from_previous_label():
+    from label_generator import apply_context_fixes
+
+    assert apply_context_fixes(
+        "dig soil with tool in right hand",
+        previous_label="place bucket on floor with left hand, pick up hoe with right hand",
+    ) == "dig soil with hoe in right hand"
 
 
 def test_reconcile_keeps_one_action_draft_and_pick_up_draft():

@@ -75,7 +75,7 @@ def test_process_live_task_keeps_ai_draft_when_model_says_no_action():
     ):
         process_live_task(FakeBot(), segment_duration=3.0, interval_seconds=1.0)
 
-    assert recorded == []
+    assert recorded == [(1, "dig soil with tool in right hand")]
 
 
 def test_process_video_task_maps_chunks_onto_atlas_rows(tmp_path):
