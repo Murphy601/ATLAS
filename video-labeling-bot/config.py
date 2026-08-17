@@ -185,6 +185,10 @@ Keep pick up when it is the LAST action in this window (the tool is for the next
   RIGHT: twist blue wire with both hands, pick up pliers with right hand
 Do not write shift/align/slide/tilt/tap inside cut/wipe/dig/water/write/scrub.
 Do not write hold of the SAME tool already named in the work clause.
+Do not write hold pan/wok/pot while stirring. The cookware stays on the stove. Extra Action.
+If scissors are only gripped, write hold scissors, not cut.
+If the Atlas row says set/place, do not rewrite it as hold.
+pick up a bottle that then changes hands: pass [object] from [hand] to [hand], not close door.
 
 #2 MISSING ACTION: do write place/set/pass if the object is released or changes hands.
 If one hand holds a cloth and the other flattens/rubs it, that is smoothen, not fold.
@@ -357,6 +361,8 @@ NAMED_IMPLEMENTS = (
     "wrench",
     "hammer",
     "screwdriver",
+    "ladle",
+    "wok",
     "sewing needle",
     "shears",
     "pliers",

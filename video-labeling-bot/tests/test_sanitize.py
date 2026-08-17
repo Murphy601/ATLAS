@@ -603,3 +603,58 @@ def test_keeps_mop_floor_draft_over_hold_toy():
         )
         == "mop floor with both hands"
     )
+
+
+def test_practice_golds_hose_scissors_stir_and_fridge():
+    from label_generator import choose_final_label
+
+    prev_fill = "fill watering can with water with hose in both hands"
+    assert choose_final_label(
+        "hold hose with both hands",
+        "set hose on ground with left hand",
+        previous_label=prev_fill,
+        frames_have_video=True,
+    ) == "set hose on ground with left hand, pick up watering can with right hand"
+
+    hold_scissors = "hold paper with left hand, hold scissors in right hand"
+    assert choose_final_label(
+        "hold paper with left hand, cut plastic bag with scissors in right hand",
+        hold_scissors,
+        frames_have_video=True,
+    ) == sanitize_label(hold_scissors)
+
+    assert choose_final_label(
+        "cut paper with scissors in right hand, hold paper with left hand",
+        "hold paper with left hand, cut paper with scissors in right hand",
+        previous_label="hold paper with left hand, hold scissors with right hand",
+        frames_have_video=True,
+    ) == "hold scissors with right hand, align papers with both hands"
+
+    assert sanitize_label(
+        "hold pan with left hand, stir food in pan with spoon in right hand"
+    ) == "stir food in pan with spoon in right hand"
+    assert choose_final_label(
+        "hold pan with left hand, stir food in pan with spoon in right hand",
+        "stir meat and onions with ladle in right hand",
+        frames_have_video=True,
+    ) == "stir meat and onions with ladle in right hand"
+
+    assert choose_final_label(
+        "open refrigerator door with right hand, pick up red bottle with right hand",
+        "place syrup bottle on counter with right hand",
+        frames_have_video=True,
+    ) == "place syrup bottle on counter with right hand"
+
+    assert choose_final_label(
+        "pick up red bottle with right hand, close refrigerator door with left hand",
+        "pick up red snack bag with right hand, place red snack bag on counter with right hand",
+        previous_label="pick up red bottle with right hand, close refrigerator door with left hand",
+        frames_have_video=True,
+    ) == (
+        "pick up red snack bag with right hand, "
+        "place red snack bag on counter with right hand"
+    )
+
+    assert sanitize_label(
+        "pick up red bottle with right hand, close refrigerator door with left hand"
+    ) == "pick up red bottle with right hand, pass red bottle from right hand to left hand"

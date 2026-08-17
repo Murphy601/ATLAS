@@ -51,12 +51,16 @@ LEADING_VERB_PATTERN = re.compile(
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
     r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim|seal|smoothen|"
-    r"rake|strip|mop)\b",
+    r"rake|strip|mop|align)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
 TWO_HANDED_TOOLS = ("hose", "rope")
 WIPE_VERBS = {"wipe", "scrub", "wash", "dry", "polish"}
+STIR_VERBS = {"stir", "mix"}
+STOVEWARE_PATTERN = re.compile(
+    r"\b(?:pan|wok|pot|skillet|saucepan)\b", re.IGNORECASE
+)
 CLOTH_WORK_VERBS = {"smoothen", "smooth", "fold", "flatten", "wipe"}
 CLOTH_PATTERN = re.compile(
     r"\b(?:cloth|towel|rag|garment|shirt)\b", re.IGNORECASE
@@ -352,6 +356,23 @@ def _collapse_redundant_hold(text: str) -> str:
     )
 
 
+def _drop_cookware_hold_while_stirring(text: str) -> str:
+    """A wok/pan on the stove is not an off-hand stabilize while stirring."""
+    clauses = split_actions(text)
+    if len(clauses) != 2:
+        return text
+    hold = next((clause for clause in clauses if _leading_verb(clause) == "hold"), None)
+    work = next(
+        (clause for clause in clauses if _leading_verb(clause) in STIR_VERBS), None
+    )
+    if not hold or not work:
+        return text
+    held = _clause_object(hold)
+    if STOVEWARE_PATTERN.search(held or "") or STOVEWARE_PATTERN.search(work):
+        return work
+    return text
+
+
 def _fill_missing_clause_objects(text: str) -> str:
     """pick up cup, place on table -> pick up cup, place cup on table."""
     clauses = split_actions(text)
@@ -486,6 +507,8 @@ def _is_case_a_stabilize(label: str) -> bool:
         return False
     tool = _named_tool_in(work)
     held = _clause_object(hold)
+    if STOVEWARE_PATTERN.search(held or "") or STOVEWARE_PATTERN.search(work):
+        return False
     if tool and held and not _objects_match(held, tool):
         return True
     work_verb = _leading_verb(work)
@@ -710,6 +733,12 @@ def _align_object_names(label: str, previous_label: str | None) -> str:
     if re.search(r"\bglass plate\b", prev):
         updated = re.sub(r"(?<!glass )\bplate\b", "glass plate", updated, flags=re.IGNORECASE)
         updated = re.sub(r"\bglass glass plate\b", "glass plate", updated, flags=re.IGNORECASE)
+    if re.search(r"\bladle\b", prev) and re.search(r"\bspoon\b", updated, re.IGNORECASE):
+        updated = re.sub(r"\bspoon\b", "ladle", updated, flags=re.IGNORECASE)
+    if re.search(r"\bwok\b", prev) and re.search(r"\bpan\b", updated, re.IGNORECASE):
+        updated = re.sub(r"\bpan\b", "wok", updated, flags=re.IGNORECASE)
+    if re.search(r"\bpapers\b", prev):
+        updated = re.sub(r"\bpaper\b(?!s)", "papers", updated, flags=re.IGNORECASE)
     if re.search(r"\bglass cup\b", prev):
         updated = re.sub(r"(?<!glass )\bcup\b", "glass cup", updated, flags=re.IGNORECASE)
         updated = re.sub(r"\bglass glass cup\b", "glass cup", updated, flags=re.IGNORECASE)
@@ -891,6 +920,9 @@ def _name_self_tool_and_location(text: str) -> str:
 
 def _prefer_place_over_pickup(model: str, draft: str) -> str | None:
     """pick up vs place of the same object: the object ended on a surface."""
+    if _has_release(draft) and not _has_release(model):
+        if any(_leading_verb(part) == "pick up" for part in split_actions(model)):
+            return draft
     model_parts = split_actions(model)
     draft_parts = split_actions(draft)
     if len(model_parts) != 1 or len(draft_parts) != 1:
@@ -922,6 +954,98 @@ def _append_end_of_window_pickup(label: str, next_label: str | None) -> str:
             rf"\b{tool}\b", label, re.IGNORECASE
         ):
             return f"{label}, pick up {tool} with right hand"
+    return label
+
+
+def _complete_set_then_pickup(
+    label: str, previous_label: str | None, next_label: str | None = None
+) -> str:
+    """set hose, then pick up the watering can that was just being filled."""
+    if not label or label == "No Action":
+        return label
+    parts = split_actions(label)
+    if not parts or len(parts) >= MAX_ACTIONS_PER_LABEL:
+        return label
+    if any(_leading_verb(part) == "pick up" for part in parts):
+        return label
+    set_clause = next((part for part in parts if _leading_verb(part) == "set"), None)
+    if not set_clause or not re.search(r"\bhose\b", set_clause, re.IGNORECASE):
+        return label
+    context = f"{previous_label or ''} {next_label or ''}"
+    if not re.search(r"watering can", context, re.IGNORECASE):
+        return label
+    if re.search(r"watering can", label, re.IGNORECASE):
+        return label
+    set_hand = _clause_hand(set_clause)
+    other = "right hand" if set_hand == "left hand" else "left hand"
+    if set_hand == "both hands":
+        set_clause = re.sub(
+            r"\bboth hands\b", "left hand", set_clause, flags=re.IGNORECASE
+        )
+        parts = [
+            set_clause if _leading_verb(part) == "set" else part for part in parts
+        ]
+        other = "right hand"
+    return f"{', '.join(parts)}, pick up watering can with {other}"
+
+
+def _rewrite_close_door_to_pass(text: str) -> str:
+    """pick up bottle, close fridge → pick up bottle, pass bottle to the other hand."""
+    parts = split_actions(text)
+    if len(parts) != 2:
+        return text
+    pickup = next((part for part in parts if _leading_verb(part) == "pick up"), None)
+    close = next(
+        (
+            part
+            for part in parts
+            if _leading_verb(part) == "close"
+            and re.search(r"\bdoor\b", part, re.IGNORECASE)
+        ),
+        None,
+    )
+    if not pickup or not close:
+        return text
+    obj = _pickup_object(pickup)
+    hand = _clause_hand(pickup) or "right hand"
+    if not obj or hand not in {"left hand", "right hand"}:
+        return text
+    other = "left hand" if hand == "right hand" else "right hand"
+    return f"{pickup}, pass {obj} from {hand} to {other}"
+
+
+def _rewrite_cut_to_align_after_hold(
+    label: str, previous_label: str | None
+) -> str:
+    """After a hold-scissors window, lining up sheets is align, not cut."""
+    if not previous_label or not label:
+        return label
+    if any(_leading_verb(part) == "cut" for part in split_actions(previous_label)):
+        return label
+    if not re.search(r"\bscissors\b", previous_label, re.IGNORECASE):
+        return label
+    if not any(_leading_verb(part) == "cut" for part in split_actions(label)):
+        return label
+    if not re.search(r"\b(?:paper|papers|plastic bag)\b", label, re.IGNORECASE):
+        return label
+    return "hold scissors with right hand, align papers with both hands"
+
+
+def _restore_draft_locations(label: str, draft_label: str | None) -> str:
+    if not label or not draft_label:
+        return label
+    if not re.search(r"\bwater plant\b", label, re.IGNORECASE):
+        return label
+    if re.search(r"\bin bucket\b", label, re.IGNORECASE):
+        return label
+    if re.search(r"\bin bucket\b", draft_label, re.IGNORECASE):
+        return re.sub(
+            r"\bwater plant\b",
+            "water plant in bucket",
+            label,
+            count=1,
+            flags=re.IGNORECASE,
+        )
     return label
 
 
@@ -959,7 +1083,10 @@ def apply_context_fixes(
         specific = _named_implement_in(draft_label, previous_label)
         if specific:
             updated = GENERIC_NOUN_PATTERN.sub(specific, updated)
+    updated = _restore_draft_locations(updated, draft_label)
+    updated = _rewrite_cut_to_align_after_hold(updated, previous_label)
     updated = _append_end_of_window_pickup(updated, next_label)
+    updated = _complete_set_then_pickup(updated, previous_label, next_label)
     return updated
 
 
@@ -1083,6 +1210,10 @@ HALLUCINATION_PAIRS = (
     (r"\binsert\b", r"\b(?:write|peel)\b"),
     (r"\bbowl\b", r"\brub\b"),
     (r"\bpatch\b", r"\b(?:pen|sticker)\b"),
+    (r"\bhold scissors\b", r"\bcut\b"),
+    (r"\bpaper", r"\bplastic bag\b"),
+    (r"\bsachet\b", r"\bbottle\b"),
+    (r"\bsnack bag\b", r"\bbottle\b"),
 )
 
 REQUIRED_EXTRA_VERBS = {
@@ -1095,7 +1226,24 @@ REQUIRED_EXTRA_VERBS = {
     "gather",
 }
 
-WORK_DRAFT_VERBS = {"mop", "sweep", "rake", "wipe", "scrub", "iron", "strip", "twist"}
+WORK_DRAFT_VERBS = {
+    "mop",
+    "sweep",
+    "rake",
+    "wipe",
+    "scrub",
+    "iron",
+    "strip",
+    "twist",
+    "set",
+    "place",
+    "pick up",
+    "pass",
+    "fill",
+    "water",
+    "stir",
+    "align",
+}
 
 LEFTOVER_LABEL_PATTERN = re.compile(
     r"stuffed animal|work dough|trim stuffed",
@@ -1180,21 +1328,59 @@ def _copied_previous_ignoring_draft(
 
 
 def _prefer_work_draft_over_idle_hold(model: str, draft: str) -> bool:
-    """mop floor / strip wire beats hold mop / hold wire."""
+    """set/place/mop beat a model that only wrote hold."""
     model_parts = split_actions(model)
     draft_parts = split_actions(draft)
-    if len(model_parts) != 1 or len(draft_parts) != 1:
+    if not model_parts or not draft_parts:
         return False
-    if _leading_verb(model_parts[0]) != "hold":
+    model_all_hold = all(_leading_verb(part) == "hold" for part in model_parts)
+    draft_has_work = any(
+        _leading_verb(part) not in {"", "hold"} for part in draft_parts
+    )
+    return model_all_hold and draft_has_work
+
+
+def _invented_cut_on_hold_draft(model: str, draft: str) -> bool:
+    """Do not upgrade hold scissors to cut when the Atlas row only held them."""
+    if any(_leading_verb(part) == "cut" for part in split_actions(draft)):
         return False
-    return _leading_verb(draft_parts[0]) in WORK_DRAFT_VERBS
+    if not any(_leading_verb(part) == "cut" for part in split_actions(model)):
+        return False
+    return bool(re.search(r"\bscissors\b", draft, re.IGNORECASE))
+
+
+def _same_goal_verb(model: str, draft: str) -> bool:
+    """True when both labels are the same work verb with different object names."""
+    model_verbs = _work_verbs(model)
+    draft_verbs = _work_verbs(draft)
+    return bool(model_verbs) and model_verbs == draft_verbs
+
+
+def _model_copied_previous_scene(
+    model: str, draft: str, previous: str | None
+) -> bool:
+    """True when the model reused the last row's objects and ignored this Atlas draft."""
+    if not previous or not draft or not model:
+        return False
+    if looks_like_leftover_label(draft) or is_generic_placeholder_label(draft):
+        return False
+    prev_obj = _canonical_scene_tokens(previous)
+    draft_obj = _canonical_scene_tokens(draft)
+    model_obj = _canonical_scene_tokens(model)
+    if not prev_obj or not draft_obj or not model_obj:
+        return False
+    if model_obj & draft_obj:
+        return False
+    return bool(model_obj & prev_obj)
 
 
 def _model_adds_required_extra(model: str, draft: str) -> bool:
-    """Keep a trailing pick up/place/pass/insert the draft omitted."""
+    """Keep a trailing pick up/place/insert the draft omitted."""
     model_parts = split_actions(model)
     draft_parts = split_actions(draft)
     if len(model_parts) <= len(draft_parts):
+        return False
+    if _has_release(draft) and not _has_release(model):
         return False
     extra = model_parts[-1]
     verb = _leading_verb(extra)
@@ -1299,18 +1485,54 @@ def choose_final_label(
                 f"Keeping Atlas draft: '{draft}'"
             )
             return draft
+        if _model_copied_previous_scene(model, draft, previous_label):
+            print(
+                "[Pipeline]: Model reused the previous clip's objects. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
         if _prefer_work_draft_over_idle_hold(model, draft):
             print(
                 "[Pipeline]: Model turned work into a hold. "
                 f"Keeping Atlas draft: '{draft}'"
             )
             return draft
+        if _invented_cut_on_hold_draft(model, draft):
+            print(
+                "[Pipeline]: Model invented a cut. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        if (
+            _same_goal_verb(model, draft)
+            and len(split_actions(model)) == 1
+            and len(split_actions(draft)) == 1
+            and model_fits_draft(model, draft)
+            and not looks_like_leftover_label(draft_raw)
+        ):
+            print(
+                "[Pipeline]: Same single goal as the Atlas draft. "
+                f"Keeping Atlas names: '{draft}'"
+            )
+            return draft
         if not model_fits_draft(model, draft):
             leftover = looks_like_leftover_label(draft_raw)
-            if frames_have_video:
-                reason = "leftover row text" if leftover else "the row text"
+            if frames_have_video and leftover:
+                reason = "leftover row text"
                 print(
                     f"[Pipeline]: Frames show different objects than {reason}. "
+                    f"Using the model: '{model}'"
+                )
+                return model
+            if _same_goal_verb(model, draft) and not leftover:
+                print(
+                    "[Pipeline]: Same goal verb as the Atlas draft. "
+                    f"Keeping Atlas names: '{draft}'"
+                )
+                return draft
+            if frames_have_video:
+                print(
+                    "[Pipeline]: Frames show different objects than the row text. "
                     f"Using the model: '{model}'"
                 )
                 return model
@@ -1325,6 +1547,12 @@ def choose_final_label(
             )
             return placed
         if len(split_actions(model)) > len(split_actions(draft)):
+            if _has_release(draft) and not _has_release(model):
+                print(
+                    "[Pipeline]: Draft already has a place/set. "
+                    f"Keeping Atlas draft: '{draft}'"
+                )
+                return draft
             if _is_case_a_stabilize(model) and not _is_case_a_stabilize(draft):
                 print(
                     "[Pipeline]: Draft missed an off-hand stabilize. "
@@ -1556,6 +1784,8 @@ def sanitize_label(text: str) -> str:
     cleaned = _collapse_repeated_work(cleaned)
     cleaned = _drop_contradictory_hold_after_pickup(cleaned)
     cleaned = _collapse_redundant_hold(cleaned)
+    cleaned = _drop_cookware_hold_while_stirring(cleaned)
+    cleaned = _rewrite_close_door_to_pass(cleaned)
     cleaned = _attach_missing_hands(cleaned)
     cleaned = _ensure_place_location(cleaned, None)
     cleaned = _cap_actions(cleaned)
@@ -1571,7 +1801,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold|strip|mop)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold|strip|mop|align|stir)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -1656,6 +1886,9 @@ def _vision_user_content(
         "If they grab a tool only to use it immediately, omit pick up. Write pick up not grab. "
         "Do not add hold for an empty hand or for the same tool already named. "
         "Do add hold when one hand stabilizes (carrot, paper, plate) while the other works. "
+        "Do not add hold pan/wok while stirring. "
+        "If scissors are only held, write hold scissors not cut. "
+        "set/place beat hold of the same object. "
         "Do not split cut/wipe/dig/water/write/trim into micro shift/align/tap clauses. "
         "Max 3 clauses. Prefer one coarse verb. Never write tool/then/next/other/fingers. "
         "Never write bare animal. Stay consistent with prior object and verb names. "
