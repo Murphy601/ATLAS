@@ -55,8 +55,10 @@ class VideoBrowserBot:
             "headless": self.headless,
             "viewport": None,
             "args": ["--start-maximized"],
+            "chromium_sandbox": True,
         }
         if self.headless:
+            launch_args["chromium_sandbox"] = False
             launch_args["args"] = [
                 "--disable-dev-shm-usage",
                 "--no-sandbox",
@@ -64,7 +66,10 @@ class VideoBrowserBot:
             launch_args["viewport"] = {"width": 1280, "height": 720}
         else:
             launch_args["channel"] = "chrome"
-            launch_args["ignore_default_args"] = ["--enable-automation"]
+            launch_args["ignore_default_args"] = [
+                "--enable-automation",
+                "--no-sandbox",
+            ]
             launch_args["args"] = [
                 "--disable-blink-features=AutomationControlled",
                 "--start-maximized",
@@ -190,24 +195,57 @@ class VideoBrowserBot:
         return "manual"
 
     def play_segment_clip(self, segment_number: int):
-        """Clicks 'Play segment N' so the player jumps to that clip."""
+        """Clicks 'Play segment N' and lets the clip run at normal speed."""
         exact = self.page.locator(
             f'button:has-text("Play segment {segment_number}")'
         ).first
         try:
             if exact.count() > 0 and exact.is_visible():
+                exact.scroll_into_view_if_needed()
                 exact.click(timeout=2000)
-                time.sleep(0.3)
-                self.page.evaluate(
-                    """() => {
-                        const video = document.querySelector('video');
-                        if (video) video.pause();
-                    }"""
-                )
-                print(f"[Browser Bot]: Played then paused segment {segment_number}.")
-                return
+                print(f"[Browser Bot]: Playing segment {segment_number} at 1x.")
+                return True
         except Exception:
             pass
+        return False
+
+    def _play_from(self, start_seconds: float):
+        self.page.evaluate(
+            """async (start) => {
+                const video = document.querySelector('video');
+                if (!video) return;
+                video.muted = true;
+                video.playsInline = true;
+                video.playbackRate = 1;
+                if (Number.isFinite(start) && Math.abs((video.currentTime || 0) - start) > 0.35) {
+                    video.currentTime = Math.max(0, start);
+                    await new Promise((resolve) => {
+                        const timeout = setTimeout(resolve, 800);
+                        video.addEventListener('seeked', () => {
+                            clearTimeout(timeout);
+                            resolve();
+                        }, { once: true });
+                    });
+                }
+                const play = video.play();
+                if (play && typeof play.catch === 'function') {
+                    play.catch(() => {});
+                }
+            }""",
+            start_seconds,
+        )
+
+    def _video_time(self) -> float:
+        try:
+            value = self.page.evaluate(
+                """() => {
+                    const video = document.querySelector('video');
+                    return video ? video.currentTime : 0;
+                }"""
+            )
+            return float(value or 0)
+        except Exception:
+            return 0.0
 
     def discover_segments(self) -> list[SegmentRow]:
         """Reads pre-rendered Atlas segment rows, including AI drafts and time ranges."""
@@ -352,10 +390,60 @@ class VideoBrowserBot:
         segment_duration: float = 3.0,
         interval_seconds: float = 1.0,
     ) -> list[tuple[float, str]]:
-        """Seeks the in-page player and screenshots frames across the real segment window."""
-        frames: list[tuple[float, str]] = []
+        """Watch the clip at 1x in headed Chrome; seek only in headless tests."""
         if segment_duration <= 0:
             segment_duration = 0.5
+        if not self.headless:
+            return self._capture_realtime(start_seconds, segment_duration, interval_seconds)
+        return self._capture_by_seek(start_seconds, segment_duration, interval_seconds)
+
+    def _capture_realtime(
+        self,
+        start_seconds: float,
+        segment_duration: float,
+        interval_seconds: float,
+    ) -> list[tuple[float, str]]:
+        """Play the segment in real time and screenshot about once per second."""
+        end_seconds = start_seconds + segment_duration
+        print(
+            f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at normal speed..."
+        )
+        self._play_from(start_seconds)
+        frames: list[tuple[float, str]] = []
+        last_bucket = -1
+        deadline = time.time() + segment_duration + 4.0
+        while time.time() < deadline:
+            current = self._video_time()
+            if current >= end_seconds - 0.05 and frames:
+                break
+            bucket = int(max(0.0, current - start_seconds) / max(interval_seconds, 0.2))
+            if current >= start_seconds - 0.15 and bucket != last_bucket:
+                try:
+                    frames.append((current, self._screenshot_video_base64()))
+                    last_bucket = bucket
+                except Exception as exc:
+                    print(f"[Browser Bot]: Screenshot skipped ({exc})")
+            if len(frames) >= 12 and current >= end_seconds - 0.2:
+                break
+            time.sleep(0.2)
+        self.page.evaluate(
+            """() => {
+                const video = document.querySelector('video');
+                if (video) video.pause();
+            }"""
+        )
+        if not frames:
+            frames = self._capture_by_seek(start_seconds, segment_duration, interval_seconds)
+        print(f"[Browser Bot]: Captured {len(frames)} realtime frame(s).")
+        return frames
+
+    def _capture_by_seek(
+        self,
+        start_seconds: float,
+        segment_duration: float,
+        interval_seconds: float,
+    ) -> list[tuple[float, str]]:
+        frames: list[tuple[float, str]] = []
         step = interval_seconds
         estimated = max(1, int(segment_duration / step))
         if estimated > MAX_FRAMES_PER_SEGMENT:

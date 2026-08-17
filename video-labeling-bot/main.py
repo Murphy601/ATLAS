@@ -83,6 +83,18 @@ def process_live_task(
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
         print(f"Generated Label: '{label}'")
 
+        if (
+            label == "No Action"
+            and segment.draft_label
+            and segment.draft_label.strip().lower() != "no action"
+        ):
+            print(
+                "[Pipeline]: Model said No Action but an AI draft already describes "
+                f"work. Keeping draft: '{segment.draft_label}'"
+            )
+            previous_label = segment.draft_label
+            continue
+
         bot.fill_segment_label(
             segment.number,
             label,

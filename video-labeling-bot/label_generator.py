@@ -194,14 +194,18 @@ def sanitize_label(text: str) -> str:
     if not cleaned or cleaned.lower() in {"and", "with", "no action"}:
         return "No Action"
 
-    if not re.search(
+    has_action_verb = re.search(
         r"\b(?:pick|place|hold|pass|move|chop|open|close|slide|shift|align|"
         r"rotate|flatten|tighten|fold|tuck|squeeze|wipe|cut|put|take|work|"
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
-        r"straighten|tilt)\b",
+        r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
+        r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack)\b",
         cleaned,
         re.IGNORECASE,
-    ):
+    )
+    has_hand = HAND_PATTERN.search(cleaned)
+    if not has_action_verb and not has_hand:
         return "No Action"
 
     if not HAND_PATTERN.search(cleaned):
@@ -232,8 +236,10 @@ def generate_label_from_frames(
     ]
 
     instruction = (
-        "These are consecutive ego-camera keyframes from ONE existing Atlas segment. "
-        "Correct the AI draft so it matches what THE WORKER'S HANDS actually do. "
+        "These are consecutive ego-camera keyframes from ONE existing Atlas segment, "
+        "played in order. Label what THE WORKER'S HANDS actually do. "
+        "Digging, carrying, picking up buckets or tools, passing, placing, and holding "
+        "ARE actions. Output No Action ONLY if hands are idle and touching nothing. "
         "Keep the same segment; do not invent extra segments. "
         "Account for both hands. Output only the raw label or No Action."
     )

@@ -97,7 +97,13 @@ def test_no_action_not_mixed_with_real_action():
     )
 
 
-def test_gold_labels_pass_through():
+def test_unknown_work_verbs_with_hands_are_kept():
+    assert sanitize_label("dig soil with tool in right hand") == (
+        "dig soil with tool in right hand"
+    )
+    assert sanitize_label("scoop dirt with shovel in left hand") == (
+        "scoop dirt with shovel in left hand"
+    )
     gold = "hold mushrooms on board with left hand, chop mushrooms on board with knife in right hand"
     assert sanitize_label(gold) == gold
     assert (
