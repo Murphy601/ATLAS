@@ -2,39 +2,49 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Annotation Fixture</title>
+    <title>Atlas Capture Fixture</title>
   </head>
   <body>
+    <video
+      id="player"
+      muted
+      playsinline
+      controls
+      width="320"
+      height="180"
+      poster="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    ></video>
     <form id="annotation-form">
-      <label>
-        Start
-        <input name="startTime" id="startTime" placeholder="Start" />
-      </label>
-      <label>
-        End
-        <input name="endTime" id="endTime" placeholder="End" />
-      </label>
-      <label>
-        Label
-        <textarea name="label" id="label" placeholder="Label"></textarea>
-      </label>
-      <button type="button" id="add-timestamp">Add Timestamp</button>
+      <input
+        data-ph-unmask="true"
+        aria-label="Segment 1 label"
+        autocomplete="off"
+        spellcheck="false"
+        maxlength="2000"
+        data-segment-start-seconds="0"
+        class="w-full rounded-lg border"
+        value=""
+      />
+      <input
+        data-ph-unmask="true"
+        aria-label="Segment 2 label"
+        autocomplete="off"
+        spellcheck="false"
+        maxlength="2000"
+        data-segment-start-seconds="3"
+        class="w-full rounded-lg border"
+        value=""
+      />
+      <button type="button" id="next">Next</button>
       <button type="submit" id="submit">Submit</button>
     </form>
-    <ul id="segments"></ul>
     <p id="submitted" hidden>submitted</p>
     <script>
-      const segments = document.getElementById("segments");
-      document.getElementById("add-timestamp").addEventListener("click", () => {
-        const start = document.querySelector('[name="startTime"]').value;
-        const end = document.querySelector('[name="endTime"]').value;
-        const label = document.querySelector('[name="label"]').value;
-        const item = document.createElement("li");
-        item.textContent = start + " - " + end + " -> " + label;
-        segments.appendChild(item);
-      });
       document.getElementById("annotation-form").addEventListener("submit", (event) => {
         event.preventDefault();
+        document.getElementById("submitted").hidden = false;
+      });
+      document.getElementById("next").addEventListener("click", () => {
         document.getElementById("submitted").hidden = false;
       });
     </script>

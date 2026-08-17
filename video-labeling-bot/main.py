@@ -4,11 +4,10 @@ import time
 
 from dotenv import load_dotenv
 
-from browser_automation import VideoBrowserBot
+from browser_automation import SegmentRow, VideoBrowserBot
 from config import (
     DEFAULT_FRAME_INTERVAL,
     DEFAULT_PORTAL_URL,
-    DEFAULT_SAMPLE_VIDEO,
     DEFAULT_SEGMENT_DURATION,
 )
 from frame_extractor import extract_frames_from_video, format_timestamp
@@ -24,58 +23,151 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _chunk_frames(
+    frames: list[tuple[float, str]],
+    start_seconds: float,
+    segment_duration: float,
+) -> list[tuple[float, str]]:
+    end_seconds = start_seconds + segment_duration
+    return [
+        frame
+        for frame in frames
+        if start_seconds <= frame[0] < end_seconds
+    ]
+
+
+def process_live_task(
+    bot: VideoBrowserBot,
+    segment_duration: float = 3.0,
+    interval_seconds: float = 1.0,
+):
+    """Captures frames from the in-page player and fills Atlas segment label rows."""
+    bot.prepare_video_playback()
+    segments = bot.discover_segments()
+    if not segments:
+        print("[Pipeline]: No Atlas segment rows found. Open a labeling task and retry.")
+        return
+
+    print(
+        f"\n[Pipeline]: Labeling {len(segments)} segments "
+        f"({interval_seconds:g}s frames / {segment_duration:g}s windows)..."
+    )
+
+    for segment in segments:
+        chunk = bot.capture_segment_frames(
+            start_seconds=segment.start_seconds,
+            segment_duration=segment_duration,
+            interval_seconds=interval_seconds,
+        )
+        if not chunk:
+            print(
+                f"[Pipeline]: No frames for Segment {segment.number} "
+                f"@ {segment.start_seconds}s. Skipping."
+            )
+            continue
+
+        start_str = format_timestamp(segment.start_seconds)
+        end_str = format_timestamp(segment.start_seconds + segment_duration)
+        label = generate_label_from_frames([frame[1] for frame in chunk])
+
+        print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
+        print(f"Generated Label: '{label}'")
+
+        bot.fill_segment_label(
+            segment.number,
+            label,
+            start_seconds=segment.start_seconds,
+        )
+        time.sleep(0.4)
+
+
 def process_video_task(
     bot: VideoBrowserBot | None,
     video_path: str,
     segment_duration: float = 3.0,
     interval_seconds: float = 1.0,
+    segments: list[SegmentRow] | None = None,
 ):
-    """Processes video chunks, generates labels, and writes output to the browser UI."""
+    """Optional local-file fallback: extract keyframes then write Atlas segment rows."""
     keyframes = extract_frames_from_video(video_path, interval_seconds=interval_seconds)
     if not keyframes:
         print("[Pipeline]: No frames retrieved. Task aborted.")
         return
 
-    total_frames = len(keyframes)
-    chunk_size = max(1, int(round(segment_duration / interval_seconds)))
+    if segments is None and bot is not None:
+        try:
+            segments = bot.discover_segments()
+        except Exception:
+            segments = []
+
+    if not segments:
+        total_frames = len(keyframes)
+        chunk_size = max(1, int(round(segment_duration / interval_seconds)))
+        segments = [
+            SegmentRow(
+                number=(index // chunk_size) + 1,
+                start_seconds=keyframes[index][0],
+                locator_index=index // chunk_size,
+            )
+            for index in range(0, total_frames, chunk_size)
+        ]
 
     print(f"\n[Pipeline]: Processing video in {segment_duration}-second segments...")
 
-    for i in range(0, total_frames, chunk_size):
-        chunk = keyframes[i : i + chunk_size]
+    for segment in segments:
+        chunk = _chunk_frames(keyframes, segment.start_seconds, segment_duration)
         if not chunk:
             continue
 
-        start_sec = chunk[0][0]
-        end_sec = chunk[-1][0] + interval_seconds
+        start_str = format_timestamp(segment.start_seconds)
+        end_str = format_timestamp(segment.start_seconds + segment_duration)
+        label = generate_label_from_frames([frame[1] for frame in chunk])
 
-        start_str = format_timestamp(start_sec)
-        end_str = format_timestamp(end_sec)
-
-        base64_batch = [frame_data[1] for frame_data in chunk]
-        label = generate_label_from_frames(base64_batch)
-
-        print(f"\n--- Segment [{start_str} -> {end_str}] ---")
+        print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
         print(f"Generated Label: '{label}'")
 
-        if label != "No Action" and bot is not None:
-            bot.add_timestamp_and_label(start_str, end_str, label)
+        if bot is not None:
+            bot.fill_segment_label(
+                segment.number,
+                label,
+                start_seconds=segment.start_seconds,
+            )
             time.sleep(1)
+
+
+def _pause_for_review_then_submit(bot: VideoBrowserBot, auto_submit: bool):
+    if auto_submit:
+        print("[Pipeline]: AUTO_SUBMIT is enabled. Submitting without review.")
+        bot.submit_final_task()
+        return
+
+    try:
+        input(
+            "\n[Review Mode]: Inspect the filled Atlas labels in the browser, "
+            "then press ENTER to click Submit/Next (or Ctrl+C to quit without submitting)..."
+        )
+    except EOFError:
+        print(
+            "\n[Review Mode]: No interactive stdin. Skipping submit. "
+            "Re-run with --auto-submit only after you have verified labels."
+        )
+    else:
+        bot.submit_final_task()
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Video timestamping and action-labeling pipeline."
+        description="Atlas Capture live video timestamping and action-labeling pipeline."
     )
     parser.add_argument(
         "--url",
         default=DEFAULT_PORTAL_URL,
-        help="Annotation portal URL.",
+        help="Atlas audit portal URL.",
     )
     parser.add_argument(
         "--video",
-        default=DEFAULT_SAMPLE_VIDEO,
-        help="Path to the local MP4 video.",
+        default=os.getenv("SAMPLE_VIDEO", ""),
+        help="Optional local MP4 fallback. Default is live in-page capture (no file).",
     )
     parser.add_argument(
         "--segment-duration",
@@ -93,19 +185,19 @@ def parse_args():
         "--auto-submit",
         action="store_true",
         default=_env_flag("AUTO_SUBMIT", False),
-        help="Submit without the interactive review pause.",
+        help="Submit without the interactive review pause. Default is review-then-submit.",
     )
     parser.add_argument(
         "--headless",
         action="store_true",
         default=_env_flag("HEADLESS", False),
-        help="Run Chromium headless.",
+        help="Run Chromium headless. Manual login requires headed mode.",
     )
     parser.add_argument(
         "--skip-browser",
         action="store_true",
         default=_env_flag("SKIP_BROWSER", False),
-        help="Generate labels only; do not launch Playwright.",
+        help="Generate labels only from --video; do not launch Playwright.",
     )
     return parser.parse_args()
 
@@ -113,44 +205,53 @@ def parse_args():
 def main():
     args = parse_args()
     portal_url = args.url
-    sample_video = args.video
+    sample_video = (args.video or "").strip()
     auto_submit = args.auto_submit
 
     bot = None
     try:
-        if not args.skip_browser:
-            bot = VideoBrowserBot(headless=args.headless)
-            bot.start(portal_url)
-            bot.wait_for_manual_login(timeout=60)
+        if args.skip_browser:
+            if not sample_video or not os.path.exists(sample_video):
+                print(
+                    "[Notice]: --skip-browser requires a local --video file. "
+                    "Live Atlas capture needs the browser."
+                )
+                return
+            process_video_task(
+                None,
+                sample_video,
+                segment_duration=args.segment_duration,
+                interval_seconds=args.frame_interval,
+            )
+            print("\n[Pipeline]: Browser skipped. Label generation complete.")
+            return
 
-        if os.path.exists(sample_video):
+        if args.headless:
+            print(
+                "[Notice]: Headless mode cannot do the first-run manual login. "
+                "Use headed mode at least once so ./browser_session stores cookies."
+            )
+
+        bot = VideoBrowserBot(headless=args.headless)
+        bot.start(portal_url)
+        bot.wait_for_manual_login(timeout=300)
+
+        if sample_video and os.path.exists(sample_video):
+            print(f"[Pipeline]: Using local video fallback '{sample_video}'.")
             process_video_task(
                 bot,
                 sample_video,
                 segment_duration=args.segment_duration,
                 interval_seconds=args.frame_interval,
             )
-
-            if bot is None:
-                print("\n[Pipeline]: Browser skipped. Label generation complete.")
-            elif auto_submit:
-                bot.submit_final_task()
-            else:
-                try:
-                    input(
-                        "\n[Review Mode]: Verify generated inputs in the browser, then press ENTER to submit..."
-                    )
-                except EOFError:
-                    print(
-                        "\n[Review Mode]: No interactive stdin. Skipping submit. "
-                        "Re-run with --auto-submit to submit without review."
-                    )
-                else:
-                    bot.submit_final_task()
         else:
-            print(
-                f"\n[Notice]: Place a video file named '{sample_video}' in the project root to run testing."
+            process_live_task(
+                bot,
+                segment_duration=args.segment_duration,
+                interval_seconds=args.frame_interval,
             )
+
+        _pause_for_review_then_submit(bot, auto_submit)
 
     except Exception as e:
         print(f"[Execution Error]: {e}")

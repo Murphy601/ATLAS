@@ -75,9 +75,6 @@ LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openai")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
 # Pipeline defaults (overridable via environment variables)
-DEFAULT_PORTAL_URL = os.getenv(
-    "PORTAL_URL", "https://example-annotation-portal.com/"
-)
-DEFAULT_SAMPLE_VIDEO = os.getenv("SAMPLE_VIDEO", "input_video.mp4")
+DEFAULT_PORTAL_URL = os.getenv("PORTAL_URL", "https://audit.atlascapture.io/")
 DEFAULT_SEGMENT_DURATION = float(os.getenv("SEGMENT_DURATION", "3.0"))
 DEFAULT_FRAME_INTERVAL = float(os.getenv("FRAME_INTERVAL", "1.0"))

@@ -1,25 +1,24 @@
 # Video Labeling Bot
 
-Automated video timestamping and action-labeling pipeline for web-based annotation platforms.
+Automated video timestamping and action-labeling pipeline for the [Atlas Capture audit portal](https://audit.atlascapture.io/).
 
 ```
-[Web/App Interface] ---> 1. Frame Extraction (CV2/FFmpeg)
-                     ---> 2. VLM Inference (GPT-4o / Qwen2-VL)
-                     ---> 3. Post-Processing Filter (Regex & Rules)
-                     ---> 4. Web UI Automation (Playwright)
+[Atlas portal video player]
+    -> Playwright screenshots (1 fps)
+    -> GPT-4o labels
+    -> sanitize rules
+    -> fill input[aria-label="Segment N label"]
+    -> you review, then Submit/Next
 ```
 
-## Phase 1 — Project structure
+## Atlas wiring
 
-```
-video-labeling-bot/
-  .env                 # API credentials (gitignored; copy from .env.example)
-  config.py            # Annotation rules, forbidden words, system prompt
-  frame_extractor.py   # Keyframe extraction from local video
-  label_generator.py   # VLM inference + sanitization
-  browser_automation.py
-  main.py              # End-to-end orchestrator
-```
+- Portal: `https://audit.atlascapture.io/`
+- Label fields: `input[aria-label="Segment 1 label"]` (also `data-segment-start-seconds`)
+- Timestamps live on each pre-rendered row, not in separate start/end boxes
+- Frames come from the in-page `<video>` element. No `input_video.mp4` required
+- Login is manual on the first headed run; cookies persist in `./browser_session`
+- Submit mode is review-then-submit (`AUTO_SUBMIT=false`)
 
 ## Setup
 
@@ -32,13 +31,7 @@ playwright install chromium
 cp .env.example .env
 ```
 
-Add your OpenAI API key to `.env`:
-
-```env
-OPENAI_API_KEY="your-actual-api-key-here"
-```
-
-Place a test MP4 named `input_video.mp4` in this folder.
+Put your OpenAI key in `.env`. Keep `PORTAL_URL=https://audit.atlascapture.io/`.
 
 ## Run
 
@@ -46,19 +39,23 @@ Place a test MP4 named `input_video.mp4` in this folder.
 python main.py
 ```
 
+1. Chromium opens the Atlas login page (headed, persistent profile).
+2. Log in and open a labeling task until Segment 1 is visible.
+3. The bot plays/pauses the in-page video, screenshots 1s frames per 3s segment, and fills each label input.
+4. Inspect the filled labels, then press ENTER to click Submit/Next.
+
 Useful flags:
 
 ```bash
-python main.py --video input_video.mp4 --url https://your-portal.example --headless
-python main.py --skip-browser --video input_video.mp4
-python main.py --auto-submit
+python main.py --url https://audit.atlascapture.io/
+python main.py --video path/to/optional.mp4   # local fallback only
 ```
 
-`AUTO_SUBMIT` defaults to false so you can review filled fields before submit.
+Do not use `--auto-submit` until you have verified labels; Atlas audit score depends on accuracy.
 
-## Annotation rules
+## Still needed
 
-Labels are hand-object contact only, imperative voice, no subject nouns, no digits, no trailing period. Idle or no-contact frames become `No Action` and are not written to the UI.
+Paste the **Submit** or **Next** button HTML from the task page (`Ctrl+Shift+C`) if the generic `Submit`/`Next` selector does not hit the real control.
 
 ## Tests
 
