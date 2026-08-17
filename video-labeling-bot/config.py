@@ -173,6 +173,8 @@ VISION_MODELS = [
     "qwen/qwen-2.5-vl-72b-instruct:free",
     "openrouter/auto",
 ]
+# OpenRouter rejects route fallback lists longer than 3.
+OPENROUTER_MAX_ROUTE_FALLBACKS = 3
 
 # Atlas Capture audit portal selectors
 SELECTORS = {

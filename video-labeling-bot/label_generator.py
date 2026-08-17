@@ -14,6 +14,7 @@ from config import (
     NUMBER_MAP,
     OPENROUTER_BASE_URL,
     OPENROUTER_HEADERS,
+    OPENROUTER_MAX_ROUTE_FALLBACKS,
     PLURAL_ONLY_TOOLS,
     SEMICOLON_PATTERN,
     SLASH_PATTERN,
@@ -238,7 +239,7 @@ def generate_label_from_frames(
     instruction = (
         "These are consecutive ego-camera keyframes from ONE existing Atlas segment, "
         "played in order. Label what THE WORKER'S HANDS actually do. "
-        "Digging, carrying, picking up buckets or tools, passing, placing, and holding "
+        "Digging, stirring, carrying, picking up buckets or tools, passing, placing, and holding "
         "ARE actions. Output No Action ONLY if hands are idle and touching nothing. "
         "Keep the same segment; do not invent extra segments. "
         "Account for both hands. Output only the raw label or No Action."
@@ -266,13 +267,18 @@ def generate_label_from_frames(
     for index, model in enumerate(VISION_MODELS):
         try:
             print(f"[OpenRouter]: Trying {model}...")
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=TEMPERATURE,
-                extra_body={"models": VISION_MODELS[index + 1 :]},
-                extra_headers=OPENROUTER_HEADERS,
-            )
+            route_fallbacks = VISION_MODELS[
+                index + 1 : index + 1 + OPENROUTER_MAX_ROUTE_FALLBACKS
+            ]
+            request = {
+                "model": model,
+                "messages": messages,
+                "temperature": TEMPERATURE,
+                "extra_headers": OPENROUTER_HEADERS,
+            }
+            if route_fallbacks:
+                request["extra_body"] = {"models": route_fallbacks}
+            response = client.chat.completions.create(**request)
             raw_label = response.choices[0].message.content
             if not raw_label or not str(raw_label).strip():
                 raise ValueError("Empty model response")

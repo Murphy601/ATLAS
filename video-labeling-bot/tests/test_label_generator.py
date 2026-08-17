@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from config import VISION_MODELS
+from config import OPENROUTER_MAX_ROUTE_FALLBACKS, VISION_MODELS
 from label_generator import generate_label_from_frames
 
 
@@ -22,6 +22,8 @@ def test_falls_back_to_next_openrouter_model(monkeypatch):
 
     def fake_create(**kwargs):
         calls.append(kwargs["model"])
+        fallbacks = (kwargs.get("extra_body") or {}).get("models", [])
+        assert len(fallbacks) <= OPENROUTER_MAX_ROUTE_FALLBACKS
         if kwargs["model"] == VISION_MODELS[0]:
             raise RuntimeError("rate limit")
         return SimpleNamespace(
@@ -34,7 +36,20 @@ def test_falls_back_to_next_openrouter_model(monkeypatch):
     assert calls[1] == VISION_MODELS[1]
 
 
-def test_all_models_fail_returns_no_action(monkeypatch):
+def test_openrouter_route_fallbacks_are_capped_at_three(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    seen = []
+
+    def fake_create(**kwargs):
+        seen.append((kwargs.get("extra_body") or {}).get("models", []))
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="pick up fork"))]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(["aaa"]) == "pick up fork"
+    assert len(seen[0]) == OPENROUTER_MAX_ROUTE_FALLBACKS
+    assert seen[0] == VISION_MODELS[1:4]
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
 
     def fake_create(**kwargs):
