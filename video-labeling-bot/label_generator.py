@@ -51,6 +51,11 @@ LEADING_VERB_PATTERN = re.compile(
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
 TWO_HANDED_TOOLS = ("hose", "rope")
+WIPE_VERBS = {"wipe", "scrub", "wash", "dry", "polish"}
+INCOMPLETE_HAND_PATTERN = re.compile(
+    r"\b(with|in) (left|right)\b(?!\s+hand)",
+    re.IGNORECASE,
+)
 FILL_SOURCE_PATTERN = re.compile(
     rf"\bfill\s+(.+?)\s+with\s+({'|'.join(FILL_SOURCE_TOOLS)})\b",
     re.IGNORECASE,
@@ -169,6 +174,198 @@ def _collapse_redundant_hold(text: str) -> str:
     return _use_both_hands(clauses[0])
 
 
+def _finish_incomplete_hands(text: str) -> str:
+    """wipe plate with right -> wipe plate with right hand."""
+    return INCOMPLETE_HAND_PATTERN.sub(r"\1 \2 hand", text)
+
+
+DISH_PATTERN = re.compile(
+    r"\b(?:glass\s+)?(?:plate|bowl|dish|platter)\b", re.IGNORECASE
+)
+
+
+def _clause_object(clause: str) -> str:
+    text = LEADING_VERB_PATTERN.sub("", clause, count=1).strip()
+    text = re.sub(
+        r"\s+with\s+(.+?)\s+in\s+(?:left hand|right hand|both hands)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\s+(?:with|in)\s+(?:left hand|right hand|both hands)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.strip(" ,")
+
+
+def _is_dish_clause(clause: str) -> bool:
+    return bool(DISH_PATTERN.search(clause or ""))
+
+
+def _cloth_in(text: str) -> str:
+    match = re.search(r"\b(cloth|rag|towel|sponge)\b", text or "", re.IGNORECASE)
+    return match.group(1).lower() if match else "cloth"
+
+
+def _split_false_both_hands(text: str) -> str:
+    """Do not hide hold-left + wipe-right as wipe with both hands."""
+    clauses = split_actions(_finish_incomplete_hands(text))
+    if len(clauses) == 1:
+        clause = clauses[0]
+        verb = _leading_verb(clause)
+        if (
+            verb not in WIPE_VERBS
+            or "both hands" not in clause.lower()
+            or not _is_dish_clause(clause)
+        ):
+            return ", ".join(clauses)
+        obj = _clause_object(clause) or "plate"
+        implement = _cloth_in(clause)
+        return (
+            f"hold {obj} with left hand, "
+            f"{verb} {obj} with {implement} in right hand"
+        )
+    if len(clauses) == 2:
+        first, second = clauses[0], clauses[1]
+        if _leading_verb(first) == "hold":
+            hold, work = first, second
+        elif _leading_verb(second) == "hold":
+            hold, work = second, first
+        else:
+            return ", ".join(clauses)
+        if "both hands" not in hold.lower():
+            return ", ".join(clauses)
+        work_verb = _leading_verb(work)
+        if work_verb not in WIPE_VERBS:
+            return ", ".join(clauses)
+        if not (_is_dish_clause(hold) or _is_dish_clause(work)):
+            return ", ".join(clauses)
+        obj = _clause_object(hold) or _clause_object(work) or "plate"
+        implement = _cloth_in(work)
+        return (
+            f"hold {obj} with left hand, "
+            f"{work_verb} {obj} with {implement} in right hand"
+        )
+    return ", ".join(clauses)
+
+
+def _name_wipe_cloth(text: str) -> str:
+    """wipe plate with right hand -> wipe plate with cloth in right hand."""
+    clauses = split_actions(text)
+    named = []
+    for clause in clauses:
+        if (
+            _leading_verb(clause) in WIPE_VERBS
+            and _is_dish_clause(clause)
+            and not re.search(r"\b(cloth|rag|towel|sponge|brush)\b", clause, re.IGNORECASE)
+        ):
+            clause = re.sub(
+                r"\bwith (left|right) hand\b",
+                r"with cloth in \1 hand",
+                clause,
+                flags=re.IGNORECASE,
+            )
+        named.append(clause)
+    return ", ".join(named)
+
+
+def _ensure_offhand_hold_for_dish_wipe(text: str) -> str:
+    """Name the stabilizing hand when one hand wipes a dish the other is holding."""
+    clauses = split_actions(text)
+    if len(clauses) != 1:
+        return text
+    clause = clauses[0]
+    if _leading_verb(clause) not in WIPE_VERBS or not _is_dish_clause(clause):
+        return text
+    if "both hands" in clause.lower() or HOLD_CLAUSE_PATTERN.search(clause):
+        return text
+    obj = _clause_object(clause)
+    if not obj:
+        return text
+    uses_right = re.search(r"\b(?:in|with) right hand\b", clause, re.IGNORECASE)
+    uses_left = re.search(r"\b(?:in|with) left hand\b", clause, re.IGNORECASE)
+    if uses_right and not uses_left:
+        return f"hold {obj} with left hand, {clause}"
+    if uses_left and not uses_right:
+        return f"hold {obj} with right hand, {clause}"
+    return text
+
+
+def _hid_distinct_hands(label: str | None) -> bool:
+    """True when a draft used both hands to hide hold + a different wipe."""
+    clauses = split_actions(_finish_incomplete_hands(label or ""))
+    if not clauses or "both hands" not in " ".join(clauses).lower():
+        return False
+    if len(clauses) == 1:
+        verb = _leading_verb(clauses[0])
+        if not _is_dish_clause(clauses[0]):
+            return False
+        return verb in WIPE_VERBS or verb == "hold"
+    if len(clauses) == 2:
+        hold = clauses[0] if _leading_verb(clauses[0]) == "hold" else clauses[1]
+        work = clauses[1] if hold is clauses[0] else clauses[0]
+        return (
+            _leading_verb(hold) == "hold"
+            and "both hands" in hold.lower()
+            and _leading_verb(work) in WIPE_VERBS
+        )
+    return False
+
+
+def _has_distinct_hands(label: str) -> bool:
+    blob = (label or "").lower()
+    return "left hand" in blob and "right hand" in blob and "both hands" not in blob
+
+
+def _restore_stabilize_wipe(label: str, previous_label: str | None) -> str:
+    """Keep hold-left + wipe-right when the next row collapses that into both hands."""
+    if not previous_label:
+        return label
+    prev_clauses = split_actions(previous_label)
+    if len(prev_clauses) != 2:
+        return label
+    if _leading_verb(prev_clauses[0]) != "hold":
+        return label
+    work_verb = _leading_verb(prev_clauses[1])
+    if work_verb not in WIPE_VERBS:
+        return label
+    clauses = split_actions(label)
+    if len(clauses) != 1 or "both hands" not in clauses[0].lower():
+        return label
+    verb = _leading_verb(clauses[0])
+    if verb not in WIPE_VERBS and verb != "hold":
+        return label
+    if not (_is_dish_clause(clauses[0]) or _is_dish_clause(prev_clauses[0])):
+        return label
+    obj = _clause_object(clauses[0]) or _clause_object(prev_clauses[0]) or "plate"
+    implement = _cloth_in(prev_clauses[1]) or _cloth_in(clauses[0])
+    return (
+        f"hold {obj} with left hand, "
+        f"{work_verb} {obj} with {implement} in right hand"
+    )
+
+
+def _align_object_names(label: str, previous_label: str | None) -> str:
+    """Keep plate vs bowl consistent with the previous segment."""
+    if not previous_label:
+        return label
+    prev = previous_label.lower()
+    updated = label
+    if re.search(r"\bplate\b", prev) and re.search(r"\bbowl\b", updated, re.IGNORECASE):
+        updated = re.sub(r"\bbowl\b", "plate", updated, flags=re.IGNORECASE)
+    if re.search(r"\bglass plate\b", prev):
+        updated = re.sub(r"(?<!glass )\bplate\b", "glass plate", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bglass glass plate\b", "glass plate", updated, flags=re.IGNORECASE)
+    if re.search(r"\bcloth\b", prev) and re.search(
+        r"\b(rag|towel)\b", updated, re.IGNORECASE
+    ):
+        updated = re.sub(r"\b(?:rag|towel)\b", "cloth", updated, flags=re.IGNORECASE)
+    return updated
+
+
 def _fill_with_visible_substance(text: str) -> str:
     if not re.search(r"\bfill\b", text, re.IGNORECASE):
         return text
@@ -199,15 +396,21 @@ def apply_context_fixes(
     draft_label: str | None = None,
     previous_label: str | None = None,
 ) -> str:
-    """Swap generic 'tool' for a specific name seen in the draft or prior segment."""
+    """Swap generic nouns and keep object names consistent with the prior segment."""
     if not label or label == "No Action":
         return label
-    if not GENERIC_NOUN_PATTERN.search(label):
-        return label
-    specific = _named_implement_in(draft_label, previous_label)
-    if not specific:
-        return label
-    return GENERIC_NOUN_PATTERN.sub(specific, label)
+    updated = _align_object_names(label, previous_label)
+    updated = _align_object_names(updated, draft_label)
+    restored = _restore_stabilize_wipe(updated, previous_label)
+    if restored != updated:
+        updated = restored
+    else:
+        updated = _restore_stabilize_wipe(updated, draft_label)
+    if GENERIC_NOUN_PATTERN.search(updated):
+        specific = _named_implement_in(draft_label, previous_label)
+        if specific:
+            updated = GENERIC_NOUN_PATTERN.sub(specific, updated)
+    return updated
 
 
 def usable_draft(label: str | None) -> str | None:
@@ -376,6 +579,8 @@ def choose_final_label(
 ) -> str:
     """Keep a specific Atlas row unless the frames show a different scene or extra clauses."""
     draft_raw = usable_draft(draft_label)
+    if _is_prompt_example(draft_raw):
+        draft_raw = None
     model = apply_context_fixes(
         sanitize_label(model_label or ""), draft_raw, previous_label
     )
@@ -403,6 +608,12 @@ def choose_final_label(
             )
             return draft
         if len(split_actions(model)) > len(split_actions(draft)):
+            if _hid_distinct_hands(draft_raw) and _has_distinct_hands(model):
+                print(
+                    "[Pipeline]: Draft hid distinct hands as both hands. "
+                    f"Using the model: '{model}'"
+                )
+                return model
             print(
                 f"[Pipeline]: Model added extra actions. Keeping Atlas draft: '{draft}'"
             )
@@ -589,6 +800,10 @@ def sanitize_label(text: str) -> str:
     cleaned = _collapse_redundant_hold(cleaned)
     cleaned = _strip_instrumental_pickup(cleaned)
     cleaned = _strip_micro_movements(cleaned)
+    cleaned = _finish_incomplete_hands(cleaned)
+    cleaned = _split_false_both_hands(cleaned)
+    cleaned = _name_wipe_cloth(cleaned)
+    cleaned = _ensure_offhand_hold_for_dish_wipe(cleaned)
     cleaned = _cap_actions(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
@@ -691,6 +906,10 @@ def _vision_user_content(
         "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
         "Hands holding or using an object is an action even if the stills look similar. "
+        "both hands ONLY if both hands do the same job. "
+        "If left holds a plate and right wipes with a cloth, write: "
+        "hold glass plate with left hand, wipe glass plate with cloth in right hand. "
+        "Never write wipe plate with both hands for that scene. A clear dish is glass plate, not bowl. "
         "Do NOT output No Action if either hand holds an object or a tool. "
         "Never copy a gold example (dough, hose, wrench, scissors) unless it is in the pictures. "
         "Output only the raw label."
@@ -699,6 +918,9 @@ def _vision_user_content(
         intro = (
             "These frames show first-person HAND WORK. Do not output No Action. "
             "Name the object you actually see in the pictures. "
+            "If one hand holds a plate and the other wipes with a cloth, write two clauses "
+            "with left hand and right hand. Do not write both hands for that. "
+            "A clear dish is glass plate, not bowl. "
             "Do not write stuffed animal, scissors, dough, hose, or any example unless it is visible. "
             "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. "
             "Atlas syntax: verb + object + with [hand]. Never refuse. Never explain. "
@@ -707,9 +929,17 @@ def _vision_user_content(
     user_content: list[dict] = [{"type": "text", "text": intro}]
     if duration_seconds is not None:
         user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
-    if previous_label and previous_label != "No Action" and not frames_have_video:
+    if previous_label and previous_label != "No Action":
+        objects = sorted(scene_tokens(previous_label))
+        if objects and (frames_have_video or not is_generic_placeholder_label(previous_label)):
+            user_content[0]["text"] += (
+                " If the same items are still in view, keep these object names: "
+                + ", ".join(objects)
+                + "."
+            )
         keep_previous = (
-            not is_generic_placeholder_label(previous_label)
+            not frames_have_video
+            and not is_generic_placeholder_label(previous_label)
             and (not draft_label or model_fits_draft(previous_label, draft_label))
         )
         if keep_previous:
@@ -723,9 +953,9 @@ def _vision_user_content(
         if frame_timestamps and index < len(frame_timestamps):
             stamp = f" t={frame_timestamps[index]:.2f}s"
         if index == 0:
-            caption = f"Frame {index + 1}/{total} START{stamp} — both hands."
+            caption = f"Frame {index + 1}/{total} START{stamp} — LEFT hand and RIGHT hand separately."
         elif index + 1 == total:
-            caption = f"Frame {index + 1}/{total} END{stamp} — both hands, what changed."
+            caption = f"Frame {index + 1}/{total} END{stamp} — LEFT hand and RIGHT hand, what changed."
         else:
             caption = f"Frame {index + 1}/{total}{stamp}"
         user_content.append({"type": "text", "text": caption})

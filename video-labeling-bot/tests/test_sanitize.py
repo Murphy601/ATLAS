@@ -250,13 +250,16 @@ def test_choose_final_label_is_draft_first():
     leftover = (
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
+    dish = (
+        "hold glass plate with left hand, wipe glass plate with cloth in right hand"
+    )
     assert (
         choose_final_label(
             "wipe glass plate with cloth in right hand",
             leftover,
             frames_have_video=True,
         )
-        == "wipe glass plate with cloth in right hand"
+        == dish
     )
     assert choose_final_label(
         "wipe glass plate with cloth in right hand", leftover
@@ -313,3 +316,52 @@ def test_caps_labels_at_three_actions():
         "hold bowl with left hand, stir soup with spoon in right hand, "
         "wipe rim with left hand"
     )
+
+
+def test_splits_false_both_hands_on_dish_wipe():
+    assert sanitize_label("wipe plate with both hands") == (
+        "hold plate with left hand, wipe plate with cloth in right hand"
+    )
+    assert sanitize_label("hold plate with both hands, wipe plate with right") == (
+        "hold plate with left hand, wipe plate with cloth in right hand"
+    )
+    gold = (
+        "hold glass plate with left hand, wipe glass plate with cloth in right hand"
+    )
+    assert sanitize_label(gold) == gold
+    assert sanitize_label("wipe glass plate with cloth in right hand") == gold
+
+
+def test_does_not_split_true_both_hands_work():
+    assert sanitize_label("unfold red shirt with both hands") == (
+        "unfold red shirt with both hands"
+    )
+    assert sanitize_label("work dough with both hands") == "work dough with both hands"
+    assert sanitize_label(
+        "water plant in bucket with hose in left hand, hold watering can with right hand"
+    ) == "water plant in bucket with hose in both hands"
+    assert sanitize_label("rotate glass plate with both hands") == (
+        "rotate glass plate with both hands"
+    )
+
+
+def test_aligns_bowl_to_plate_and_restores_hold_wipe():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    prev = "hold plate with left hand, wipe plate with cloth in right hand"
+    assert apply_context_fixes(
+        "hold bowl with both hands", previous_label=prev
+    ) == prev
+    glass_prev = (
+        "hold glass plate with left hand, wipe glass plate with cloth in right hand"
+    )
+    assert apply_context_fixes(
+        "hold bowl with both hands", previous_label=glass_prev
+    ) == glass_prev
+    model = (
+        "hold glass plate with left hand, wipe glass plate with cloth in right hand"
+    )
+    assert choose_final_label(model, "wipe plate with both hands") == model
+    assert choose_final_label(
+        "wipe plate with both hands", "wipe plate with both hands"
+    ) == "hold plate with left hand, wipe plate with cloth in right hand"

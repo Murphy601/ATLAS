@@ -150,10 +150,17 @@ TEMPLATE: verb + object + with [left hand|right hand|both hands]
 No articles (a/an/the). No digits. No trailing period.
 No inspect, check, adjust, reach, manipulate, then, next, other, or generic tool/animal.
 Max 3 comma-separated clauses. LEFT side of each image is the LEFT hand.
+
+both hands ONLY when both hands do the SAME motion on the SAME object (knead dough, lift a box).
+If the hands have different jobs, write TWO clauses. Never hide that as both hands.
+  RIGHT: hold glass plate with left hand, wipe glass plate with cloth in right hand
+  WRONG: wipe plate with both hands
+  WRONG: hold bowl with both hands
+A clear dish is glass plate, not bowl. Name the wiping cloth if you see it.
+
 If the object is already in the hand in the first frame, do not write pick up.
 If one hand stabilizes while the other works: hold [object] with [hand], [work clause]
-Name the object you see (plate, cloth, shirt, hose, toy, plant, etc.).
-Do not copy gold-style examples (dough, scissors, wrench) unless they are visible.
+Name the object you see. Do not copy gold-style examples unless they are visible.
 """
 
 # Banned terminology for automated sanitization
@@ -313,6 +320,8 @@ NAMED_IMPLEMENTS = (
     "fork",
     "cup",
     "bowl",
+    "plate",
+    "cloth",
     "pan",
     "bag",
     "pin",
