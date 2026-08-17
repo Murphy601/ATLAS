@@ -34,20 +34,56 @@ OpenRouter free vision models, tried in order:
 
 Set `OPENROUTER_API_KEY` in `.env`. Do not commit that file.
 
-## Setup
+## Windows (PowerShell)
+
+The bot is **not** a folder under `C:\Users\user`. It lives inside the ATLAS git repo.
+
+`source venv/bin/activate` is Linux/macOS only. On Windows use `.\venv\Scripts\Activate.ps1`.
+
+```powershell
+cd $env:USERPROFILE
+git clone -b cursor/video-labeling-bot-ddb9 https://github.com/Murphy601/ATLAS.git
+cd ATLAS\video-labeling-bot
+powershell -ExecutionPolicy Bypass -File .\run.ps1
+```
+
+That script creates `venv`, installs packages, installs Chromium, and starts `main.py`.
+
+Manual equivalent:
+
+```powershell
+cd $env:USERPROFILE\ATLAS\video-labeling-bot
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m playwright install chromium
+copy .env.example .env
+notepad .env
+python main.py
+```
+
+If `Activate.ps1` is blocked:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Or skip activation and call the venv Python directly:
+
+```powershell
+.\venv\Scripts\python.exe main.py
+```
+
+## macOS / Linux
 
 ```bash
-cd video-labeling-bot
+git clone -b cursor/video-labeling-bot-ddb9 https://github.com/Murphy601/ATLAS.git
+cd ATLAS/video-labeling-bot
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 cp .env.example .env
-```
-
-## Run
-
-```bash
 python main.py
 ```
 
