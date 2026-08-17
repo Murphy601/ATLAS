@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Minimum object-noun token overlap before Vision may override an Atlas draft.
+OBJECT_SIMILARITY_THRESHOLD = 0.8
+
 # System prompt enforcing Atlas Capture Standard Text Annotation Rules
 SYSTEM_PROMPT = """
 You are an expert video annotation bot for first-person (ego) video task labelling. Your sole job is to process input video keyframes or descriptions and output EXACT, audit-proof task labels according to strict guidelines.
@@ -55,6 +58,8 @@ CRITICAL ACTION RULES:
    - When Vision sees a single hold or pick up, do not force compound Atlas draft steps into the label.
 5. OBJECT NAMES:
    - Use environment baseline terms: book not page, ground not lawn, cup not jar.
+   - When an Atlas reference draft is provided, use ONLY its exact object names.
+   - DO NOT rename to generic colors or categories (glass cleaner pouch NOT blue package; garment or shirt NOT clothes).
    - If the exact subtype is unclear, prefer bag, needle, cable, shears, or cap over a guessed brand or color name.
    - A metal pin is not a wrench. A wiping cloth is the implement, not the target: wipe the glass cup, not the cloth.
 6. DO NOT COPY THE PREVIOUS SEGMENT:
@@ -255,6 +260,8 @@ If an object moves from one hand to the other, write pass [object] from [hand A]
 A window under 2 seconds has at most ONE action. Under 5 seconds, at most TWO actions. Do not invent extra hold/pass/place chains.
 pick up + pass is TWO clauses. Never write hold + pass + hold.
 Use baseline object names: book not page, ground not lawn, cup not jar.
+When an Atlas reference draft is provided, use ONLY its exact object names.
+DO NOT rename to generic colors or categories (glass cleaner pouch NOT blue package; garment NOT clothes).
 When Vision reports fewer actions than the Atlas draft, trust the simpler Vision label unless frame quality is very poor.
 Keep Atlas names: sachet not food from refrigerator or red box. bag not red box.
 A metal pin is not a wrench. When wiping a glass cup, the cup is the target and cloth is the implement.

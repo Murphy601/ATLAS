@@ -16,6 +16,7 @@ from config import (
     LOOKING_VERBS,
     MAX_ACTIONS_PER_LABEL,
     NO_ACTION_MIN_SECONDS,
+    OBJECT_SIMILARITY_THRESHOLD,
     WORK_MICROS,
     KEEP_PICKUP_BEFORE,
     MISSING_IF_DROPPED,
@@ -681,6 +682,8 @@ def _is_dish_clause(clause: str) -> bool:
 def _normalize_glass_cup(text: str) -> str:
     """Bare 'glass' being held/wiped is a glass cup, not a glass door."""
     if not text or GLASS_SURFACE_PATTERN.search(text):
+        return text
+    if re.search(r"\bglass cleaner\b", text, re.IGNORECASE):
         return text
     return re.sub(r"\bglass\b(?!\s+cup\b)", "glass cup", text, flags=re.IGNORECASE)
 
@@ -1680,7 +1683,7 @@ def _lock_workpiece_nouns(
 
 
 def _lock_atlas_draft_objects(label: str, draft_label: str | None) -> str:
-    """Keep Atlas object names (sachet, bag, hoe) over generic VLM renames."""
+    """Keep Atlas object names (sachet, bag, hoe, pouch, garment) over generic VLM renames."""
     if not label or not draft_label:
         return label
     draft = draft_label.lower()
@@ -1701,6 +1704,30 @@ def _lock_atlas_draft_objects(label: str, draft_label: str | None) -> str:
         updated = re.sub(r"\bred box\b", "cloth", updated, flags=re.IGNORECASE)
     if re.search(r"\bhoe\b", draft):
         updated = re.sub(r"\bshovel\b", "hoe", updated, flags=re.IGNORECASE)
+    if re.search(r"glass cleaner pouch|cleaner pouch", draft):
+        for generic in (
+            r"blue package",
+            r"red package",
+            r"green package",
+            r"\b(?:blue|red|green|yellow|orange|pink|grey|gray|white|black)\s+package\b",
+        ):
+            updated = re.sub(
+                generic, "glass cleaner pouch", updated, flags=re.IGNORECASE
+            )
+    elif re.search(r"\bpouch\b", draft):
+        updated = re.sub(
+            r"\b(?:blue|red|green|yellow|orange|pink|grey|gray|white|black)\s+package\b",
+            "pouch",
+            updated,
+            flags=re.IGNORECASE,
+        )
+    if re.search(r"\bgarment\b", draft):
+        updated = re.sub(r"\bclothes\b", "garment", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bclothing\b", "garment", updated, flags=re.IGNORECASE)
+    elif re.search(r"grey shirt|gray shirt", draft):
+        updated = re.sub(r"\bclothes\b", "grey shirt", updated, flags=re.IGNORECASE)
+    elif re.search(r"\bshirt\b", draft):
+        updated = re.sub(r"\bclothes\b", "shirt", updated, flags=re.IGNORECASE)
     return updated
 
 
@@ -1924,6 +1951,10 @@ HALLUCINATION_PAIRS = (
     (r"\bsnack bag\b", r"\bbottle\b"),
     (r"\bmetal pin\b", r"\bwrench\b"),
     (r"\bhoe\b", r"\b(?:bucket|shovel)\b"),
+    (r"glass cleaner pouch|cleaner pouch", r"blue package"),
+    (r"\bpouch\b", r"\b(?:blue|red|green)\s+package\b"),
+    (r"\bgarment\b", r"\bclothes\b"),
+    (r"grey shirt|gray shirt", r"\bclothes\b"),
 )
 
 REQUIRED_EXTRA_VERBS = {
@@ -1959,6 +1990,184 @@ LEFTOVER_LABEL_PATTERN = re.compile(
     r"stuffed animal|work dough|trim stuffed",
     re.IGNORECASE,
 )
+GENERIC_VISION_DEGRADATIONS = re.compile(
+    r"\b(?:clothes|clothing)\b|"
+    r"\b(?:blue|red|green|yellow|orange|pink|grey|gray|white|black)\s+package\b",
+    re.IGNORECASE,
+)
+CONTINUOUS_WORK_VERBS = WIPE_VERBS | {
+    "squeeze",
+    "iron",
+    "work",
+    "stir",
+    "twist",
+    "fold",
+    "knead",
+    "seal",
+    "smoothen",
+}
+
+
+def draft_object_phrases(label: str | None) -> list[str]:
+    """Multi-word object phrases from each clause (Atlas vocabulary lock source)."""
+    if not label:
+        return []
+    phrases: list[str] = []
+    for clause in split_actions(label):
+        obj = _clause_object_noun(clause)
+        if obj:
+            phrases.append(obj.strip())
+        implement = IMPLEMENT_IN_HAND.search(clause or "")
+        if implement:
+            phrases.append(implement.group(1).strip())
+    seen: set[str] = set()
+    unique: list[str] = []
+    for phrase in phrases:
+        key = phrase.casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(phrase)
+    return unique
+
+
+def _object_phrase_tokens(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for token in re.findall(r"[a-z]+", (text or "").lower()):
+        if len(token) > 2 and token not in SCENE_STOP:
+            tokens.add(OBJECT_CANONICAL.get(token, token))
+    return tokens
+
+
+def object_noun_similarity(model: str, draft: str | None) -> float:
+    """Share of Atlas draft object tokens that appear in the Vision label (0–1)."""
+    draft_phrases = draft_object_phrases(draft)
+    if not draft_phrases:
+        return 1.0
+    draft_tokens: set[str] = set()
+    for phrase in draft_phrases:
+        draft_tokens |= _object_phrase_tokens(phrase)
+    model_tokens: set[str] = set()
+    for phrase in draft_object_phrases(model):
+        model_tokens |= _object_phrase_tokens(phrase)
+    if not draft_tokens:
+        return 1.0
+    if not model_tokens:
+        return 0.0
+    return len(draft_tokens & model_tokens) / len(draft_tokens)
+
+
+def model_degrades_draft_vocabulary(model: str, draft: str | None) -> bool:
+    """True when Vision swapped specific Atlas nouns for generic color/category terms."""
+    if not model or not draft:
+        return False
+    if GENERIC_VISION_DEGRADATIONS.search(model):
+        return True
+    draft_tokens: set[str] = set()
+    for phrase in draft_object_phrases(draft):
+        draft_tokens |= _object_phrase_tokens(phrase)
+    model_tokens: set[str] = set()
+    for phrase in draft_object_phrases(model):
+        model_tokens |= _object_phrase_tokens(phrase)
+    if model_tokens and draft_tokens and model_tokens <= draft_tokens:
+        return False
+    return object_noun_similarity(model, draft) < OBJECT_SIMILARITY_THRESHOLD
+
+
+def should_trust_vision_over_draft(
+    model: str,
+    draft: str | None,
+    *,
+    frames_have_video: bool = False,
+) -> bool:
+    """Vision may override Atlas only when objects match and vocabulary is not degraded."""
+    if not draft or not model:
+        return bool(model)
+    if looks_like_leftover_label(draft):
+        return frames_have_video
+    if model_hallucinates_against_draft(model, draft):
+        return False
+    if model_fits_draft(model, draft):
+        return True
+    if not frames_have_video:
+        return False
+    if model_degrades_draft_vocabulary(model, draft):
+        return False
+    return object_noun_similarity(model, draft) >= OBJECT_SIMILARITY_THRESHOLD
+
+
+def build_draft_vocabulary_system_addon(draft: str | None) -> str:
+    """Append Atlas draft object names to the Vision system prompt."""
+    phrases = draft_object_phrases(draft)
+    if not phrases:
+        return ""
+    quoted = ", ".join(f"'{phrase}'" for phrase in phrases)
+    return (
+        "\n\nCRITICAL DRAFT VOCABULARY LOCK:\n"
+        f"You MUST use these exact object names from the Atlas reference draft: {quoted}.\n"
+        "DO NOT rename items to generic colors or categories "
+        "(e.g. use 'glass cleaner pouch' NOT 'blue package'; "
+        "use 'grey shirt' or 'garment' NOT 'clothes').\n"
+        "Select object nouns ONLY from the reference draft list above."
+    )
+
+
+def _clean_atlas_draft_fallback(
+    draft: str,
+    model: str | None = None,
+    duration_seconds: float | None = None,
+) -> str:
+    """Strip redundant compound draft clauses when Vision confirms one continuous action."""
+    if not draft:
+        return draft
+    blob = draft.lower()
+    if re.search(r"place.*bucket", blob) and re.search(r"pick up hoe", blob):
+        return enforce_segment_action_limit(draft, duration_seconds)
+    model_parts = split_actions(model or "")
+    draft_parts = split_actions(draft)
+    chosen = draft
+    if model and model_degrades_draft_vocabulary(model, draft):
+        model_parts = split_actions(model)
+        draft_parts = split_actions(draft)
+        if (
+            len(model_parts) == 1
+            and len(draft_parts) > 1
+            and (model_fits_draft(model, draft) or _same_goal_verb(model, draft))
+        ):
+            work_parts = [
+                part
+                for part in draft_parts
+                if _leading_verb(part) not in {"hold", "pass"}
+            ]
+            if work_parts:
+                chosen = work_parts[0]
+        return enforce_segment_action_limit(chosen, duration_seconds)
+    if model_parts and len(model_parts) == 1 and len(draft_parts) > 1:
+        model_verb = _leading_verb(model_parts[0])
+        if model_verb and model_verb not in {"hold", "pass"}:
+            matching = [
+                part for part in draft_parts if _leading_verb(part) == model_verb
+            ]
+            if matching:
+                chosen = matching[0]
+            else:
+                work_parts = [
+                    part
+                    for part in draft_parts
+                    if _leading_verb(part) in CONTINUOUS_WORK_VERBS
+                ]
+                if len(work_parts) == 1:
+                    chosen = work_parts[0]
+                elif work_parts and model_verb in CONTINUOUS_WORK_VERBS:
+                    chosen = work_parts[0]
+    return enforce_segment_action_limit(chosen, duration_seconds)
+
+
+def _finalize_draft_choice(
+    draft: str,
+    model: str | None = None,
+    duration_seconds: float | None = None,
+) -> str:
+    return _clean_atlas_draft_fallback(draft, model, duration_seconds)
 
 
 def scene_tokens(label: str | None) -> set[str]:
@@ -2014,7 +2223,14 @@ def model_fits_draft(model_label: str, draft_label: str | None) -> bool:
     model_objects = _canonical_scene_tokens(model_label)
     if not draft_objects:
         return True
-    return bool(draft_objects & model_objects)
+    if not draft_objects & model_objects:
+        return False
+    similarity = object_noun_similarity(model_label, draft)
+    if similarity >= OBJECT_SIMILARITY_THRESHOLD:
+        return True
+    if model_objects <= draft_objects and len(model_objects) < len(draft_objects):
+        return False
+    return similarity >= 0.5
 
 
 def _labels_match(left: str | None, right: str | None) -> bool:
@@ -2087,9 +2303,24 @@ def _prefer_simpler_model_over_compound_draft(
         draft_raw or ""
     ):
         return False
+    if (
+        len(model_parts) == 1
+        and _leading_verb(model_parts[0]) == "hold"
+        and len(draft_parts) > 1
+    ):
+        hold_objects = draft_object_phrases(model)
+        draft_blob = " ".join(draft_object_phrases(draft)).lower()
+        if hold_objects and all(obj.lower() in draft_blob for obj in hold_objects):
+            return True
     if not model_fits_draft(model, draft):
         return False
     if _model_skipped_setup(model, draft, previous_label):
+        return False
+    if model_degrades_draft_vocabulary(model, draft):
+        return False
+    model_work = set(_work_verbs(model))
+    draft_work = set(_work_verbs(draft))
+    if model_work and draft_work and not model_work <= draft_work:
         return False
     if _is_case_a_stabilize(draft) and not _is_case_a_stabilize(model):
         draft_work = {
@@ -2274,25 +2505,25 @@ def choose_final_label(
         )
         if not model:
             print(f"[Pipeline]: Using Atlas draft (model empty): '{draft}'")
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if model_hallucinates_against_draft(model, draft_raw):
             print(
                 "[Pipeline]: Model swapped a specific Atlas name for a common mistake. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _copied_previous_ignoring_draft(model, draft, previous_label):
             print(
                 "[Pipeline]: Model copied the previous segment. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _model_copied_previous_scene(model, draft, previous_label):
             print(
                 "[Pipeline]: Model reused the previous clip's objects. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _prefer_simpler_model_over_compound_draft(
             model,
             draft,
@@ -2310,37 +2541,37 @@ def choose_final_label(
                 "[Pipeline]: Model turned work into a hold. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _prefer_hold_draft_over_pickup(model, draft):
             print(
                 "[Pipeline]: Object was already in hand. "
                 f"Keeping Atlas hold: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if not validate_clause_syntax(model) and validate_clause_syntax(draft):
             print(
                 "[Pipeline]: Model clause is missing an object noun. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _invented_cut_on_hold_draft(model, draft):
             print(
                 "[Pipeline]: Model invented a cut. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _model_skipped_setup(model, draft, previous_label):
             print(
                 "[Pipeline]: Model skipped setup before the main task. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if _model_inflated_pass_chain(model, draft):
             print(
                 "[Pipeline]: Model added stabilizing holds around a pass. "
                 f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if (
             _same_goal_verb(model, draft)
             and len(split_actions(model)) == 1
@@ -2352,13 +2583,15 @@ def choose_final_label(
                 "[Pipeline]: Same single goal as the Atlas draft. "
                 f"Keeping Atlas names: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if not model_fits_draft(model, draft):
             leftover = looks_like_leftover_label(draft_raw)
-            if frames_have_video and leftover:
-                reason = "leftover row text"
+            if should_trust_vision_over_draft(
+                model, draft_raw, frames_have_video=frames_have_video
+            ):
+                reason = "leftover row text" if leftover else "sufficient object overlap"
                 print(
-                    f"[Pipeline]: Frames show different objects than {reason}. "
+                    f"[Pipeline]: Vision object names accepted ({reason}). "
                     f"Using the model: '{model}'"
                 )
                 return model
@@ -2367,17 +2600,14 @@ def choose_final_label(
                     "[Pipeline]: Same goal verb as the Atlas draft. "
                     f"Keeping Atlas names: '{draft}'"
                 )
-                return draft
-            if frames_have_video:
-                print(
-                    "[Pipeline]: Frames show different objects than the row text. "
-                    f"Using the model: '{model}'"
-                )
-                return model
+                return _finalize_draft_choice(draft, model, duration_seconds)
+            similarity = object_noun_similarity(model, draft_raw)
             print(
-                f"[Pipeline]: Model named different objects. Keeping Atlas draft: '{draft}'"
+                "[Pipeline]: Vision degraded Atlas object vocabulary "
+                f"({similarity:.0%} overlap). "
+                f"Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         placed = _prefer_place_over_pickup(model, draft)
         if placed:
             print(
@@ -2394,13 +2624,13 @@ def choose_final_label(
                     "[Pipeline]: Short window cannot fit the extra clauses. "
                     f"Keeping Atlas draft: '{draft}'"
                 )
-                return draft
+                return _finalize_draft_choice(draft, model, duration_seconds)
             if _has_release(draft) and not _has_release(model):
                 print(
                     "[Pipeline]: Draft already has a place/set. "
                     f"Keeping Atlas draft: '{draft}'"
                 )
-                return draft
+                return _finalize_draft_choice(draft, model, duration_seconds)
             if _is_case_a_stabilize(model) and not _is_case_a_stabilize(draft):
                 print(
                     "[Pipeline]: Draft missed an off-hand stabilize. "
@@ -2428,7 +2658,7 @@ def choose_final_label(
             print(
                 f"[Pipeline]: Model added extra actions. Keeping Atlas draft: '{draft}'"
             )
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         if len(split_actions(draft)) > len(split_actions(model)):
             if _prefer_simpler_model_over_compound_draft(
                 model,
@@ -2459,10 +2689,10 @@ def choose_final_label(
                     "[Pipeline]: Model dropped a required hold/place. "
                     f"Keeping Atlas draft: '{draft}'"
                 )
-                return draft
+                return _finalize_draft_choice(draft, model, duration_seconds)
         chosen = reconcile_with_draft(model, draft)
         if is_generic_placeholder_label(chosen):
-            return draft
+            return _finalize_draft_choice(draft, model, duration_seconds)
         return chosen
 
     if model:
@@ -2819,6 +3049,14 @@ def _vision_user_content(
     user_content: list[dict] = [{"type": "text", "text": intro}]
     if duration_seconds is not None:
         user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
+    if draft_label:
+        draft_objects = draft_object_phrases(draft_label)
+        if draft_objects:
+            user_content[0]["text"] += (
+                " Atlas reference object names (use ONLY these exact nouns): "
+                + ", ".join(draft_objects)
+                + "."
+            )
     if previous_label and previous_label != "No Action":
         objects = sorted(scene_tokens(previous_label))
         if objects and (frames_have_video or not is_generic_placeholder_label(previous_label)):
@@ -2948,31 +3186,30 @@ def _query_vision_models(
             hallucinated = bool(
                 draft_label and model_hallucinates_against_draft(cleaned, draft_label)
             )
-            if hallucinated or (draft_label and not model_fits_draft(cleaned, draft_label)):
-                leftover = looks_like_leftover_label(draft_label)
-                if hallucinated:
-                    saw_wrong_scene = True
-                    print(
-                        f"[OpenRouter]: {model} swapped a specific Atlas name "
-                        f"({cleaned!r} vs {draft_label!r}). Trying next model..."
-                    )
-                    continue
-                if frames_have_video and leftover:
-                    print(
-                        f"[OpenRouter]: {model} named different objects than leftover row text "
-                        f"({cleaned!r} vs {draft_label!r}). Frames look real, using the model."
-                    )
-                    return cleaned
-                if frames_have_video:
-                    print(
-                        f"[OpenRouter]: {model} named different objects than the row text "
-                        f"({cleaned!r} vs {draft_label!r}). Frames look real, using the model."
-                    )
-                    return cleaned
+            if hallucinated:
                 saw_wrong_scene = True
                 print(
-                    f"[OpenRouter]: {model} named different objects than the Atlas draft "
+                    f"[OpenRouter]: {model} swapped a specific Atlas name "
                     f"({cleaned!r} vs {draft_label!r}). Trying next model..."
+                )
+                continue
+            if draft_label and not model_fits_draft(cleaned, draft_label):
+                if should_trust_vision_over_draft(
+                    cleaned,
+                    draft_label,
+                    frames_have_video=frames_have_video,
+                ):
+                    print(
+                        f"[OpenRouter]: {model} object names accepted "
+                        f"({object_noun_similarity(cleaned, draft_label):.0%} draft overlap). "
+                        f"Using the model."
+                    )
+                    return reconcile_with_draft(cleaned, draft_label)
+                saw_wrong_scene = True
+                print(
+                    f"[OpenRouter]: {model} object vocabulary degraded vs Atlas draft "
+                    f"({object_noun_similarity(cleaned, draft_label):.0%} overlap, "
+                    f"need {OBJECT_SIMILARITY_THRESHOLD:.0%}). Trying next model..."
                 )
                 continue
             if draft_label and _labels_match(cleaned, draft_label):
@@ -2988,14 +3225,18 @@ def _query_vision_models(
 
     kept_draft = usable_draft(draft_label)
     if kept_draft and saw_wrong_scene:
-        print(
-            "[Pipeline]: Models did not match the scene. Keeping Atlas draft: "
-            f"'{kept_draft}'"
-        )
-        return apply_context_fixes(
+        cleaned_draft = apply_context_fixes(
             sanitize_label(kept_draft),
             draft_label,
             previous_label,
+            duration_seconds=duration_seconds,
+        )
+        print(
+            "[Pipeline]: Models did not match the scene. Keeping Atlas draft: "
+            f"'{cleaned_draft}'"
+        )
+        return _finalize_draft_choice(
+            cleaned_draft,
             duration_seconds=duration_seconds,
         )
     if last_generic:
@@ -3042,6 +3283,8 @@ def generate_label_from_frames(
         frames_have_video=frames_have_video,
     )
     system = ACTION_SYSTEM_PROMPT if frames_have_video else SYSTEM_PROMPT
+    if draft_label:
+        system += build_draft_vocabulary_system_addon(draft_label)
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user_content},

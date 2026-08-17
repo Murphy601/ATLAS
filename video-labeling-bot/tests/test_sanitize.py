@@ -986,6 +986,43 @@ def test_trusts_simpler_vision_over_compound_draft():
     )
 
 
+def test_draft_vocabulary_lock_and_similarity_guard():
+    from label_generator import (
+        build_draft_vocabulary_system_addon,
+        choose_final_label,
+        model_degrades_draft_vocabulary,
+        object_noun_similarity,
+        should_trust_vision_over_draft,
+    )
+
+    pouch_draft = "pick up glass cleaner pouch with right hand"
+    assert "glass cleaner pouch" in build_draft_vocabulary_system_addon(pouch_draft)
+    assert model_degrades_draft_vocabulary(
+        "pick up blue package with right hand", pouch_draft
+    )
+    assert not should_trust_vision_over_draft(
+        "pick up blue package with right hand",
+        pouch_draft,
+        frames_have_video=True,
+    )
+    assert choose_final_label(
+        "pick up blue package with right hand",
+        pouch_draft,
+        frames_have_video=True,
+    ) == "pick up glass cleaner pouch with right hand"
+
+    scrub_draft = (
+        "scrub grey shirt with both hands, squeeze garment with both hands"
+    )
+    assert object_noun_similarity("wash clothes with both hands", scrub_draft) < 0.8
+    assert choose_final_label(
+        "wash clothes with both hands",
+        scrub_draft,
+        duration_seconds=3.5,
+        frames_have_video=True,
+    ) == "scrub grey shirt with both hands"
+
+
 def test_assessment_pass_count_object_and_hand_golds():
     from label_generator import apply_context_fixes, choose_final_label
 
