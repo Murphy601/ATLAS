@@ -61,7 +61,7 @@ def process_live_task(
     processed_any = False
 
     previous_label = None
-    for segment in segments:
+    for index, segment in enumerate(segments):
         duration = segment.duration_seconds
         bot.play_segment_clip(segment.number)
         chunk = bot.capture_segment_frames(
@@ -83,6 +83,9 @@ def process_live_task(
             else segment.start_seconds + duration
         )
         draft = usable_draft(segment.draft_label)
+        next_draft = None
+        if index + 1 < len(segments):
+            next_draft = usable_draft(segments[index + 1].draft_label)
         if segment.draft_label and draft is None:
             print("[Pipeline]: Ignoring No Action draft; labeling from frames.")
         elif draft:
@@ -94,6 +97,7 @@ def process_live_task(
             duration_seconds=duration,
             frame_timestamps=[frame[0] for frame in chunk],
             frames_have_video=getattr(bot, "last_frames_have_video", False),
+            next_label=next_draft,
         )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")

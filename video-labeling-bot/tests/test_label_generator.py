@@ -383,6 +383,47 @@ def test_uses_model_when_frames_show_a_different_scene(monkeypatch):
     ) == DISH_GOLD
 
 
+def test_retries_when_flash_hallucinates_against_specific_draft(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    calls = []
+    draft = "hold cap with left hand, insert needle into patch with right hand"
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == VISION_MODELS[0]:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                "hold hat with left hand, write on hat with pen in right hand"
+                            )
+                        )
+                    )
+                ]
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "hold cap with left hand, insert needle into patch with right hand"
+                        )
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label=draft,
+        frames_have_video=True,
+    ) == draft
+    assert calls[0] == VISION_MODELS[0]
+    assert calls[1] == VISION_MODELS[1]
+
+
 def test_skips_copied_prompt_example(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
     calls = []

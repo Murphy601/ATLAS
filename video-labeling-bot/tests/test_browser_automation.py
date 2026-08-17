@@ -252,6 +252,27 @@ def test_repeated_copy_drafts_ignores_leftover_stuffed_animal_rows():
     ]
     assert not _repeated_copy_drafts(laundry)
 
+    mop = [
+        SegmentRow(
+            number=index + 1,
+            start_seconds=float(index * 5),
+            locator_index=index,
+            draft_label="mop floor with both hands",
+        )
+        for index in range(4)
+    ]
+    assert not _repeated_copy_drafts(mop)
+    rake = [
+        SegmentRow(
+            number=index + 1,
+            start_seconds=float(index * 4),
+            locator_index=index,
+            draft_label="rake leaves on lawn with rake in both hands",
+        )
+        for index in range(4)
+    ]
+    assert not _repeated_copy_drafts(rake)
+
 
 def test_frame_in_segment_window_rejects_previous_segment_timestamp():
     assert not frame_in_segment_window(45.40, 54.28, 4.99)

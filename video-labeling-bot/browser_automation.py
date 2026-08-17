@@ -1310,7 +1310,11 @@ def _timestamp_to_seconds(value: str) -> float:
 
 
 def _repeated_copy_drafts(segments: list[SegmentRow]) -> bool:
-    """True when 3+ rows share the same sentence (leftover bot text, not Atlas)."""
+    """True when 3+ rows share leftover bot text from another clip, not real Atlas coarse labels."""
+    leftover_row = re.compile(
+        r"stuffed animal|work dough|trim stuffed",
+        re.IGNORECASE,
+    )
     bases: list[str] = []
     for segment in segments:
         text = (segment.draft_label or "").strip().lower()
@@ -1323,4 +1327,7 @@ def _repeated_copy_drafts(segments: list[SegmentRow]) -> bool:
     counts: dict[str, int] = {}
     for base in bases:
         counts[base] = counts.get(base, 0) + 1
-    return max(counts.values()) >= 3
+    for text, count in counts.items():
+        if count >= 3 and leftover_row.search(text):
+            return True
+    return False

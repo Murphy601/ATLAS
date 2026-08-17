@@ -20,7 +20,8 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 - Atlas drafts are **untrusted** and are not sent to the vision model. If every model still says No Action, the bot keeps the draft and rewrites bare `animal` to `stuffed animal` instead of filling No Action.
 - Frames are captured while the clip **plays at 1x**, covering start through end. The bottom of the frame is kept (ego hands). When those stills have texture, the model is told not to answer No Action.
 - During capture the bot fullscreens **only the player**, then exits before typing labels so rows are not overwritten blindly. Do not press F11 on the whole Chrome window — that hides the segment inputs.
-- If `debug_frames/` JPEGs show hands, the model is trusted even when leftover row text says something else (for example stuffed animal on a dish clip).
+- If `debug_frames/` JPEGs show hands, leftover wrong-clip row text (stuffed animal on a dish clip) is overridden. Specific Atlas drafts (cap/needle, mop floor, strip wire, glass door) are kept when the model names a disjoint hallucination (hat/pen, toy, twist, ceiling).
+- Identical coarse Atlas rows (`mop floor with both hands` on every segment) are kept. Only identical leftover bot sentences (`stuffed animal`, `work dough`) are ignored.
 - First-visit Atlas drafts are saved in `original_drafts/` so a later re-run does not treat leftover bot text as Atlas gold.
 - Label fields: `input[aria-label="Segment 1 label"]`
 - Submit: `button:has-text("Submit practice clip")`, fallback Complete / Submit assessment

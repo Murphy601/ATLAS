@@ -525,3 +525,81 @@ def test_practice_golds_cloth_book_and_rake():
         "pick up cloth with left hand",
         previous_label="pick up red cloth with left hand",
     ) == "pick up red cloth with left hand"
+
+
+def test_splits_glass_cup_wipe_and_keeps_iron_shirt():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    assert sanitize_label("wipe glass with cloth in both hands") == (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    assert sanitize_label("wipe glass cup with cloth in both hands") == (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    assert sanitize_label("wipe glass door with cloth in both hands") == (
+        "wipe glass door with cloth in both hands"
+    )
+    assert sanitize_label("iron shirt with right hand") == "iron shirt with right hand"
+    prev = (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    assert apply_context_fixes(
+        "hold glass with both hands", previous_label=prev
+    ) == (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    assert choose_final_label(
+        "wipe glass with cloth in both hands",
+        "wipe glass with cloth in both hands",
+    ) == prev
+
+
+def test_keeps_cap_needle_draft_over_hat_pen_hallucination():
+    from label_generator import choose_final_label
+
+    draft = "hold cap with left hand, insert needle into patch with right hand"
+    hallucinated = "hold hat with left hand, write on hat with pen in right hand"
+    assert (
+        choose_final_label(hallucinated, draft, frames_have_video=True) == draft
+    )
+
+
+def test_keeps_trailing_pickup_and_strip_draft():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    assert choose_final_label(
+        "twist blue wire with both hands, pick up pliers with right hand",
+        "twist blue wire with both hands",
+    ) == "twist blue wire with both hands, pick up pliers with right hand"
+    assert apply_context_fixes(
+        "twist blue wire with both hands",
+        next_label="pick up pliers with right hand, hold blue wire with left hand",
+    ) == "twist blue wire with both hands, pick up pliers with right hand"
+    strip = "strip blue wire with pliers in right hand, hold wire with left hand"
+    assert choose_final_label(
+        "hold blue wire with left hand, twist blue wire with pliers in right hand",
+        strip,
+        previous_label="hold blue wire with left hand, twist blue wire with pliers in right hand",
+        frames_have_video=True,
+        ) == "strip blue wire with pliers in right hand, hold wire with left hand"
+
+
+def test_keeps_mop_floor_draft_over_hold_toy():
+    from label_generator import choose_final_label
+
+    assert (
+        choose_final_label(
+            "hold toy with both hands",
+            "mop floor with both hands",
+            frames_have_video=True,
+        )
+        == "mop floor with both hands"
+    )
+    assert (
+        choose_final_label(
+            "hold mop with both hands",
+            "mop floor with both hands",
+            frames_have_video=True,
+        )
+        == "mop floor with both hands"
+    )

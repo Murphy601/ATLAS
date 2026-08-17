@@ -167,8 +167,11 @@ If the hands have different jobs, write TWO clauses. Always label the off-hand w
   WRONG: cut carrot with right hand
   RIGHT: hold glass plate with left hand, wipe glass plate with cloth in right hand
   WRONG: wipe plate with both hands
+  RIGHT: hold glass cup with left hand, wipe glass cup with cloth in right hand
+  WRONG: wipe glass with cloth in both hands
 If an object changes hands: pass [object] from [hand] to [hand].
-A clear dish is glass plate, not bowl. Name the wiping cloth if you see it.
+A clear dish is glass plate, not bowl. A drinking glass is glass cup, not glass.
+Name the wiping cloth if you see it.
 
 NO ACTION five-second rule: write No Action ONLY if hands are off the task for this whole window AND the window is at least five seconds.
 A task-relevant hold is not No Action. Never mix No Action with a real action.
@@ -178,6 +181,8 @@ Shorter idle stays in the work label.
 If they pick up a tool only to use it immediately, omit pick up.
   RIGHT: water plant with hose in right hand
   WRONG: pick up hose with right hand, water plant with hose in right hand
+Keep pick up when it is the LAST action in this window (the tool is for the next segment).
+  RIGHT: twist blue wire with both hands, pick up pliers with right hand
 Do not write shift/align/slide/tilt/tap inside cut/wipe/dig/water/write/scrub.
 Do not write hold of the SAME tool already named in the work clause.
 
@@ -192,6 +197,9 @@ Compare FIRST vs LAST frame: if the object ends on a shelf/table, write place no
 Adjectives only when two similar items: pick up red cloth with left hand.
 If the object is already in the hand in the first frame, do not write pick up.
 Name the object you see. Do not copy gold-style examples unless they are visible.
+A sewing needle is not a pen. A cap is not a hat. Shears are not pliers.
+strip insulation is not twist. A mop is not a toy. A door is not a ceiling.
+If the Atlas row already names needle/cap/shears/strip/mop/door, keep those names.
 """
 
 # Banned terminology for automated sanitization
@@ -349,9 +357,13 @@ NAMED_IMPLEMENTS = (
     "wrench",
     "hammer",
     "screwdriver",
+    "sewing needle",
+    "shears",
     "pliers",
     "scissors",
     "tongs",
+    "needle",
+    "mop",
     "bottle",
     "sachet",
     "bucket",
@@ -424,6 +436,11 @@ USE_VERBS = {
     "smoothen",
     "fold",
     "rake",
+    "strip",
+    "mop",
+    "twist",
+    "insert",
+    "pull",
 }
 
 MICRO_VERBS = {"shift", "align", "slide", "tilt", "tap", "pat"}
@@ -459,6 +476,9 @@ CONTINUOUS_VERBS = {
     "smoothen",
     "fold",
     "rake",
+    "strip",
+    "mop",
+    "twist",
 }
 
 # AI API Configuration — OpenRouter (paid vision models, cheapest first)

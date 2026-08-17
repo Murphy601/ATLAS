@@ -51,7 +51,7 @@ LEADING_VERB_PATTERN = re.compile(
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
     r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim|seal|smoothen|"
-    r"rake)\b",
+    r"rake|strip|mop)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
@@ -505,7 +505,12 @@ def _finish_incomplete_hands(text: str) -> str:
 
 
 DISH_PATTERN = re.compile(
-    r"\b(?:glass\s+)?(?:plate|bowl|dish|platter)\b", re.IGNORECASE
+    r"\b(?:glass\s+cup|glass\s+plate|plate|bowl|dish|platter|cup)\b",
+    re.IGNORECASE,
+)
+GLASS_SURFACE_PATTERN = re.compile(
+    r"\bglass\s+(?:door|window|table|plate|pane)\b",
+    re.IGNORECASE,
 )
 
 
@@ -528,6 +533,13 @@ def _clause_object(clause: str) -> str:
 
 def _is_dish_clause(clause: str) -> bool:
     return bool(DISH_PATTERN.search(clause or ""))
+
+
+def _normalize_glass_cup(text: str) -> str:
+    """Bare 'glass' being held/wiped is a glass cup, not a glass door."""
+    if not text or GLASS_SURFACE_PATTERN.search(text):
+        return text
+    return re.sub(r"\bglass\b(?!\s+cup\b)", "glass cup", text, flags=re.IGNORECASE)
 
 
 def _cloth_in(text: str) -> str:
@@ -676,6 +688,11 @@ def _restore_stabilize_wipe(label: str, previous_label: str | None) -> str:
         return label
     obj = _clause_object(clauses[0]) or _clause_object(prev_clauses[0]) or "plate"
     implement = _cloth_in(prev_clauses[1]) or _cloth_in(clauses[0])
+    if verb == "hold" and re.search(r"\bglass cup\b", obj, re.IGNORECASE):
+        return (
+            f"rotate {obj} with left hand, "
+            f"{work_verb} {obj} with {implement} in right hand"
+        )
     return (
         f"hold {obj} with left hand, "
         f"{work_verb} {obj} with {implement} in right hand"
@@ -693,6 +710,11 @@ def _align_object_names(label: str, previous_label: str | None) -> str:
     if re.search(r"\bglass plate\b", prev):
         updated = re.sub(r"(?<!glass )\bplate\b", "glass plate", updated, flags=re.IGNORECASE)
         updated = re.sub(r"\bglass glass plate\b", "glass plate", updated, flags=re.IGNORECASE)
+    if re.search(r"\bglass cup\b", prev):
+        updated = re.sub(r"(?<!glass )\bcup\b", "glass cup", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bglass glass cup\b", "glass cup", updated, flags=re.IGNORECASE)
+    if re.search(r"\bcable\b", prev) and re.search(r"\bwire\b", updated, re.IGNORECASE):
+        updated = re.sub(r"\bwire\b", "cable", updated, flags=re.IGNORECASE)
     if re.search(r"\bcloth\b", prev) and re.search(
         r"\b(rag|towel)\b", updated, re.IGNORECASE
     ):
@@ -884,6 +906,25 @@ def _prefer_place_over_pickup(model: str, draft: str) -> str | None:
     return draft if draft_verb == "place" else model
 
 
+def _append_end_of_window_pickup(label: str, next_label: str | None) -> str:
+    """Keep pick up of a tool the next row uses when this window only did the prior work."""
+    if not label or label == "No Action" or not next_label:
+        return label
+    parts = split_actions(label)
+    if len(parts) >= MAX_ACTIONS_PER_LABEL:
+        return label
+    if any(_leading_verb(part) == "pick up" for part in parts):
+        return label
+    if not re.search(r"\b(?:wire|cable)\b", label, re.IGNORECASE):
+        return label
+    for tool in ("shears", "pliers", "scissors"):
+        if re.search(rf"\b{tool}\b", next_label, re.IGNORECASE) and not re.search(
+            rf"\b{tool}\b", label, re.IGNORECASE
+        ):
+            return f"{label}, pick up {tool} with right hand"
+    return label
+
+
 def _named_implement_in(*texts: str | None) -> str | None:
     blob = " ".join(part or "" for part in texts)
     if not blob:
@@ -898,11 +939,13 @@ def apply_context_fixes(
     label: str,
     draft_label: str | None = None,
     previous_label: str | None = None,
+    next_label: str | None = None,
 ) -> str:
     """Swap generic nouns and keep object names consistent with the prior segment."""
     if not label or label == "No Action":
         return label
-    updated = _align_object_names(label, previous_label)
+    updated = _normalize_glass_cup(label)
+    updated = _align_object_names(updated, previous_label)
     updated = _align_object_names(updated, draft_label)
     updated = _align_work_verbs(updated, previous_label)
     updated = _rewrite_hand_change_as_pass(updated, previous_label)
@@ -916,6 +959,7 @@ def apply_context_fixes(
         specific = _named_implement_in(draft_label, previous_label)
         if specific:
             updated = GENERIC_NOUN_PATTERN.sub(specific, updated)
+    updated = _append_end_of_window_pickup(updated, next_label)
     return updated
 
 
@@ -1008,7 +1052,54 @@ SCENE_STOP = frozenset(
         "grab",
         "take",
         "using",
+        "mop",
+        "strip",
+        "rake",
     }
+)
+
+OBJECT_CANONICAL = {
+    "hat": "cap",
+    "beanie": "cap",
+    "wire": "cable",
+    "pliers": "shears",
+    "glass": "cup",
+    "page": "book",
+    "towel": "cloth",
+    "rag": "cloth",
+    "pen": "needle",
+    "pencil": "needle",
+    "pin": "needle",
+}
+
+HALLUCINATION_PAIRS = (
+    (r"\b(?:sewing\s+)?needle\b", r"\b(?:pen|pencil)\b"),
+    (r"\bcap\b", r"\bhat\b"),
+    (r"\b(?:sewing\s+)?needle\b", r"\b(?:write|peel|sticker)\b"),
+    (r"\bstrip\b", r"\btwist\b"),
+    (r"\bshears\b", r"\bpliers\b"),
+    (r"\bmop\b", r"\btoy\b"),
+    (r"\b(?:glass\s+)?door\b", r"\b(?:ceiling|plant|table)\b"),
+    (r"\binsert\b", r"\b(?:write|peel)\b"),
+    (r"\bbowl\b", r"\brub\b"),
+    (r"\bpatch\b", r"\b(?:pen|sticker)\b"),
+)
+
+REQUIRED_EXTRA_VERBS = {
+    "pick up",
+    "place",
+    "set",
+    "insert",
+    "pull",
+    "fold",
+    "gather",
+}
+
+WORK_DRAFT_VERBS = {"mop", "sweep", "rake", "wipe", "scrub", "iron", "strip", "twist"}
+
+LEFTOVER_LABEL_PATTERN = re.compile(
+    r"stuffed animal|work dough|trim stuffed",
+    re.IGNORECASE,
 )
 
 
@@ -1018,6 +1109,35 @@ def scene_tokens(label: str | None) -> set[str]:
     return {word for word in words if len(word) > 2 and word not in SCENE_STOP}
 
 
+def _canonical_scene_tokens(label: str | None) -> set[str]:
+    return {OBJECT_CANONICAL.get(token, token) for token in scene_tokens(label)}
+
+
+def looks_like_leftover_label(label: str | None) -> bool:
+    """True when row text is leftover bot output from another clip, not Atlas gold."""
+    text = (label or "").strip()
+    if not text:
+        return False
+    if _is_prompt_example(text):
+        return True
+    return bool(LEFTOVER_LABEL_PATTERN.search(text))
+
+
+def model_hallucinates_against_draft(model_label: str, draft_label: str | None) -> bool:
+    """True when Flash swapped a specific Atlas noun/verb for a common VLM mistake."""
+    draft = usable_draft(draft_label)
+    if not draft or not model_label or model_label == "No Action":
+        return False
+    if looks_like_leftover_label(draft):
+        return False
+    d = draft.lower()
+    m = model_label.lower()
+    for draft_pat, model_pat in HALLUCINATION_PAIRS:
+        if re.search(draft_pat, d) and re.search(model_pat, m) and not re.search(draft_pat, m):
+            return True
+    return False
+
+
 def model_fits_draft(model_label: str, draft_label: str | None) -> bool:
     """False when the model names a different scene than a specific Atlas draft."""
     draft = usable_draft(draft_label)
@@ -1025,8 +1145,8 @@ def model_fits_draft(model_label: str, draft_label: str | None) -> bool:
         return True
     if not model_label or model_label == "No Action":
         return False
-    draft_objects = scene_tokens(draft)
-    model_objects = scene_tokens(model_label)
+    draft_objects = _canonical_scene_tokens(draft)
+    model_objects = _canonical_scene_tokens(model_label)
     if not draft_objects:
         return True
     return bool(draft_objects & model_objects)
@@ -1034,6 +1154,55 @@ def model_fits_draft(model_label: str, draft_label: str | None) -> bool:
 
 def _labels_match(left: str | None, right: str | None) -> bool:
     return (left or "").strip().casefold() == (right or "").strip().casefold()
+
+
+def _work_verbs(label: str | None) -> tuple[str, ...]:
+    return tuple(
+        _leading_verb(clause)
+        for clause in split_actions(label or "")
+        if _leading_verb(clause) and _leading_verb(clause) != "hold"
+    )
+
+
+def _copied_previous_ignoring_draft(
+    model: str, draft: str, previous: str | None
+) -> bool:
+    """True when the model reused the last row while this Atlas draft has a new verb."""
+    if not previous or not draft or not model:
+        return False
+    if looks_like_leftover_label(draft) or is_generic_placeholder_label(draft):
+        return False
+    model_verbs = _work_verbs(model)
+    prev_verbs = _work_verbs(previous)
+    if not model_verbs or model_verbs != prev_verbs:
+        return False
+    return bool(set(_work_verbs(draft)) - set(model_verbs))
+
+
+def _prefer_work_draft_over_idle_hold(model: str, draft: str) -> bool:
+    """mop floor / strip wire beats hold mop / hold wire."""
+    model_parts = split_actions(model)
+    draft_parts = split_actions(draft)
+    if len(model_parts) != 1 or len(draft_parts) != 1:
+        return False
+    if _leading_verb(model_parts[0]) != "hold":
+        return False
+    return _leading_verb(draft_parts[0]) in WORK_DRAFT_VERBS
+
+
+def _model_adds_required_extra(model: str, draft: str) -> bool:
+    """Keep a trailing pick up/place/pass/insert the draft omitted."""
+    model_parts = split_actions(model)
+    draft_parts = split_actions(draft)
+    if len(model_parts) <= len(draft_parts):
+        return False
+    extra = model_parts[-1]
+    verb = _leading_verb(extra)
+    if verb not in REQUIRED_EXTRA_VERBS:
+        return False
+    if verb == "pick up" and extra is model_parts[0]:
+        return False
+    return True
 
 
 def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
@@ -1086,13 +1255,17 @@ def choose_final_label(
     previous_label: str | None = None,
     frames_have_video: bool = False,
     duration_seconds: float | None = None,
+    next_label: str | None = None,
 ) -> str:
-    """Keep a specific Atlas row unless the frames show a different scene or extra clauses."""
+    """Keep a specific Atlas row unless the frames show a leftover wrong-clip scene."""
     draft_raw = usable_draft(draft_label)
     if _is_prompt_example(draft_raw):
         draft_raw = None
     model = apply_context_fixes(
-        sanitize_label(model_label or ""), draft_raw, previous_label
+        sanitize_label(model_label or ""),
+        draft_raw,
+        previous_label,
+        next_label,
     )
     long_idle = (
         duration_seconds is not None
@@ -1109,14 +1282,35 @@ def choose_final_label(
             rewrite_generic_animal_draft(draft_raw),
             draft_raw,
             previous_label,
+            next_label,
         )
         if not model:
             print(f"[Pipeline]: Using Atlas draft (model empty): '{draft}'")
             return draft
+        if model_hallucinates_against_draft(model, draft_raw):
+            print(
+                "[Pipeline]: Model swapped a specific Atlas name for a common mistake. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        if _copied_previous_ignoring_draft(model, draft, previous_label):
+            print(
+                "[Pipeline]: Model copied the previous segment. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        if _prefer_work_draft_over_idle_hold(model, draft):
+            print(
+                "[Pipeline]: Model turned work into a hold. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
         if not model_fits_draft(model, draft):
+            leftover = looks_like_leftover_label(draft_raw)
             if frames_have_video:
+                reason = "leftover row text" if leftover else "the row text"
                 print(
-                    "[Pipeline]: Frames show different objects than the row text. "
+                    f"[Pipeline]: Frames show different objects than {reason}. "
                     f"Using the model: '{model}'"
                 )
                 return model
@@ -1146,6 +1340,12 @@ def choose_final_label(
             if _has_release(model) and not _has_release(draft):
                 print(
                     "[Pipeline]: Draft missed a place/set. "
+                    f"Using the model: '{model}'"
+                )
+                return model
+            if _model_adds_required_extra(model, draft):
+                print(
+                    "[Pipeline]: Draft missed a pick up/place/pass. "
                     f"Using the model: '{model}'"
                 )
                 return model
@@ -1344,6 +1544,7 @@ def sanitize_label(text: str) -> str:
     cleaned = _fill_with_visible_substance(cleaned)
     cleaned = _finish_incomplete_hands(cleaned)
     cleaned = _fill_missing_clause_objects(cleaned)
+    cleaned = _normalize_glass_cup(cleaned)
     cleaned = _split_false_both_hands(cleaned)
     cleaned = _replace_unapproved_nouns(cleaned)
     cleaned = _name_wipe_cloth(cleaned)
@@ -1370,7 +1571,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold|strip|mop)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -1467,8 +1668,11 @@ def _vision_user_content(
         "Hands holding or using an object is an action even if the stills look similar. "
         "both hands ONLY if both hands do the same job. "
         "If one hand holds a cloth and the other rubs it, write hold cloth in left hand, smoothen cloth with right hand. Not fold with both hands. "
+        "If one hand holds a glass cup and the other wipes it, write hold glass cup with left hand, wipe glass cup with cloth in right hand. Not both hands. "
         "rake leaves needs on ground and with rake in [hand]. Never erase — write wipe with cloth. "
+        "A sewing needle is not a pen. A cap is not a hat. Shears are not pliers. strip is not twist. "
         "If the LAST frame shows the object on a shelf or table, write place not pick up. "
+        "If pick up is the last motion in this window, keep it. "
         "Do NOT output No Action if either hand holds an object or a tool. "
         "Never copy a gold example (dough, hose, wrench, scissors) unless it is in the pictures. "
         "Output only the raw label."
@@ -1618,7 +1822,24 @@ def _query_vision_models(
                         f"({cleaned!r}). Trying next model..."
                     )
                     continue
-            if draft_label and not model_fits_draft(cleaned, draft_label):
+            hallucinated = bool(
+                draft_label and model_hallucinates_against_draft(cleaned, draft_label)
+            )
+            if hallucinated or (draft_label and not model_fits_draft(cleaned, draft_label)):
+                leftover = looks_like_leftover_label(draft_label)
+                if hallucinated:
+                    saw_wrong_scene = True
+                    print(
+                        f"[OpenRouter]: {model} swapped a specific Atlas name "
+                        f"({cleaned!r} vs {draft_label!r}). Trying next model..."
+                    )
+                    continue
+                if frames_have_video and leftover:
+                    print(
+                        f"[OpenRouter]: {model} named different objects than leftover row text "
+                        f"({cleaned!r} vs {draft_label!r}). Frames look real, using the model."
+                    )
+                    return cleaned
                 if frames_have_video:
                     print(
                         f"[OpenRouter]: {model} named different objects than the row text "
@@ -1670,6 +1891,7 @@ def generate_label_from_frames(
     duration_seconds: float | None = None,
     frame_timestamps: list[float] | None = None,
     frames_have_video: bool = False,
+    next_label: str | None = None,
 ) -> str:
     """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
@@ -1678,6 +1900,7 @@ def generate_label_from_frames(
 
     draft_label = usable_draft(draft_label)
     previous_label = usable_draft(previous_label)
+    next_label = usable_draft(next_label)
 
     base64_frames, frame_timestamps = _subsample_frames(
         base64_frames, frame_timestamps, max_frames=5
@@ -1715,6 +1938,7 @@ def generate_label_from_frames(
         previous_label,
         frames_have_video=frames_have_video,
         duration_seconds=duration_seconds,
+        next_label=next_label,
     )
 
 
