@@ -5,39 +5,60 @@ from browser_automation import VideoBrowserBot
 FIXTURE = Path(__file__).parent / "fixtures" / "annotation_portal.html"
 
 
-def test_fill_atlas_segment_labels(tmp_path):
+def test_open_work_queue_clicks_assessment_practice(tmp_path):
     bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
     try:
         bot.start(FIXTURE.resolve().as_uri())
+        assert bot.page.locator("#clip-page").is_hidden()
+        mode = bot.open_work_queue()
+        assert mode == "practice"
+        assert bot.page.locator("#clip-page").is_visible()
+    finally:
+        bot.stop()
+
+
+def test_open_work_queue_clicks_listed_review_when_practice_is_gone(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    try:
+        bot.start(FIXTURE.resolve().as_uri())
+        bot.page.locator("#continue-practice").evaluate("el => el.remove()")
+        bot.page.locator("#review-task").evaluate("el => el.hidden = false")
+        mode = bot.open_work_queue()
+        assert mode == "live"
+        assert bot.page.locator("#clip-page").is_visible()
+    finally:
+        bot.stop()
+
+
+def test_fill_replaces_ai_draft_without_deleting_row(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    try:
+        bot.start(FIXTURE.resolve().as_uri())
+        bot.open_work_queue()
         segments = bot.discover_segments()
         assert [row.number for row in segments] == [1, 2]
-        assert [row.start_seconds for row in segments] == [0.0, 3.0]
+        assert segments[0].start_seconds == 0.0
+        assert segments[0].end_seconds == 1.67
+        assert "bucket" in segments[0].draft_label
+        assert segments[1].start_seconds == 1.67
 
         bot.fill_segment_label(
             1,
             "pick up bucket with left hand, pick up tool with right hand",
             start_seconds=0,
         )
-        bot.fill_segment_label(2, "No Action", start_seconds=3)
-
         assert (
             bot.page.locator('input[aria-label="Segment 1 label"]').input_value()
             == "pick up bucket with left hand, pick up tool with right hand"
         )
+        assert bot.page.locator('input[aria-label="Segment 2 label"]').count() == 1
         assert (
             bot.page.locator('input[aria-label="Segment 2 label"]').input_value()
-            == "No Action"
-        )
-
-        bot.add_timestamp_and_label("00:00", "00:03", "place bucket on floor")
-        assert (
-            bot.page.locator('input[aria-label="Segment 1 label"]').input_value()
-            == "place bucket on floor"
+            == "dig soil with tool in right hand"
         )
 
         bot.submit_final_task()
         assert bot.page.locator("#submitted").is_visible()
-        assert bot.page.locator('button:has-text("Submit practice clip")').count() == 1
     finally:
         bot.stop()
 
@@ -46,6 +67,7 @@ def test_capture_live_segment_frames(tmp_path):
     bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
     try:
         bot.start(FIXTURE.resolve().as_uri())
+        bot.open_work_queue()
         bot.page.evaluate(
             """() => {
                 const video = document.querySelector('video');

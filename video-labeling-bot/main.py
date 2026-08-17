@@ -48,16 +48,15 @@ def process_live_task(
         print("[Pipeline]: No Atlas segment rows found. Open a labeling task and retry.")
         return
 
-    print(
-        f"\n[Pipeline]: Labeling {len(segments)} segments "
-        f"({interval_seconds:g}s frames / {segment_duration:g}s windows)..."
-    )
+    print(f"\n[Pipeline]: Correcting {len(segments)} existing AI-labeled segments...")
 
     previous_label = None
     for segment in segments:
+        duration = segment.duration_seconds
+        bot.play_segment_clip(segment.number)
         chunk = bot.capture_segment_frames(
             start_seconds=segment.start_seconds,
-            segment_duration=segment_duration,
+            segment_duration=duration,
             interval_seconds=interval_seconds,
         )
         if not chunk:
@@ -68,9 +67,17 @@ def process_live_task(
             continue
 
         start_str = format_timestamp(segment.start_seconds)
-        end_str = format_timestamp(segment.start_seconds + segment_duration)
+        end_str = format_timestamp(
+            segment.end_seconds
+            if segment.end_seconds is not None
+            else segment.start_seconds + duration
+        )
+        if segment.draft_label:
+            print(f"[Pipeline]: AI draft: '{segment.draft_label}'")
         label = generate_label_from_frames(
-            [frame[1] for frame in chunk], previous_label=previous_label
+            [frame[1] for frame in chunk],
+            previous_label=previous_label,
+            draft_label=segment.draft_label or None,
         )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")

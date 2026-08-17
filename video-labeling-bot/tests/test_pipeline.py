@@ -11,6 +11,9 @@ def test_process_live_task_fills_every_segment_including_no_action():
         def prepare_video_playback(self):
             return None
 
+        def play_segment_clip(self, segment_number):
+            return None
+
         def discover_segments(self):
             return [
                 SegmentRow(number=1, start_seconds=0.0, locator_index=0),

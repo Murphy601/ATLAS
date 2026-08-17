@@ -214,7 +214,9 @@ def sanitize_label(text: str) -> str:
 
 
 def generate_label_from_frames(
-    base64_frames: list[str], previous_label: str | None = None
+    base64_frames: list[str],
+    previous_label: str | None = None,
+    draft_label: str | None = None,
 ) -> str:
     """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
@@ -230,10 +232,13 @@ def generate_label_from_frames(
     ]
 
     instruction = (
-        "These are consecutive ego-camera keyframes from ONE segment. "
-        "Label what THE WORKER'S HANDS do using Atlas Standard Text Annotation Rules. "
+        "These are consecutive ego-camera keyframes from ONE existing Atlas segment. "
+        "Correct the AI draft so it matches what THE WORKER'S HANDS actually do. "
+        "Keep the same segment; do not invent extra segments. "
         "Account for both hands. Output only the raw label or No Action."
     )
+    if draft_label:
+        instruction += f" Current AI draft to correct: {draft_label}."
     if previous_label and previous_label != "No Action":
         instruction += (
             f" Previous segment label (keep object names and hand-state consistent): "
