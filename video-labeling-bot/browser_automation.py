@@ -373,6 +373,7 @@ class VideoBrowserBot:
 
     def play_segment_clip(self, segment_number: int):
         """Clicks 'Play segment N' so Atlas plays that window at 1x. No seeking."""
+        self._exit_player_fullscreen()
         row_input = self.page.locator(
             f'input[aria-label="Segment {segment_number} label"]'
         ).first
@@ -548,6 +549,63 @@ class VideoBrowserBot:
             }"""
         )
         print("[Browser Bot]: In-page video is ready for frame capture.")
+
+    def _enter_player_fullscreen(self) -> bool:
+        """Fullscreen only the player for capture. Do not F11 the whole Chrome window."""
+        if self.headless:
+            return False
+        try:
+            ok = self.page.evaluate(
+                """async () => {
+                    const video = document.querySelector('video');
+                    if (!video) return false;
+                    if (document.fullscreenElement) return true;
+                    const host =
+                        video.closest(
+                            '[class*="player" i], [class*="Player"], [data-player], figure'
+                        ) || video;
+                    const target =
+                        host && typeof host.requestFullscreen === 'function'
+                            ? host
+                            : video;
+                    try {
+                        await target.requestFullscreen();
+                        return true;
+                    } catch (error) {
+                        try {
+                            await video.requestFullscreen();
+                            return true;
+                        } catch (inner) {
+                            return false;
+                        }
+                    }
+                }"""
+            )
+        except Exception:
+            return False
+        if ok:
+            time.sleep(0.35)
+            print("[Browser Bot]: Player fullscreen for capture. Labels stay in the page.")
+        return bool(ok)
+
+    def _exit_player_fullscreen(self):
+        """Leave player fullscreen so segment inputs can be filled without hitting the wrong row."""
+        if self.headless:
+            return
+        try:
+            self.page.evaluate(
+                """async () => {
+                    if (document.fullscreenElement) {
+                        await document.exitFullscreen();
+                    }
+                }"""
+            )
+            time.sleep(0.2)
+        except Exception:
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:
+                pass
 
     def _force_video_into_compositor(self):
         """Pull the video off a hardware overlay so screenshots include pixels."""
@@ -856,9 +914,13 @@ class VideoBrowserBot:
                 start_seconds, segment_duration, interval_seconds
             )
         else:
-            frames = self._capture_realtime(
-                start_seconds, segment_duration, interval_seconds
-            )
+            self._enter_player_fullscreen()
+            try:
+                frames = self._capture_realtime(
+                    start_seconds, segment_duration, interval_seconds
+                )
+            finally:
+                self._exit_player_fullscreen()
         in_window = [
             item
             for item in frames
@@ -1039,6 +1101,7 @@ class VideoBrowserBot:
         start_seconds: float | None = None,
     ):
         """Replaces the existing AI draft text in that segment row. Rows are not deleted."""
+        self._exit_player_fullscreen()
         cleaned = (label or "No Action")[:MAX_LABEL_LENGTH]
         locator = self.page.locator(
             f'input[aria-label="Segment {segment_number} label"]'
