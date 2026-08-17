@@ -9,7 +9,13 @@ load_dotenv()
 SYSTEM_PROMPT = """
 You are an expert video annotation bot for first-person (ego) video task labelling. Your sole job is to process input video keyframes or descriptions and output EXACT, audit-proof task labels according to strict guidelines.
 
-A segment is ONE continuous interaction with a primary object toward a SINGLE GOAL. The practice grader COUNTS COMMA-SEPARATED CLAUSES as separate actions. If the window is 1 action and you write 2 clauses, you FAIL.
+A segment is ONE continuous interaction with a primary object toward a single goal.
+
+#1 audit failures on assessment: MISSING ACTION and WRONG HAND.
+You MUST account for BOTH hands in every window. If the left hand holds or stabilizes while the right hand works, write both clauses.
+  RIGHT: hold paper with left hand, cut paper with scissors in right hand
+  WRONG: cut paper with scissors in right hand
+Never invent a hold if that hand is empty. Never drop a real hold.
 
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
@@ -35,44 +41,41 @@ A segment is ONE continuous interaction with a primary object toward a SINGLE GO
 * PLURAL-ONLY TOOLS (CRITICAL): Tools with two blades/jaws MUST ALWAYS BE PLURAL: "scissors", "tongs", "pliers" (NEVER "scissor").
 
 ### 3. WATCH THE FRAMES BEFORE YOU WRITE
-Compare the FIRST frame (segment start) to the LAST frame (segment end):
+EGO CAMERA: these images are from the worker's head. Do not mirror.
+* The hand on the LEFT SIDE of the image is the LEFT hand.
+* The hand on the RIGHT SIDE of the image is the RIGHT hand.
+Compare FIRST frame (start) to LAST frame (end):
 * pick up = object was at rest and LEAVES a surface or container.
-* hold = object STAYS in the same hand and is not relocated. Use hold only when that off-hand stabilize is a DISTINCT action on a DIFFERENT object.
-* set = object is released onto ground or floor.
-* place = object is released onto a table, board, shelf, or INTO a container. place ALWAYS needs a location.
+* hold / stabilize / align / smooth = object STAYS in that hand. If the off-hand is gripping anything, you MUST label it.
+* set = released onto ground.
+* place = released onto a table, board, shelf, floor, or INTO a container. place ALWAYS needs a location.
 * If an object is lifted at the end of the window, that is pick up, NOT hold.
-* If an object is lowered onto floor/table at the end of the window, that is place/set, NOT pick up.
-* If the object STARTS in one hand and ENDS in the other, you MUST write a pass:
+* If an object is lowered onto floor/table at the end, that is place/set, NOT pick up.
+* If the object STARTS in one hand and ENDS in the other, write a pass:
   pass bottle from right hand to left hand
-  Never omit the receiving hand.
-* If both hands are on the SAME tool for the SAME goal, that is ONE action with both hands. Do not invent a second hold clause.
+* both hands = both hands are on the SAME tool doing the SAME motion (hose, dough). Not a substitute for hold + work.
 
-### 4. ACTION COUNT: BOTH HANDS VS HOLD (CRITICAL)
-The grader error "The window contains 1 action(s); the label states 2." means you over-split.
+### 4. ACTION COUNT: BOTH HANDS (CRITICAL)
+Look at left hand, then right hand, in every frame.
 
-CASE A — same goal, hands cooperating on one tool/object:
-Write ONE coarse clause with "both hands" or "with [tool] in both hands".
-  RIGHT: water plant in bucket with hose in both hands
-  WRONG: water plant in bucket with hose in left hand, hold watering can with right hand
-  RIGHT: fill watering can with water with hose in both hands
-  WRONG: fill watering can with hose in left hand, hold watering can with right hand
-Never add "hold X with [other] hand" just to mention the unused hand. Use both hands instead.
-
-CASE B — two distinct roles or two distinct objects:
-Then list them (max 3). Off-hand stabilize + working hand IS two actions:
+CASE A — off-hand hold + working hand (MOST COMMON; write TWO clauses, max three):
+  RIGHT: hold paper with left hand, cut paper with scissors in right hand
   RIGHT: hold mushrooms on board with left hand, chop mushrooms on board with knife in right hand
-  RIGHT: set hose on ground with left hand, pick up watering can with right hand
-  WRONG: place hose on ground with left hand, hold watering can with right hand
-        (left SETS the hose down; right PICKS UP the can — that is not a hold)
+  RIGHT: hold bowl with left hand, stir soup with spoon in right hand
+  WRONG: cut paper with scissors in both hands
+  WRONG: cut paper with scissors in right hand   (missing the hold)
 
-CASE C — account for a missed action only when it is real:
-Pass, dip, pick up, and place/set must appear when they happen. Do not drop a put-down at the end of the window.
+CASE B — both hands on the SAME tool, same motion:
+  RIGHT: water plant in bucket with hose in both hands
+  RIGHT: work dough with both hands
+  Do not add a fake hold of a different object.
+
+CASE C — transfers in one window (do not drop any):
   RIGHT: place hoe on ground with right hand, gather soil with both hands
-  WRONG: gather soil with both hands
-If you pick up AND place in one window, write BOTH verbs, attach the object to each, and give place a location:
   RIGHT: pick up wrench and place wrench on table with right hand
+  RIGHT: pick up bottle with right hand, pass bottle from right hand to left hand
+  WRONG: gather soil with both hands
   WRONG: pick up and place wrench with right hand
-  WRONG: place wrench on bolt with right hand
 
 ### 5. WHAT TO LABEL VS. IGNORE
 * LABEL goal-directed hand–object actions that move the task forward.
@@ -101,6 +104,7 @@ If you pick up AND place in one window, write BOTH verbs, attach the object to e
 ### GOLD EXAMPLES
 * pick up nail polish bottle with left hand
 * place nail polish bottle in box with left hand
+* hold paper with left hand, cut paper with scissors in right hand
 * hold mushrooms on board with left hand, chop mushrooms on board with knife in right hand
 * place knife on board with right hand
 * shift plastic bag with left hand, pick up plastic bag with right hand
@@ -171,6 +175,7 @@ VERB_CORRECTIONS = {
     "passing": "pass",
     "filling": "fill",
     "setting": "set",
+    "stabilizing": "hold",
 }
 
 # Banned verb replacements that stay audit-safe
@@ -180,6 +185,7 @@ VERB_REPLACEMENTS = {
     "touching": "hold",
     "touch": "hold",
     "grab": "pick up",
+    "stabilize": "hold",
 }
 
 # Mapping digits to words for string replacement
@@ -330,4 +336,6 @@ SELECTORS = {
 # Pipeline defaults (overridable via environment variables)
 DEFAULT_PORTAL_URL = os.getenv("PORTAL_URL", "https://audit.atlascapture.io/")
 DEFAULT_SEGMENT_DURATION = float(os.getenv("SEGMENT_DURATION", "3.0"))
-DEFAULT_FRAME_INTERVAL = float(os.getenv("FRAME_INTERVAL", "1.0"))
+DEFAULT_FRAME_INTERVAL = float(os.getenv("FRAME_INTERVAL", "0.5"))
+MIN_FRAMES_PER_SEGMENT = int(os.getenv("MIN_FRAMES_PER_SEGMENT", "5"))
+MAX_FRAMES_PER_SEGMENT = int(os.getenv("MAX_FRAMES_PER_SEGMENT", "10"))

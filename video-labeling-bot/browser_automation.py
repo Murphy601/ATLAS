@@ -5,14 +5,45 @@ from dataclasses import dataclass, replace
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
-from config import SELECTORS
+from config import (
+    MAX_FRAMES_PER_SEGMENT,
+    MIN_FRAMES_PER_SEGMENT,
+    SELECTORS,
+)
 
-MAX_FRAMES_PER_SEGMENT = 6
 MAX_LABEL_LENGTH = 2000
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["continue_practice"]}, '
     f'{SELECTORS["segment_input"]}'
 )
+
+
+def sample_segment_timestamps(
+    start_seconds: float,
+    duration: float,
+    interval_seconds: float = 0.5,
+    min_frames: int = MIN_FRAMES_PER_SEGMENT,
+    max_frames: int = MAX_FRAMES_PER_SEGMENT,
+) -> list[float]:
+    """Evenly spaced times from START through END, 5–10 frames for a typical clip."""
+    duration = max(float(duration), 0.2)
+    interval = max(float(interval_seconds), 0.2)
+    count = int(round(duration / interval)) + 1
+    count = max(min_frames, count)
+    count = min(max_frames, count)
+    if count <= 1:
+        return [round(start_seconds, 3)]
+    times = [
+        round(start_seconds + (duration * index / (count - 1)), 3)
+        for index in range(count)
+    ]
+    deduped: list[float] = []
+    for timestamp in times:
+        if not deduped or abs(timestamp - deduped[-1]) > 0.04:
+            deduped.append(timestamp)
+    if abs(deduped[-1] - (start_seconds + duration)) > 0.04:
+        deduped.append(round(start_seconds + duration, 3))
+    return deduped[:max_frames]
 
 
 @dataclass(frozen=True)
@@ -492,7 +523,7 @@ class VideoBrowserBot:
 
     def _screenshot_video_base64(self) -> str:
         video = self.page.locator(SELECTORS["video"]).first
-        image_bytes = video.screenshot(type="jpeg", quality=70)
+        image_bytes = video.screenshot(type="jpeg", quality=80)
         return base64.b64encode(image_bytes).decode("utf-8")
 
     def capture_segment_frames(
@@ -501,7 +532,10 @@ class VideoBrowserBot:
         segment_duration: float = 3.0,
         interval_seconds: float = 1.0,
     ) -> list[tuple[float, str]]:
-        """Watch the clip at 1x in headed Chrome; seek only in headless tests."""
+        """Watch the clip at 1x in headed Chrome; seek only in headless tests.
+
+        Always includes the START and END of the window, targeting 5–10 frames.
+        """
         if segment_duration <= 0:
             segment_duration = 0.5
         if not self.headless:
@@ -514,14 +548,18 @@ class VideoBrowserBot:
         segment_duration: float,
         interval_seconds: float,
     ) -> list[tuple[float, str]]:
-        """Play the segment in real time and screenshot about once per second."""
+        """Play the segment in real time and screenshot about twice per second."""
         end_seconds = start_seconds + segment_duration
         print(
             f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at normal speed..."
         )
         self._play_from(start_seconds)
         frames: list[tuple[float, str]] = []
-        last_bucket = -1
+        try:
+            frames.append((self._video_time() or start_seconds, self._screenshot_video_base64()))
+        except Exception as exc:
+            print(f"[Browser Bot]: Start screenshot skipped ({exc})")
+        last_bucket = 0
         deadline = time.time() + segment_duration + 4.0
         while time.time() < deadline:
             current = self._video_time()
@@ -534,19 +572,25 @@ class VideoBrowserBot:
                     last_bucket = bucket
                 except Exception as exc:
                     print(f"[Browser Bot]: Screenshot skipped ({exc})")
-            if len(frames) >= 12 and current >= end_seconds - 0.2:
+            if len(frames) >= MAX_FRAMES_PER_SEGMENT and current >= end_seconds - 0.2:
                 break
-            time.sleep(0.2)
+            time.sleep(min(0.15, max(interval_seconds / 2, 0.08)))
         self.page.evaluate(
             """() => {
                 const video = document.querySelector('video');
                 if (video) video.pause();
             }"""
         )
+        if not frames or frames[-1][0] < end_seconds - 0.2:
+            try:
+                self._seek_video(end_seconds)
+                frames.append((end_seconds, self._screenshot_video_base64()))
+            except Exception:
+                pass
         if not frames:
             frames = self._capture_by_seek(start_seconds, segment_duration, interval_seconds)
         print(f"[Browser Bot]: Captured {len(frames)} realtime frame(s).")
-        return frames
+        return frames[:MAX_FRAMES_PER_SEGMENT]
 
     def _capture_by_seek(
         self,
@@ -555,16 +599,13 @@ class VideoBrowserBot:
         interval_seconds: float,
     ) -> list[tuple[float, str]]:
         frames: list[tuple[float, str]] = []
-        step = interval_seconds
-        estimated = max(1, int(segment_duration / step))
-        if estimated > MAX_FRAMES_PER_SEGMENT:
-            step = segment_duration / MAX_FRAMES_PER_SEGMENT
-        offset = 0.0
-        while offset < segment_duration - 1e-6:
-            timestamp = start_seconds + offset
+        for timestamp in sample_segment_timestamps(
+            start_seconds,
+            segment_duration,
+            interval_seconds,
+        ):
             self._seek_video(timestamp)
             frames.append((timestamp, self._screenshot_video_base64()))
-            offset += step
         if not frames:
             self._seek_video(start_seconds)
             frames.append((start_seconds, self._screenshot_video_base64()))

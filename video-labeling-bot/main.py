@@ -80,6 +80,7 @@ def process_live_task(
             previous_label=previous_label,
             draft_label=segment.draft_label or None,
             duration_seconds=duration,
+            frame_timestamps=[frame[0] for frame in chunk],
         )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")

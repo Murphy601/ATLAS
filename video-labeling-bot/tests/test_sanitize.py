@@ -121,9 +121,9 @@ def test_system_prompt_bans_adjust_and_requires_hands():
     assert "DO NOT USE \"adjust\"" in SYSTEM_PROMPT
     assert "scissors" in SYSTEM_PROMPT
     assert "Use \"adjust\"" not in SYSTEM_PROMPT
-    assert "The window contains 1 action" in SYSTEM_PROMPT
     assert "both hands" in SYSTEM_PROMPT
-    assert "set hose on ground" in SYSTEM_PROMPT
+    assert "hold paper with left hand" in SYSTEM_PROMPT
+    assert "LEFT SIDE" in SYSTEM_PROMPT
 
 
 def test_collapses_cooperating_hands_into_one_both_hands_action():
@@ -133,6 +133,14 @@ def test_collapses_cooperating_hands_into_one_both_hands_action():
     assert sanitize_label(
         "fill watering can with hose in left hand, hold watering can with right hand"
     ) == "fill watering can with water with hose in both hands"
+
+
+def test_keeps_off_hand_hold_while_the_other_hand_works():
+    gold = "hold paper with left hand, cut paper with scissors in right hand"
+    assert sanitize_label(gold) == gold
+    assert sanitize_label(
+        "cut paper with scissors in right hand, hold paper with left hand"
+    ) == "cut paper with scissors in right hand, hold paper with left hand"
 
 
 def test_keeps_two_actions_when_one_hand_sets_and_the_other_holds():
@@ -173,13 +181,13 @@ def test_replaces_generic_tool_from_previous_label():
     ) == "dig soil with hoe in right hand"
 
 
-def test_reconcile_keeps_one_action_draft_and_pick_up_draft():
+def test_reconcile_keeps_pick_up_draft_instead_of_trailing_hold():
     from label_generator import reconcile_with_draft
 
     assert reconcile_with_draft(
-        "set hose on ground with left hand, hold watering can with right hand",
-        "water plant in bucket with hose in both hands",
-    ) == "water plant in bucket with hose in both hands"
+        "cut paper with scissors in right hand, hold paper with left hand",
+        "cut paper with scissors in right hand",
+    ) == "cut paper with scissors in right hand, hold paper with left hand"
     assert reconcile_with_draft(
         "set hose on ground with left hand, hold watering can with right hand",
         "set hose on ground with left hand, pick up watering can with right hand",

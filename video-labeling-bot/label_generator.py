@@ -44,6 +44,7 @@ LEADING_VERB_PATTERN = re.compile(
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
+TWO_HANDED_TOOLS = ("hose", "rope")
 FILL_SOURCE_PATTERN = re.compile(
     rf"\bfill\s+(.+?)\s+with\s+({'|'.join(FILL_SOURCE_TOOLS)})\b",
     re.IGNORECASE,
@@ -94,13 +95,15 @@ def _use_both_hands(clause: str) -> str:
 
 
 def _collapse_redundant_hold(text: str) -> str:
-    """One cooperating goal + trailing hold → one both-hands clause.
+    """Only merge a trailing hold when both hands are on the same two-handed tool.
 
-    Keep two clauses when the first action is a transfer (set/place/pick up)
-    or when hold is the first clause (off-hand stabilize + work).
+    Off-hand stabilize + work (hold paper, cut with scissors) must stay two clauses.
     """
     clauses = split_actions(text)
     if len(clauses) != 2 or not HOLD_CLAUSE_PATTERN.search(clauses[1]):
+        return text
+    first = clauses[0].lower()
+    if not any(re.search(rf"\b{re.escape(tool)}\b", first) for tool in TWO_HANDED_TOOLS):
         return text
     first_verb = _leading_verb(clauses[0])
     if not first_verb or first_verb in TRANSFER_VERBS:
@@ -158,14 +161,13 @@ def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
         return model_label
     model_parts = split_actions(model_label)
     draft_parts = split_actions(draft)
-    if len(model_parts) >= 2 and HOLD_CLAUSE_PATTERN.search(model_parts[-1]):
-        if len(draft_parts) == 1:
-            return draft
-        if (
-            len(draft_parts) == len(model_parts)
-            and _leading_verb(draft_parts[-1]) == "pick up"
-        ):
-            return draft
+    if (
+        len(model_parts) >= 2
+        and HOLD_CLAUSE_PATTERN.search(model_parts[-1])
+        and len(draft_parts) == len(model_parts)
+        and _leading_verb(draft_parts[-1]) == "pick up"
+    ):
+        return draft
     return model_label
 
 
@@ -371,59 +373,63 @@ def generate_label_from_frames(
     previous_label: str | None = None,
     draft_label: str | None = None,
     duration_seconds: float | None = None,
+    frame_timestamps: list[float] | None = None,
 ) -> str:
     """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
         print("[API Error]: OPENROUTER_API_KEY is missing. Returning 'No Action'.")
         return "No Action"
 
-    image_contents = [
+    total = len(base64_frames)
+    user_content: list[dict] = [
         {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{frame}"},
+            "type": "text",
+            "text": (
+                "Ego-camera frames from ONE Atlas segment, in time order. "
+                "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
+                "For every frame ask: what is the left hand doing, and what is the right hand doing? "
+                "If a hand is gripping or stabilizing an object, that hold MUST appear in the label. "
+                "If a hand is empty, do not invent a hold. "
+                "both hands only when both grip the SAME tool. "
+                "Name the exact object. Never write tool/then/next/other. "
+                "If an object changes hands, write pass [object] from [hand] to [hand]. "
+                "Do NOT output No Action if either hand holds something. "
+                "Output only the raw label or No Action."
+            ),
         }
-        for frame in base64_frames
     ]
-
-    instruction = (
-        "These are consecutive ego-camera keyframes from ONE existing Atlas segment, "
-        "in time order. First image is the START of the window. Last image is the END. "
-        "Watch THE WORKER'S HANDS. Name the exact object (hoe not tool, bottle not syrup bottle "
-        "unless two bottles). "
-        "If the object starts in one hand and ends in the other, write "
-        "'pass [object] from [hand] to [hand]'. "
-        "If something is put down AND something else is picked up, write both. "
-        "Never use then/next/after/before/first/other. Never write 'tool'. "
-        "Count DISTINCT goals. Cooperating two-handed work is ONE both-hands clause. "
-        "pick up = lifts off a surface. place = released onto table/counter/floor. "
-        "set = released onto ground. hold = stays gripped, no lift. "
-        "Do NOT output No Action if a tool or object is in the hands. "
-        "Output only the raw label or No Action."
-    )
+    for index, frame in enumerate(base64_frames):
+        stamp = ""
+        if frame_timestamps and index < len(frame_timestamps):
+            stamp = f" t={frame_timestamps[index]:.2f}s"
+        if index == 0:
+            caption = f"Frame {index + 1}/{total} START{stamp} — both hands."
+        elif index + 1 == total:
+            caption = f"Frame {index + 1}/{total} END{stamp} — both hands, what changed."
+        else:
+            caption = f"Frame {index + 1}/{total}{stamp}"
+        user_content.append({"type": "text", "text": caption})
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{frame}"},
+            }
+        )
     if duration_seconds is not None:
-        instruction += f" Segment length: {duration_seconds:.1f} seconds."
-        if duration_seconds >= 4:
-            instruction += " Long window: prefer one coarse goal verb unless two objects clearly change."
+        user_content[0]["text"] += f" Segment length: {duration_seconds:.1f} seconds."
     if draft_label:
-        instruction += (
-            f" Current AI draft to correct (prefer its action count if it is already one valid goal): "
+        user_content[0]["text"] += (
+            f" Current AI draft to correct (fix hands and missing holds, keep specific object names): "
             f"{draft_label}."
         )
     if previous_label and previous_label != "No Action":
-        instruction += (
-            f" Previous segment label (keep object names and hand-state consistent): "
-            f"{previous_label}."
+        user_content[0]["text"] += (
+            f" Previous segment (keep object names and hand-state consistent): {previous_label}."
         )
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": instruction},
-                *image_contents,
-            ],
-        },
+        {"role": "user", "content": user_content},
     ]
 
     last_error = None

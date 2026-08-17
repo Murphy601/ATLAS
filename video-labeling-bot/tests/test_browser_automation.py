@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from browser_automation import VideoBrowserBot
+from browser_automation import VideoBrowserBot, sample_segment_timestamps
 
 FIXTURE = Path(__file__).parent / "fixtures" / "annotation_portal.html"
 
@@ -119,9 +119,22 @@ def test_capture_live_segment_frames(tmp_path):
                 video.height = 180;
             }"""
         )
-        frames = bot.capture_segment_frames(0.0, segment_duration=3.0, interval_seconds=1.0)
-        assert len(frames) == 3
-        assert [round(item[0]) for item in frames] == [0, 1, 2]
+        frames = bot.capture_segment_frames(0.0, segment_duration=3.0, interval_seconds=0.5)
+        times = [round(item[0], 2) for item in frames]
+        assert times[0] == 0.0
+        assert times[-1] == 3.0
+        assert 5 <= len(frames) <= 10
         assert all(len(item[1]) > 100 for item in frames)
     finally:
         bot.stop()
+
+
+def test_sample_segment_timestamps_includes_start_and_end():
+    times = sample_segment_timestamps(0.0, 3.0, interval_seconds=0.5)
+    assert times[0] == 0.0
+    assert times[-1] == 3.0
+    assert 5 <= len(times) <= 10
+    dense = sample_segment_timestamps(10.0, 8.0, interval_seconds=0.5)
+    assert dense[0] == 10.0
+    assert dense[-1] == 18.0
+    assert len(dense) == 10
