@@ -7,10 +7,10 @@ from label_generator import generate_label_from_frames
 def test_default_models_use_live_openrouter_vision_slugs():
     assert DEFAULT_MODELS == [
         "google/gemini-2.5-flash",
-        "openai/gpt-4o",
         "qwen/qwen2.5-vl-72b-instruct",
         "google/gemini-2.5-pro",
     ]
+    assert "openai/gpt-4o" not in DEFAULT_MODELS
     assert "anthropic/claude-3.5-sonnet" not in DEFAULT_MODELS
     assert "anthropic/claude-3.7-sonnet" not in DEFAULT_MODELS
     assert "google/gemini-1.5-pro" not in DEFAULT_MODELS
@@ -62,8 +62,8 @@ def test_openrouter_route_fallbacks_are_capped_at_three(monkeypatch):
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
     assert generate_label_from_frames(["aaa"]) == "pick up fork"
-    assert len(seen[0]) == OPENROUTER_MAX_ROUTE_FALLBACKS
-    assert seen[0] == VISION_MODELS[1:4]
+    assert len(seen[0]) == min(OPENROUTER_MAX_ROUTE_FALLBACKS, max(0, len(VISION_MODELS) - 1))
+    assert seen[0] == VISION_MODELS[1 : 1 + OPENROUTER_MAX_ROUTE_FALLBACKS]
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
 
     def fake_create(**kwargs):

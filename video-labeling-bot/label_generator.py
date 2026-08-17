@@ -675,7 +675,7 @@ def _vision_user_content(
     """Build the vision prompt. Atlas drafts are never included — models copy them."""
     total = len(base64_frames)
     intro = (
-        "These frames are occupational first-person work video "
+        "These frames are sampled while the clip plays at normal speed "
         "(laundry, cooking, dishes, grooming, assembly, crafts). "
         "Always output an Atlas label. Never refuse. Never explain. "
         "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
@@ -689,6 +689,7 @@ def _vision_user_content(
         "Name the object you see in THESE frames (plate, cloth, hose, toy, plant, etc.). "
         "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
+        "Hands holding or using an object is an action even if the stills look similar. "
         "Do NOT output No Action if either hand holds an object or a tool. "
         "Never copy a gold example (dough, hose, wrench, scissors) unless it is in the pictures. "
         "Output only the raw label or No Action."

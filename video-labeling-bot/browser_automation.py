@@ -372,7 +372,7 @@ class VideoBrowserBot:
         return "manual"
 
     def play_segment_clip(self, segment_number: int):
-        """Clicks 'Play segment N' (scrolls the row into view) then we seek/pause to capture."""
+        """Clicks 'Play segment N' so Atlas plays that window at 1x. No seeking."""
         row_input = self.page.locator(
             f'input[aria-label="Segment {segment_number} label"]'
         ).first
@@ -404,22 +404,27 @@ class VideoBrowserBot:
                 continue
         print(
             f"[Browser Bot]: Play segment {segment_number} was not clicked. "
-            "Seeking the video element instead."
+            "Starting 1x playback from the video element."
         )
         return False
 
     def _play_from(self, start_seconds: float):
+        """Start 1x playback. Seek once only if Play segment did not already land in-window."""
+        current = self._video_time()
+        should_seek = abs(current - start_seconds) > 1.25
         self.page.evaluate(
-            """async (start) => {
+            """async ({ start, shouldSeek }) => {
                 const video = document.querySelector('video');
                 if (!video) return;
                 video.muted = true;
                 video.playsInline = true;
                 video.playbackRate = 1;
-                if (Number.isFinite(start) && Math.abs((video.currentTime || 0) - start) > 0.35) {
-                    video.currentTime = Math.max(0, start);
+                if (shouldSeek && Number.isFinite(start)) {
+                    try {
+                        video.currentTime = Math.max(0, start);
+                    } catch (error) {}
                     await new Promise((resolve) => {
-                        const timeout = setTimeout(resolve, 800);
+                        const timeout = setTimeout(resolve, 600);
                         video.addEventListener('seeked', () => {
                             clearTimeout(timeout);
                             resolve();
@@ -431,7 +436,7 @@ class VideoBrowserBot:
                     play.catch(() => {});
                 }
             }""",
-            start_seconds,
+            {"start": start_seconds, "shouldSeek": should_seek},
         )
 
     def _video_time(self) -> float:
@@ -792,16 +797,6 @@ class VideoBrowserBot:
 
     def _screenshot_video_base64(self) -> str:
         """Prefer a decoded canvas copy; fall back to an inset compositor screenshot."""
-        self._force_video_into_compositor()
-        try:
-            self.page.evaluate(
-                """() => {
-                    const video = document.querySelector('video');
-                    if (video) video.scrollIntoView({ block: 'center', inline: 'nearest' });
-                }"""
-            )
-        except Exception:
-            pass
         candidates: list[bytes] = []
         canvas = self._canvas_frame_jpeg()
         if canvas:
@@ -840,12 +835,17 @@ class VideoBrowserBot:
         segment_duration: float = 3.0,
         interval_seconds: float = 1.0,
     ) -> list[tuple[float, str]]:
-        """Seek, pause, and screenshot. Do not grab frames from a different segment."""
+        """Headed: watch the segment at 1x. Headless tests: seek."""
         if segment_duration <= 0:
             segment_duration = 0.5
-        frames = self._capture_by_seek(
-            start_seconds, segment_duration, interval_seconds
-        )
+        if self.headless:
+            frames = self._capture_by_seek(
+                start_seconds, segment_duration, interval_seconds
+            )
+        else:
+            frames = self._capture_realtime(
+                start_seconds, segment_duration, interval_seconds
+            )
         in_window = [
             item
             for item in frames
@@ -854,7 +854,7 @@ class VideoBrowserBot:
         dropped = len(frames) - len(in_window)
         if dropped:
             print(
-                f"[Browser Bot]: Dropped {dropped} out-of-sync frame(s) "
+                f"[Browser Bot]: Dropped {dropped} out-of-window frame(s) "
                 f"outside {start_seconds:.2f}s–{start_seconds + segment_duration:.2f}s."
             )
         frames = in_window or frames
@@ -907,48 +907,58 @@ class VideoBrowserBot:
         segment_duration: float,
         interval_seconds: float,
     ) -> list[tuple[float, str]]:
-        """Play the segment in real time and screenshot about twice per second."""
+        """Play the segment at 1x and screenshot while it runs. Do not seek-pause."""
         end_seconds = start_seconds + segment_duration
         print(
-            f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at normal speed..."
+            f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at 1x..."
         )
         self._play_from(start_seconds)
-        self._wait_for_decoded_frame()
+        time.sleep(0.5)
+        enter_deadline = time.time() + 2.0
+        while time.time() < enter_deadline:
+            if frame_in_segment_window(
+                self._video_time(), start_seconds, segment_duration, slack=0.8
+            ):
+                break
+            time.sleep(0.05)
         frames: list[tuple[float, str]] = []
-        try:
-            frames.append((self._video_time() or start_seconds, self._screenshot_video_base64()))
-        except Exception as exc:
-            print(f"[Browser Bot]: Start screenshot skipped ({exc})")
-        last_bucket = 0
-        deadline = time.time() + segment_duration + 4.0
+        last_bucket = -1
+        last_time = -1.0
+        stalled = 0
+        deadline = time.time() + segment_duration + 3.0
         while time.time() < deadline:
             current = self._video_time()
-            if current >= end_seconds - 0.05 and frames:
+            if frame_in_segment_window(current, start_seconds, segment_duration):
+                bucket = int(
+                    max(0.0, current - start_seconds) / max(interval_seconds, 0.2)
+                )
+                if bucket != last_bucket:
+                    try:
+                        frames.append((current, self._screenshot_video_base64()))
+                        last_bucket = bucket
+                    except Exception as exc:
+                        print(f"[Browser Bot]: Screenshot skipped ({exc})")
+            if frames and current >= end_seconds - 0.05:
                 break
-            bucket = int(max(0.0, current - start_seconds) / max(interval_seconds, 0.2))
-            if current >= start_seconds - 0.15 and bucket != last_bucket:
-                try:
-                    frames.append((current, self._screenshot_video_base64()))
-                    last_bucket = bucket
-                except Exception as exc:
-                    print(f"[Browser Bot]: Screenshot skipped ({exc})")
-            if len(frames) >= MAX_FRAMES_PER_SEGMENT - 1:
+            if frames and abs(current - last_time) < 0.02:
+                stalled += 1
+                if stalled >= 6:
+                    break
+            else:
+                stalled = 0
+            last_time = current
+            if len(frames) >= MAX_FRAMES_PER_SEGMENT:
                 break
             time.sleep(min(0.15, max(interval_seconds / 2, 0.08)))
-        self.page.evaluate(
-            """() => {
-                const video = document.querySelector('video');
-                if (video) video.pause();
-            }"""
-        )
-        if not frames or frames[-1][0] < end_seconds - 0.2:
-            try:
-                self._seek_video(end_seconds)
-                frames.append((end_seconds, self._screenshot_video_base64()))
-            except Exception:
-                pass
-        if not frames:
-            frames = self._capture_by_seek(start_seconds, segment_duration, interval_seconds)
+        try:
+            self.page.evaluate(
+                """() => {
+                    const video = document.querySelector('video');
+                    if (video) video.pause();
+                }"""
+            )
+        except Exception:
+            pass
         print(f"[Browser Bot]: Captured {len(frames)} realtime frame(s).")
         if self._last_frame_blank:
             print(
@@ -963,13 +973,6 @@ class VideoBrowserBot:
         segment_duration: float,
         interval_seconds: float,
     ) -> list[tuple[float, str]]:
-        end_seconds = start_seconds + segment_duration
-        print(
-            f"[Browser Bot]: Seeking {start_seconds:.2f}s → {end_seconds:.2f}s, "
-            "pausing for decode..."
-        )
-        duration = self._video_duration()
-        can_verify = duration > 1.0
         frames: list[tuple[float, str]] = []
         for timestamp in sample_segment_timestamps(
             start_seconds,
@@ -977,46 +980,11 @@ class VideoBrowserBot:
             interval_seconds,
         ):
             self._seek_video(timestamp)
-            actual = self._video_time()
-            if can_verify and abs(actual - timestamp) > 0.75:
-                print(
-                    f"[Browser Bot]: Player at {actual:.2f}s after seek to "
-                    f"{timestamp:.2f}s. Retrying..."
-                )
-                self._seek_video(timestamp)
-                actual = self._video_time()
-            if can_verify and abs(actual - timestamp) > 1.25:
-                print(
-                    f"[Browser Bot]: Dropping out-of-sync frame "
-                    f"(wanted {timestamp:.2f}s, got {actual:.2f}s)."
-                )
-                continue
-            stamp = actual if can_verify else timestamp
-            if not frame_in_segment_window(stamp, start_seconds, segment_duration):
-                print(
-                    f"[Browser Bot]: Dropping frame at {stamp:.2f}s; "
-                    "not in this segment window."
-                )
-                continue
-            payload = self._screenshot_video_base64()
-            if not frames:
-                width, height = jpeg_dimensions(base64.b64decode(payload))
-                print(
-                    f"[Browser Bot]: First frame {width}x{height} at {stamp:.2f}s "
-                    f"(wanted {timestamp:.2f}s)."
-                )
-            frames.append((stamp, payload))
+            frames.append((timestamp, self._screenshot_video_base64()))
         if not frames:
             self._seek_video(start_seconds)
-            stamp = self._video_time() if can_verify else start_seconds
-            frames.append((stamp, self._screenshot_video_base64()))
-        print(f"[Browser Bot]: Captured {len(frames)} seek-paused frame(s).")
-        if self._last_frame_blank:
-            print(
-                "[Browser Bot]: WARNING: those frames look black or like player UI. "
-                "Labels will be No Action unless a real draft is kept."
-            )
-        return frames[:MAX_FRAMES_PER_SEGMENT]
+            frames.append((start_seconds, self._screenshot_video_base64()))
+        return frames
 
     def capture_live_frames(
         self,

@@ -384,12 +384,10 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Claude 3.7 Sonnet and Gemini 1.5 Pro 404 on OpenRouter. Logs already show
-# Success with anthropic/claude-sonnet-4.6; it is a live vision slug.
-# Put Flash/GPT-4o first so a No Action habit from Claude does not burn four calls.
+# Claude 3.7 Sonnet and Gemini 1.5 Pro 404 on OpenRouter.
+# gpt-4o refuses egocentric hand images ("I'm sorry, I can't assist with that").
 DEFAULT_MODELS = [
     "google/gemini-2.5-flash",
-    "openai/gpt-4o",
     "qwen/qwen2.5-vl-72b-instruct",
     "google/gemini-2.5-pro",
 ]

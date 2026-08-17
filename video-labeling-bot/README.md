@@ -18,7 +18,7 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 - After login: sidebar **Tasks** → **Continue Assessment Practice** (or **Review** on a listed live task)
 - Segments already exist with AI drafts. The bot **replaces the text**, it does not delete rows or retimestamp.
 - Atlas drafts are **untrusted** and are not sent to the vision model. If every model still says No Action, the bot keeps the draft and rewrites bare `animal` to `stuffed animal` instead of filling No Action.
-- Frames are an inset screenshot of the `<video>` element plus a canvas copy of the decoded frame. A raw player-chrome screenshot is often a **black GPU hole with a timeline**, which made every model say No Action while debug JPEGs still printed `(ok)`.
+- Frames are captured while the clip **plays at 1x**. Forced seek-pause made the player blink and froze one keyframe, so every model said No Action.
 - If `debug_frames/` JPEGs show hands, the model is trusted even when leftover row text says something else (for example stuffed animal on a dish clip).
 - First-visit Atlas drafts are saved in `original_drafts/` so a later re-run does not treat leftover bot text as Atlas gold.
 - Label fields: `input[aria-label="Segment 1 label"]`
@@ -31,12 +31,13 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 ## Models
 
-OpenRouter paid vision models currently listed on OpenRouter (multimodal first):
+OpenRouter paid vision models currently listed on OpenRouter:
 
 1. `google/gemini-2.5-flash`
-2. `openai/gpt-4o`
-3. `qwen/qwen2.5-vl-72b-instruct`
-4. `google/gemini-2.5-pro` — `google/gemini-1.5-pro` and `anthropic/claude-3.7-sonnet` 404 on OpenRouter. `anthropic/claude-sonnet-4.6` is a live slug (logs show Success) but it kept answering No Action, so it is not first.
+2. `qwen/qwen2.5-vl-72b-instruct`
+3. `google/gemini-2.5-pro`
+
+`openai/gpt-4o` is not used: it refuses egocentric hand images. `anthropic/claude-3.7-sonnet` and `google/gemini-1.5-pro` 404 on OpenRouter.
 
 `No Action` in a segment field is ignored. **Draft-first when frames are empty:** a specific Atlas draft is kept unless the model names the same objects and does not add extra clauses. **When debug frames actually show hands**, the model wins if it names different objects — leftover stuffed-animal text must not freeze a dish clip.
 
