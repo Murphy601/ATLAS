@@ -4,10 +4,11 @@ from config import DEFAULT_MODELS, OPENROUTER_MAX_ROUTE_FALLBACKS, VISION_MODELS
 from label_generator import generate_label_from_frames
 
 
-def test_default_models_are_cheapest_first():
-    assert DEFAULT_MODELS[0] == "anthropic/claude-sonnet-5"
-    assert "google/gemini-2.5-flash" in DEFAULT_MODELS
-    assert "openai/gpt-4o-mini" in DEFAULT_MODELS
+def test_default_models_prefer_gemini():
+    assert DEFAULT_MODELS[0] == "google/gemini-2.5-flash"
+    assert DEFAULT_MODELS[1] == "openai/gpt-4o-mini"
+    assert "anthropic/claude-sonnet-5" in DEFAULT_MODELS
+    assert "anthropic/claude-3.5-sonnet" not in DEFAULT_MODELS
     assert "qwen/qwen2.5-vl-72b-instruct" in DEFAULT_MODELS
     assert VISION_MODELS[0] == DEFAULT_MODELS[0]
     assert ":free" not in "".join(DEFAULT_MODELS)
@@ -133,6 +134,41 @@ def test_skips_no_action_when_draft_describes_work(monkeypatch):
         draft_label="dig soil with tool in right hand",
         previous_label="pick up hoe with right hand",
     ) == "dig soil with hoe in right hand"
+    assert calls[0] == VISION_MODELS[0]
+    assert calls[1] == VISION_MODELS[1]
+
+
+def test_no_action_draft_is_ignored_and_tries_next_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == VISION_MODELS[0]:
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="No Action"))]
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "hold stuffed animal with left hand, "
+                            "trim stuffed animal with scissors in right hand"
+                        )
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label="No Action",
+        previous_label="No Action",
+    ) == (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
     assert calls[0] == VISION_MODELS[0]
     assert calls[1] == VISION_MODELS[1]
 

@@ -15,6 +15,7 @@ from label_generator import (
     apply_context_fixes,
     generate_label_from_frames,
     rewrite_generic_animal_draft,
+    usable_draft,
 )
 
 load_dotenv()
@@ -77,12 +78,15 @@ def process_live_task(
             if segment.end_seconds is not None
             else segment.start_seconds + duration
         )
-        if segment.draft_label:
-            print(f"[Pipeline]: AI draft: '{segment.draft_label}'")
+        draft = usable_draft(segment.draft_label)
+        if segment.draft_label and draft is None:
+            print("[Pipeline]: Ignoring No Action draft; labeling from frames.")
+        elif draft:
+            print(f"[Pipeline]: AI draft: '{draft}'")
         label = generate_label_from_frames(
             [frame[1] for frame in chunk],
             previous_label=previous_label,
-            draft_label=segment.draft_label or None,
+            draft_label=draft,
             duration_seconds=duration,
             frame_timestamps=[frame[0] for frame in chunk],
         )
@@ -91,14 +95,10 @@ def process_live_task(
         print(f"Generated Label: '{label}'")
 
         processed_any = True
-        if (
-            label == "No Action"
-            and segment.draft_label
-            and segment.draft_label.strip().lower() != "no action"
-        ):
+        if label == "No Action" and draft:
             kept = apply_context_fixes(
-                rewrite_generic_animal_draft(segment.draft_label),
-                segment.draft_label,
+                rewrite_generic_animal_draft(draft),
+                draft,
                 previous_label,
             )
             print(

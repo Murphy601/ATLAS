@@ -29,14 +29,16 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 ## Models
 
-OpenRouter paid vision models, cheapest first, then fallbacks:
+OpenRouter paid vision models, Gemini first:
 
-1. `anthropic/claude-sonnet-5` (default)
-2. `google/gemini-2.5-flash`
-3. `openai/gpt-4o-mini`
+1. `google/gemini-2.5-flash` (default)
+2. `openai/gpt-4o-mini`
+3. `anthropic/claude-sonnet-5` (`anthropic/claude-3.5-sonnet` is not on OpenRouter)
 4. `qwen/qwen2.5-vl-72b-instruct`
 
-If a model returns **No Action** while the Atlas row already has a real draft, the bot tries the next model, then retries once as hand work. If it still says No Action, the bot keeps the draft (rewriting bare `animal` to `stuffed animal`) instead of filling No Action.
+`No Action` in a segment field is ignored (it is leftover from a previous run, not a real Atlas draft). The bot tries the next model whenever one says No Action, then retries once as hand work.
+
+Frames are copied from the decoded `<video>` onto a canvas after a short wait so the JPEG is not a black GPU bitmap.
 
 Optional override in `.env`: `VISION_MODEL=openai/gpt-4o-mini`
 

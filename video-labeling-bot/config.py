@@ -375,11 +375,12 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Newest Claude Sonnet (vision). Sonnet 4 often returned No Action / refusals.
+# Gemini first: Claude was returning No Action on decoded work frames.
+# anthropic/claude-3.5-sonnet is not a valid OpenRouter slug; use claude-sonnet-5.
 DEFAULT_MODELS = [
-    "anthropic/claude-sonnet-5",
     "google/gemini-2.5-flash",
     "openai/gpt-4o-mini",
+    "anthropic/claude-sonnet-5",
     "qwen/qwen2.5-vl-72b-instruct",
 ]
 _primary_model = (os.getenv("VISION_MODEL") or "").strip()

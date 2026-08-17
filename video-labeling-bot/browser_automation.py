@@ -524,6 +524,55 @@ class VideoBrowserBot:
             }""",
             seconds,
         )
+        if not self.headless:
+            time.sleep(0.5)
+
+    def _wait_for_decoded_frame(self, timeout: float = 1.2) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            ready = self.page.evaluate(
+                """() => {
+                    const video = document.querySelector('video');
+                    return !!(video && video.readyState >= 2 && video.videoWidth >= 8);
+                }"""
+            )
+            if ready:
+                time.sleep(0.5)
+                return True
+            time.sleep(0.05)
+        time.sleep(0.5)
+        return False
+
+    def _canvas_frame_jpeg(self) -> bytes | None:
+        """Copy the decoded HTML5 video frame. Avoids black GPU element screenshots."""
+        data = self.page.evaluate(
+            """() => {
+                const video = document.querySelector('video');
+                if (!video || video.readyState < 2 || video.videoWidth < 8) return null;
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                if (!ctx) return null;
+                try {
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const url = canvas.toDataURL('image/jpeg', 0.8);
+                    const comma = url.indexOf(',');
+                    return comma >= 0 ? url.slice(comma + 1) : null;
+                } catch (error) {
+                    return null;
+                }
+            }"""
+        )
+        if not data:
+            return None
+        try:
+            image_bytes = base64.b64decode(data)
+        except Exception:
+            return None
+        if jpeg_is_blank(image_bytes):
+            return None
+        return image_bytes
 
     def _player_clip(self) -> dict | None:
         """CSS-pixel box of the painted player, not the GPU video bitmap."""
@@ -559,8 +608,11 @@ class VideoBrowserBot:
         return {"x": x, "y": y, "width": width, "height": height}
 
     def _screenshot_video_base64(self) -> str:
-        """Capture pixels the user sees. video.screenshot() is often a black GPU frame."""
+        """Prefer a decoded canvas copy of the video; fall back to painted player pixels."""
         candidates: list[bytes] = []
+        canvas = self._canvas_frame_jpeg()
+        if canvas:
+            candidates.append(canvas)
         clip = self._player_clip()
         if clip:
             try:
@@ -618,6 +670,7 @@ class VideoBrowserBot:
             f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at normal speed..."
         )
         self._play_from(start_seconds)
+        self._wait_for_decoded_frame()
         frames: list[tuple[float, str]] = []
         try:
             frames.append((self._video_time() or start_seconds, self._screenshot_video_base64()))

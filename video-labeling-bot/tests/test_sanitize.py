@@ -198,6 +198,15 @@ def test_reconcile_keeps_pick_up_draft_instead_of_trailing_hold():
     ) == "set hose on ground with left hand, pick up watering can with right hand"
 
 
+def test_usable_draft_ignores_no_action():
+    from label_generator import usable_draft
+
+    assert usable_draft("No Action") is None
+    assert usable_draft("  no action  ") is None
+    assert usable_draft("") is None
+    assert usable_draft("pick up sock with both hands") == "pick up sock with both hands"
+
+
 def test_reconcile_does_not_keep_generic_animal_draft():
     from label_generator import (
         is_generic_placeholder_label,

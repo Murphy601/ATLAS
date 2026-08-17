@@ -208,6 +208,14 @@ def apply_context_fixes(
     return GENERIC_NOUN_PATTERN.sub(specific, label)
 
 
+def usable_draft(label: str | None) -> str | None:
+    """Treat empty and 'No Action' row text as no draft (do not echo it)."""
+    text = (label or "").strip()
+    if not text or text.casefold() == "no action":
+        return None
+    return text
+
+
 def is_generic_placeholder_label(label: str | None) -> bool:
     """True when a label uses bare 'animal' instead of a species or stuffed animal."""
     text = label or ""
@@ -644,15 +652,12 @@ def _query_vision_models(
             cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
             print(f"[Pipeline]: Vision model: '{cleaned}'")
             if cleaned == "No Action":
-                if draft_label and draft_label.strip().lower() != "no action":
-                    accepted_no_action = True
-                    if index + 1 < len(models):
-                        print(
-                            f"[OpenRouter]: {model} said No Action while a draft describes work "
-                            f"(raw={str(raw_label)[:80]!r}). Trying next model..."
-                        )
-                    continue
-                return "No Action"
+                accepted_no_action = True
+                if index + 1 < len(models):
+                    print(
+                        f"[OpenRouter]: {model} said No Action. Trying next model..."
+                    )
+                continue
             if is_generic_placeholder_label(cleaned):
                 last_generic = cleaned
                 if index + 1 < len(models):
@@ -696,6 +701,9 @@ def generate_label_from_frames(
         print("[API Error]: OPENROUTER_API_KEY is missing. Returning 'No Action'.")
         return "No Action"
 
+    draft_label = usable_draft(draft_label)
+    previous_label = usable_draft(previous_label)
+
     base64_frames, frame_timestamps = _subsample_frames(
         base64_frames, frame_timestamps, max_frames=8
     )
@@ -713,14 +721,10 @@ def generate_label_from_frames(
     label = _query_vision_models(
         messages, draft_label, previous_label, list(VISION_MODELS)
     )
-    if (
-        label == "No Action"
-        and draft_label
-        and draft_label.strip().lower() != "no action"
-    ):
+    if label == "No Action":
         print(
             "[Pipeline]: All models said No Action. "
-            "Retrying as hand work (still not sending the Atlas draft)."
+            "Retrying as hand work (still not sending any Atlas draft)."
         )
         insist_content = _vision_user_content(
             base64_frames,
