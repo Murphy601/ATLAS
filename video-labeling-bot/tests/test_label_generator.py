@@ -178,7 +178,8 @@ def test_prompt_does_not_include_atlas_draft(monkeypatch):
     assert draft not in prompt
     assert "Do NOT copy:" not in prompt
     assert "FRESH Atlas label" in prompt
-    assert "never animal" in prompt.lower()
+    assert "stuffed animal" in prompt.lower()
+    assert "bare animal" in prompt.lower()
 
 
 def test_generic_animal_output_tries_next_model(monkeypatch):
@@ -217,3 +218,46 @@ def test_generic_animal_output_tries_next_model(monkeypatch):
     ) == "hold sheep with left hand, trim wool with scissors in right hand"
     assert calls[0] == VISION_MODELS[0]
     assert calls[1] == VISION_MODELS[1]
+
+
+def test_retries_no_action_with_hand_work_prompt(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["model"])
+        texts = []
+        for message in kwargs["messages"]:
+            content = message.get("content")
+            if isinstance(content, str):
+                texts.append(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        texts.append(part.get("text") or "")
+        prompt = "\n".join(texts)
+        if "Do not output No Action" in prompt:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                "hold stuffed animal with left hand, "
+                                "trim stuffed animal with scissors in right hand"
+                            )
+                        )
+                    )
+                ]
+            )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="No Action"))]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label="hold animal with left hand, trim animal with scissors in right hand",
+    ) == (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
+    assert len(calls) > len(VISION_MODELS)

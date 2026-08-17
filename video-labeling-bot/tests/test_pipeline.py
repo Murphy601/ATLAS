@@ -78,7 +78,7 @@ def test_process_live_task_keeps_ai_draft_when_model_says_no_action():
     assert recorded == [(1, "dig soil with tool in right hand")]
 
 
-def test_process_live_task_does_not_keep_generic_animal_draft():
+def test_process_live_task_rewrites_generic_animal_draft_when_model_says_no_action():
     recorded = []
 
     class FakeBot:
@@ -112,7 +112,12 @@ def test_process_live_task_does_not_keep_generic_animal_draft():
     ):
         process_live_task(FakeBot(), segment_duration=3.0, interval_seconds=1.0)
 
-    assert recorded == [(1, "No Action")]
+    assert recorded == [
+        (
+            1,
+            "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand",
+        )
+    ]
 
 
 def test_browser_disconnect_message_matches_playwright_crash():

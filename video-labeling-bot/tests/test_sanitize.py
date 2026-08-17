@@ -199,12 +199,22 @@ def test_reconcile_keeps_pick_up_draft_instead_of_trailing_hold():
 
 
 def test_reconcile_does_not_keep_generic_animal_draft():
-    from label_generator import is_generic_placeholder_label, reconcile_with_draft
+    from label_generator import (
+        is_generic_placeholder_label,
+        reconcile_with_draft,
+        rewrite_generic_animal_draft,
+    )
 
     animal = "hold animal with left hand, trim animal with scissors in right hand"
+    stuffed = (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
     species = "hold sheep with left hand, trim wool with scissors in right hand"
     assert is_generic_placeholder_label(animal)
     assert not is_generic_placeholder_label(species)
+    assert not is_generic_placeholder_label(stuffed)
+    assert rewrite_generic_animal_draft(animal) == stuffed
+    assert rewrite_generic_animal_draft(stuffed) == stuffed
     assert reconcile_with_draft(species, animal) == species
     assert reconcile_with_draft(
         "cut paper with scissors in right hand, hold paper with left hand",

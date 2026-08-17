@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import cv2
+
 from browser_automation import VideoBrowserBot, sample_segment_timestamps
 
 FIXTURE = Path(__file__).parent / "fixtures" / "annotation_portal.html"
@@ -127,6 +129,23 @@ def test_capture_live_segment_frames(tmp_path):
         assert all(len(item[1]) > 100 for item in frames)
     finally:
         bot.stop()
+
+
+def test_jpeg_is_blank_detects_black_gpu_frames():
+    import numpy as np
+
+    from browser_automation import jpeg_is_blank
+
+    black = np.zeros((48, 64, 3), dtype=np.uint8)
+    ok, buf = cv2.imencode(".jpg", black)
+    assert ok
+    assert jpeg_is_blank(buf.tobytes())
+
+    color = np.zeros((48, 64, 3), dtype=np.uint8)
+    color[:] = (40, 180, 90)
+    ok, buf = cv2.imencode(".jpg", color)
+    assert ok
+    assert not jpeg_is_blank(buf.tobytes())
 
 
 def test_sample_segment_timestamps_includes_start_and_end():

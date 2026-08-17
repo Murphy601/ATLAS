@@ -45,7 +45,7 @@ Off-hand hold is required ONLY when that hand is clearly stabilizing a different
   - DO NOT USE "manipulate" (use grip, press, push, pull, twist, squeeze, pinch).
   - USE "grab" SPARINGLY (default to "pick up" unless the grip style is the focus).
 * FORBIDDEN NOUNS: Do NOT use generic nouns like "tool", "object", or "utensil" if the specific item is identifiable (e.g., use "hoe", "trowel", "wrench", "knife", "scissors", "screwdriver"). "tool" FAILS audit.
-* NEVER write generic "animal". Name the species (dog, cat, sheep, goat, horse, cow, rabbit, pig, chicken) or the body part (fur, wool, ear, hoof).
+* NEVER write generic "animal" by itself. A stuffed toy is "stuffed animal". A live pet is the species (dog, cat, sheep, goat, horse, cow, rabbit, pig, chicken) or a body part (fur, wool, ear, hoof).
 * NO STORY WORDS: NEVER write then, next, after, before, first, or other. Labels are not narratives.
   WRONG: move soil from pot to other pot
   RIGHT: dig soil with hoe in right hand
@@ -130,6 +130,7 @@ CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
 * place bucket on floor with left hand, pick up hoe with right hand
 * dig soil with hoe in right hand
 * place hoe on ground with right hand, gather soil with both hands
+* hold stuffed animal with left hand, trim stuffed animal with scissors in right hand
 * pick up bottle with right hand, pass bottle from right hand to left hand
 * place bottle on counter with left hand
 * hold wrench with left hand, pass wrench from left hand to right hand, place wrench on table with right hand
@@ -402,11 +403,11 @@ SELECTORS = {
     "continue_practice": 'button:has-text("Continue Assessment Practice"), a:has-text("Continue Assessment Practice")',
     "review_task": 'button:has-text("Review"), a:has-text("Review")',
     "start_task": 'button:has-text("Start"), a:has-text("Start"), button:has-text("Open")',
-    "next_task": 'button:has-text("Next task"), button:has-text("Next clip"), button:has-text("Next episode"), a:has-text("Next task")',
+    "next_task": 'button:has-text("Next task"), button:has-text("Next clip"), button:has-text("Next episode"), button:has-text("Next video"), a:has-text("Next task")',
     "next_generic": 'button:has-text("Next"), a:has-text("Next")',
-    "submit_button": 'button:has-text("Submit practice clip"), button:has-text("Submit clip"), button:has-text("Submit episode")',
-    "submit_button_generic": 'button[data-slot="button"]:has-text("Submit"), button:has-text("Complete")',
-    "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button[type="submit"]',
+    "submit_button": 'button:has-text("Submit practice clip"), button:has-text("Submit clip"), button:has-text("Submit episode"), button:has-text("Submit video")',
+    "submit_button_generic": 'button[data-slot="button"]:has-text("Submit"), button:has-text("Complete"), button:has-text("Submit assessment")',
+    "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button:has-text("Complete"), button[type="submit"]',
 }
 
 # Pipeline defaults (overridable via environment variables)

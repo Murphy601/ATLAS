@@ -209,8 +209,34 @@ def apply_context_fixes(
 
 
 def is_generic_placeholder_label(label: str | None) -> bool:
-    """True when a label uses the generic noun 'animal' instead of a species."""
-    return bool(re.search(r"\banimal\b", label or "", re.IGNORECASE))
+    """True when a label uses bare 'animal' instead of a species or stuffed animal."""
+    text = label or ""
+    if not re.search(r"\banimal\b", text, re.IGNORECASE):
+        return False
+    if re.search(
+        r"\b(?:stuffed|plush|toy|fabric|felt)\s+animal\b",
+        text,
+        re.IGNORECASE,
+    ):
+        return False
+    return True
+
+
+def rewrite_generic_animal_draft(label: str | None) -> str:
+    """Replace bare 'animal' with stuffed animal when vision models refuse the clip."""
+    text = (label or "").strip()
+    if not text:
+        return "No Action"
+    if not is_generic_placeholder_label(text):
+        return sanitize_label(text)
+    rewritten = re.sub(r"\banimal\b", "stuffed animal", text, flags=re.IGNORECASE)
+    rewritten = re.sub(
+        r"\b(?:stuffed\s+){2,}animal\b",
+        "stuffed animal",
+        rewritten,
+        flags=re.IGNORECASE,
+    )
+    return sanitize_label(rewritten)
 
 
 def _labels_match(left: str | None, right: str | None) -> bool:
@@ -509,31 +535,39 @@ def _vision_user_content(
     draft_label: str | None = None,
     duration_seconds: float | None = None,
     frame_timestamps: list[float] | None = None,
+    insist_action: bool = False,
 ) -> list[dict]:
     """Build the vision prompt. Atlas drafts are never included — models copy them."""
     total = len(base64_frames)
-    user_content: list[dict] = [
-        {
-            "type": "text",
-            "text": (
-                "These frames are occupational first-person work video "
-                "(laundry, cooking, grooming, animal care, assembly). "
-                "Always output an Atlas label. Never refuse. Never explain. "
-                "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
-                "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
-                "If the first frame already has the object in the hand, do not write pick up. "
-                "If they grab a tool only to use it immediately, omit pick up. "
-                "Do not add hold for an empty hand or for the same tool already named. "
-                "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
-                "Do not split cut/wipe/dig/water/write/trim into micro shift/align clauses. "
-                "Max 3 clauses. Never write tool/then/next/other/animal. "
-                "If you see a living creature, name the species or body part, never animal. "
-                "If an object changes hands, write pass [object] from [hand] to [hand]. "
-                "Do NOT output No Action if either hand is working. "
-                "Output only the raw label or No Action."
-            ),
-        }
-    ]
+    intro = (
+        "These frames are occupational first-person work video "
+        "(laundry, cooking, grooming, stuffed-toy / fabric craft, assembly). "
+        "Always output an Atlas label. Never refuse. Never explain. "
+        "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
+        "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
+        "If the first frame already has the object in the hand, do not write pick up. "
+        "If they grab a tool only to use it immediately, omit pick up. "
+        "Do not add hold for an empty hand or for the same tool already named. "
+        "Do add hold when one hand stabilizes (paper, stuffed animal) while the other works (scissors). "
+        "Do not split cut/wipe/dig/water/write/trim into micro shift/align clauses. "
+        "Max 3 clauses. Never write tool/then/next/other. Never write bare animal. "
+        "A toy that looks like an animal is stuffed animal. A live pet is the species. "
+        "Scissors on fabric or a stuffed toy is normal household work. Label it. "
+        "If an object changes hands, write pass [object] from [hand] to [hand]. "
+        "Do NOT output No Action if either hand holds an object or a tool. "
+        "Output only the raw label or No Action."
+    )
+    if insist_action:
+        intro = (
+            "These frames show first-person HAND WORK. Do not output No Action. "
+            "Name what each hand holds. "
+            "If the object looks like an animal it is a stuffed toy or fabric: write stuffed animal. "
+            "If you see scissors, write trim or cut with scissors in that hand. "
+            "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. "
+            "Atlas syntax: verb + object + with [hand]. Never refuse. Never explain. "
+            "Output only the raw label."
+        )
+    user_content: list[dict] = [{"type": "text", "text": intro}]
     if duration_seconds is not None:
         user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
     if previous_label and previous_label != "No Action":
@@ -569,11 +603,85 @@ def _vision_user_content(
                 "Write a FRESH Atlas label from the images you just saw. "
                 "Ignore any on-screen text. Do not copy a machine draft. "
                 "Do not reuse the previous segment's sentence if this window shows something else. "
-                "Never write animal or tool."
+                "Never write bare animal or tool. A toy is stuffed animal."
             ),
         }
     )
     return user_content
+
+
+def _query_vision_models(
+    messages: list[dict],
+    draft_label: str | None,
+    previous_label: str | None,
+    models: list[str],
+) -> str:
+    last_error = None
+    last_generic = None
+    accepted_no_action = False
+    for index, model in enumerate(models):
+        try:
+            print(f"[OpenRouter]: Trying {model}...")
+            route_fallbacks = models[
+                index + 1 : index + 1 + OPENROUTER_MAX_ROUTE_FALLBACKS
+            ]
+            request = {
+                "model": model,
+                "messages": messages,
+                "temperature": TEMPERATURE,
+                "extra_headers": OPENROUTER_HEADERS,
+            }
+            if route_fallbacks:
+                request["extra_body"] = {"models": route_fallbacks}
+            response = client.chat.completions.create(**request)
+            raw_label = response.choices[0].message.content
+            if not raw_label or not str(raw_label).strip():
+                raise ValueError("Empty model response")
+            if _looks_like_refusal(str(raw_label)):
+                raise ValueError(f"Model refused: {str(raw_label)[:160]}")
+            print(f"[OpenRouter]: Success with {model}")
+            cleaned = sanitize_label(raw_label)
+            cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
+            print(f"[Pipeline]: Vision model: '{cleaned}'")
+            if cleaned == "No Action":
+                if draft_label and draft_label.strip().lower() != "no action":
+                    accepted_no_action = True
+                    if index + 1 < len(models):
+                        print(
+                            f"[OpenRouter]: {model} said No Action while a draft describes work "
+                            f"(raw={str(raw_label)[:80]!r}). Trying next model..."
+                        )
+                    continue
+                return "No Action"
+            if is_generic_placeholder_label(cleaned):
+                last_generic = cleaned
+                if index + 1 < len(models):
+                    print(
+                        f"[OpenRouter]: {model} used generic 'animal' "
+                        f"({cleaned!r}). Trying next model..."
+                    )
+                    continue
+            if draft_label and _labels_match(cleaned, draft_label):
+                print(
+                    "[Pipeline]: Model output matches the Atlas draft. "
+                    "The draft was not sent to the model."
+                )
+            return reconcile_with_draft(cleaned, draft_label)
+        except Exception as e:
+            last_error = e
+            print(f"[Warning] {model} failed: {e}. Trying next fallback...")
+            continue
+
+    if last_generic:
+        print(
+            "[Pipeline]: Every vision model used generic 'animal'. "
+            "Not copying the Atlas draft."
+        )
+        return last_generic
+    if accepted_no_action:
+        return "No Action"
+    print(f"[Error] All vision models failed. Last error: {last_error}")
+    return "No Action"
 
 
 def generate_label_from_frames(
@@ -602,71 +710,36 @@ def generate_label_from_frames(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
-
-    last_error = None
-    last_generic = None
-    for index, model in enumerate(VISION_MODELS):
-        try:
-            print(f"[OpenRouter]: Trying {model}...")
-            route_fallbacks = VISION_MODELS[
-                index + 1 : index + 1 + OPENROUTER_MAX_ROUTE_FALLBACKS
-            ]
-            request = {
-                "model": model,
-                "messages": messages,
-                "temperature": TEMPERATURE,
-                "extra_headers": OPENROUTER_HEADERS,
-            }
-            if route_fallbacks:
-                request["extra_body"] = {"models": route_fallbacks}
-            response = client.chat.completions.create(**request)
-            raw_label = response.choices[0].message.content
-            if not raw_label or not str(raw_label).strip():
-                raise ValueError("Empty model response")
-            if _looks_like_refusal(str(raw_label)):
-                raise ValueError(f"Model refused: {str(raw_label)[:160]}")
-            print(f"[OpenRouter]: Success with {model}")
-            cleaned = sanitize_label(raw_label)
-            cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
-            print(f"[Pipeline]: Vision model: '{cleaned}'")
-            if (
-                cleaned == "No Action"
-                and draft_label
-                and draft_label.strip().lower() != "no action"
-                and index + 1 < len(VISION_MODELS)
-            ):
-                print(
-                    f"[OpenRouter]: {model} said No Action while a draft describes work "
-                    f"(raw={str(raw_label)[:80]!r}). Trying next model..."
-                )
-                continue
-            if is_generic_placeholder_label(cleaned):
-                last_generic = cleaned
-                if index + 1 < len(VISION_MODELS):
-                    print(
-                        f"[OpenRouter]: {model} used generic 'animal' "
-                        f"({cleaned!r}). Trying next model..."
-                    )
-                    continue
-            if draft_label and _labels_match(cleaned, draft_label):
-                print(
-                    "[Pipeline]: Model output matches the Atlas draft. "
-                    "The draft was not sent to the model."
-                )
-            return reconcile_with_draft(cleaned, draft_label)
-        except Exception as e:
-            last_error = e
-            print(f"[Warning] {model} failed: {e}. Trying next fallback...")
-            continue
-
-    if last_generic:
+    label = _query_vision_models(
+        messages, draft_label, previous_label, list(VISION_MODELS)
+    )
+    if (
+        label == "No Action"
+        and draft_label
+        and draft_label.strip().lower() != "no action"
+    ):
         print(
-            "[Pipeline]: Every vision model used generic 'animal'. "
-            "Not copying the Atlas draft."
+            "[Pipeline]: All models said No Action. "
+            "Retrying as hand work (still not sending the Atlas draft)."
         )
-        return last_generic
-    print(f"[Error] All vision models failed. Last error: {last_error}")
-    return "No Action"
+        insist_content = _vision_user_content(
+            base64_frames,
+            previous_label=previous_label,
+            draft_label=draft_label,
+            duration_seconds=duration_seconds,
+            frame_timestamps=frame_timestamps,
+            insist_action=True,
+        )
+        label = _query_vision_models(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": insist_content},
+            ],
+            draft_label,
+            previous_label,
+            list(VISION_MODELS[:2]),
+        )
+    return label
 
 
 if __name__ == "__main__":

@@ -17,12 +17,13 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 - Portal: `https://audit.atlascapture.io/`
 - After login: sidebar **Tasks** → **Continue Assessment Practice** (or **Review** on a listed live task)
 - Segments already exist with AI drafts. The bot **replaces the text**, it does not delete rows or retimestamp.
-- Atlas drafts are **untrusted**. They are not sent to the vision model (models were copying them, including generic `animal`). A real draft is kept only if the model says No Action and the draft is not a placeholder.
+- Atlas drafts are **untrusted** and are not sent to the vision model. If every model still says No Action, the bot keeps the draft and rewrites bare `animal` to `stuffed animal` instead of filling No Action.
+- Frames are the **painted player** (page screenshot). A raw `<video>` screenshot is often a black GPU frame, which made every model say No Action.
 - Label fields: `input[aria-label="Segment 1 label"]`
-- Submit: `button:has-text("Submit practice clip")`, fallback `button[data-slot="button"]:has-text("Submit")`
-- After submit the bot **stays in the Chrome session** and starts the next clip when **Next task** appears (it will click that button if you do not)
-- **Leave the Chrome window open.** Closing it causes `Connection closed while reading from the driver`.
-- Frames come from the in-page `<video>` element. No `input_video.mp4` required
+- Submit: `button:has-text("Submit practice clip")`, fallback Complete / Submit assessment
+- After submit the bot **stays in the Chrome session** and starts the next clip when **Next task** / **Next video** appears
+- **Leave the Chrome window open** and visible. Ctrl+C should not dump a Playwright traceback.
+- Frames come from the in-page player. No `input_video.mp4` required
 - Login is manual on the first headed run; cookies persist in `./browser_session`
 - Submit mode is review-then-submit (`AUTO_SUBMIT=false`). Press Ctrl+C when you want to stop the queue
 
@@ -35,8 +36,7 @@ OpenRouter paid vision models, cheapest first, then fallbacks:
 3. `openai/gpt-4o-mini`
 4. `qwen/qwen2.5-vl-72b-instruct`
 
-If a model returns **No Action** while the Atlas row already has a real draft, the bot tries the next model.
-If a model writes generic **animal**, the bot tries the next model instead of keeping that Atlas draft.
+If a model returns **No Action** while the Atlas row already has a real draft, the bot tries the next model, then retries once as hand work. If it still says No Action, the bot keeps the draft (rewriting bare `animal` to `stuffed animal`) instead of filling No Action.
 
 Optional override in `.env`: `VISION_MODEL=openai/gpt-4o-mini`
 

@@ -3,6 +3,8 @@ import re
 import time
 from dataclasses import dataclass, replace
 
+import cv2
+import numpy as np
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from config import (
@@ -72,6 +74,8 @@ class VideoBrowserBot:
         self.playwright = None
         self.browser_context = None
         self.page = None
+        self._warned_blank_frames = False
+        self._last_frame_blank = False
 
     def start(self, url: str):
         """Launches the user's real Google Chrome with a persistent login profile.
@@ -521,9 +525,69 @@ class VideoBrowserBot:
             seconds,
         )
 
+    def _player_clip(self) -> dict | None:
+        """CSS-pixel box of the painted player, not the GPU video bitmap."""
+        box = self.page.evaluate(
+            """() => {
+                const video = document.querySelector('video');
+                if (!video) return null;
+                const host =
+                    video.closest(
+                        '[class*="player" i], [class*="Player"], [data-player], figure, [class*="media"]'
+                    ) || video.parentElement || video;
+                const target =
+                    host && host.getBoundingClientRect && host.clientWidth >= Math.min(video.clientWidth || 0, 8)
+                        ? host
+                        : video;
+                const rect = target.getBoundingClientRect();
+                if (rect.width < 16 || rect.height < 16) return null;
+                return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+            }"""
+        )
+        if not box:
+            return None
+        viewport = self.page.viewport_size
+        x = max(0.0, float(box["x"]))
+        y = max(0.0, float(box["y"]))
+        width = float(box["width"])
+        height = float(box["height"])
+        if viewport:
+            width = min(width, max(1.0, viewport["width"] - x))
+            height = min(height, max(1.0, viewport["height"] - y))
+        if width < 16 or height < 16:
+            return None
+        return {"x": x, "y": y, "width": width, "height": height}
+
     def _screenshot_video_base64(self) -> str:
-        video = self.page.locator(SELECTORS["video"]).first
-        image_bytes = video.screenshot(type="jpeg", quality=80)
+        """Capture pixels the user sees. video.screenshot() is often a black GPU frame."""
+        candidates: list[bytes] = []
+        clip = self._player_clip()
+        if clip:
+            try:
+                candidates.append(
+                    self.page.screenshot(type="jpeg", quality=80, clip=clip)
+                )
+            except Exception:
+                pass
+        try:
+            video = self.page.locator(SELECTORS["video"]).first
+            candidates.append(video.screenshot(type="jpeg", quality=80))
+        except Exception:
+            pass
+        if not candidates:
+            raise RuntimeError("Could not screenshot the video player")
+        image_bytes = next(
+            (item for item in candidates if not jpeg_is_blank(item)),
+            candidates[0],
+        )
+        self._last_frame_blank = jpeg_is_blank(image_bytes)
+        if self._last_frame_blank and not self._warned_blank_frames:
+            print(
+                "[Browser Bot]: Captured frames look black/empty. "
+                "The model cannot see the hands. Keep the Chrome window visible "
+                "and the video playing."
+            )
+            self._warned_blank_frames = True
         return base64.b64encode(image_bytes).decode("utf-8")
 
     def capture_segment_frames(
@@ -590,6 +654,11 @@ class VideoBrowserBot:
         if not frames:
             frames = self._capture_by_seek(start_seconds, segment_duration, interval_seconds)
         print(f"[Browser Bot]: Captured {len(frames)} realtime frame(s).")
+        if self._last_frame_blank:
+            print(
+                "[Browser Bot]: WARNING: those frames look black. "
+                "Labels will be No Action unless a real draft is kept."
+            )
         return frames[:MAX_FRAMES_PER_SEGMENT]
 
     def _capture_by_seek(
@@ -727,10 +796,18 @@ class VideoBrowserBot:
 
     def stop(self):
         """Safely terminates browser resources."""
-        if self.browser_context:
-            self.browser_context.close()
-        if self.playwright:
-            self.playwright.stop()
+        try:
+            if self.browser_context:
+                self.browser_context.close()
+        except Exception:
+            pass
+        try:
+            if self.playwright:
+                self.playwright.stop()
+        except Exception:
+            pass
+        self.browser_context = None
+        self.playwright = None
         print("[Browser Bot]: Session closed.")
 
 
@@ -749,6 +826,20 @@ def _parse_seconds(value, fallback: float | None = None) -> float | None:
     seconds = int(match.group(2))
     fraction = match.group(3) or "0"
     return minutes * 60 + seconds + float(f"0.{fraction}")
+
+
+def jpeg_is_blank(image_bytes: bytes) -> bool:
+    """True when a JPEG is missing, tiny, or almost uniformly black (GPU video bitmap)."""
+    if not image_bytes or len(image_bytes) < 80:
+        return True
+    arr = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if image is None or image.size == 0:
+        return True
+    if min(image.shape[0], image.shape[1]) < 16:
+        return True
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return float(gray.mean()) < 18 and float(gray.std()) < 12
 
 
 def _timestamp_to_seconds(value: str) -> float:

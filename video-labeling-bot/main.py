@@ -14,8 +14,7 @@ from frame_extractor import extract_frames_from_video, format_timestamp
 from label_generator import (
     apply_context_fixes,
     generate_label_from_frames,
-    is_generic_placeholder_label,
-    sanitize_label,
+    rewrite_generic_animal_draft,
 )
 
 load_dotenv()
@@ -96,16 +95,15 @@ def process_live_task(
             label == "No Action"
             and segment.draft_label
             and segment.draft_label.strip().lower() != "no action"
-            and not is_generic_placeholder_label(segment.draft_label)
         ):
             kept = apply_context_fixes(
-                sanitize_label(segment.draft_label),
+                rewrite_generic_animal_draft(segment.draft_label),
                 segment.draft_label,
                 previous_label,
             )
             print(
                 "[Pipeline]: Model said No Action but an AI draft already describes "
-                f"work. Keeping draft: '{kept}'"
+                f"work. Keeping '{kept}' instead of writing No Action."
             )
             if kept != "No Action":
                 bot.fill_segment_label(
@@ -117,13 +115,6 @@ def process_live_task(
             else:
                 previous_label = segment.draft_label
             continue
-        if is_generic_placeholder_label(segment.draft_label) and (
-            not label or label == "No Action" or is_generic_placeholder_label(label)
-        ):
-            print(
-                "[Pipeline]: Atlas draft uses generic 'animal'. "
-                "Not keeping it. Label from frames instead."
-            )
 
         bot.fill_segment_label(
             segment.number,
