@@ -14,7 +14,9 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 ## Atlas wiring
 
 - Portal: `https://audit.atlascapture.io/`
-- Label fields: `input[aria-label="Segment 1 label"]` (also `data-segment-start-seconds`)
+- After login: sidebar **Tasks** → **Continue Assessment Practice** (or **Review** on a listed live task)
+- Segments already exist with AI drafts. The bot **replaces the text**, it does not delete rows or retimestamp.
+- Label fields: `input[aria-label="Segment 1 label"]`
 - Submit: `button:has-text("Submit practice clip")`, fallback `button[data-slot="button"]:has-text("Submit")`
 - Frames come from the in-page `<video>` element. No `input_video.mp4` required
 - Login is manual on the first headed run; cookies persist in `./browser_session`
