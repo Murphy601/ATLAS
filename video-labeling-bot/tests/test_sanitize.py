@@ -223,6 +223,25 @@ def test_model_fits_draft_rejects_wrong_objects():
     assert model_fits_draft(toy, "No Action")
 
 
+def test_choose_final_label_is_draft_first():
+    from label_generator import choose_final_label
+
+    plate = "rotate glass plate with both hands"
+    toy = (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand, "
+        "pass scissors from right hand to left hand"
+    )
+    assert choose_final_label(toy, plate) == plate
+    assert choose_final_label("No Action", plate) == plate
+    assert choose_final_label(
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand, "
+        "pass scissors from right hand to left hand",
+        "hold animal with left hand, trim animal with scissors in right hand",
+    ) == (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
+
+
 def test_reconcile_does_not_keep_generic_animal_draft():
     from label_generator import (
         is_generic_placeholder_label,

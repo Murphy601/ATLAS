@@ -301,7 +301,7 @@ def test_retries_no_action_with_hand_work_prompt(monkeypatch):
     ) == (
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
-    assert len(calls) > len(VISION_MODELS)
+    assert len(calls) == len(VISION_MODELS)
 
 
 def test_keeps_glass_plate_draft_when_model_repeats_stuffed_animal(monkeypatch):

@@ -360,6 +360,50 @@ def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
     return model_label
 
 
+def choose_final_label(
+    model_label: str,
+    draft_label: str | None,
+    previous_label: str | None = None,
+) -> str:
+    """Draft-first: keep a specific Atlas row unless the model same-scene and does not add clauses."""
+    draft_raw = usable_draft(draft_label)
+    model = apply_context_fixes(
+        sanitize_label(model_label or ""), draft_raw, previous_label
+    )
+    if model == "No Action":
+        model = ""
+
+    if draft_raw:
+        draft = apply_context_fixes(
+            rewrite_generic_animal_draft(draft_raw),
+            draft_raw,
+            previous_label,
+        )
+        if not model:
+            print(f"[Pipeline]: Using Atlas draft (model empty): '{draft}'")
+            return draft
+        if not model_fits_draft(model, draft):
+            print(
+                f"[Pipeline]: Model named different objects. Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        if len(split_actions(model)) > len(split_actions(draft)):
+            print(
+                f"[Pipeline]: Model added extra actions. Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        chosen = reconcile_with_draft(model, draft)
+        if is_generic_placeholder_label(chosen):
+            return draft
+        return chosen
+
+    if model:
+        if is_generic_placeholder_label(model):
+            return rewrite_generic_animal_draft(model)
+        return model
+    return "No Action"
+
+
 def _api_key() -> str | None:
     for name in ("OPENROUTER_API_KEY", "OPENAI_API_KEY"):
         key = (os.getenv(name) or "").strip().strip('"').strip("'")
@@ -808,29 +852,11 @@ def generate_label_from_frames(
     label = _query_vision_models(
         messages, draft_label, previous_label, list(VISION_MODELS)
     )
-    if label == "No Action":
+    if label == "No Action" and not draft_label:
         print(
-            "[Pipeline]: All models said No Action. "
-            "Retrying as hand work (still not sending any Atlas draft)."
+            "[Pipeline]: All models said No Action and there is no usable Atlas draft."
         )
-        insist_content = _vision_user_content(
-            base64_frames,
-            previous_label=previous_label,
-            draft_label=draft_label,
-            duration_seconds=duration_seconds,
-            frame_timestamps=frame_timestamps,
-            insist_action=True,
-        )
-        label = _query_vision_models(
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": insist_content},
-            ],
-            draft_label,
-            previous_label,
-            list(VISION_MODELS[:2]),
-        )
-    return label
+    return choose_final_label(label, draft_label, previous_label)
 
 
 if __name__ == "__main__":

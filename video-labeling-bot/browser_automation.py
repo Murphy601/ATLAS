@@ -1,5 +1,4 @@
 import base64
-import os
 import re
 import time
 from dataclasses import dataclass, replace
