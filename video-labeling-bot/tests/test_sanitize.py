@@ -252,16 +252,20 @@ def test_choose_final_label_is_draft_first():
     leftover = (
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
-    wipe = "wipe glass plate with cloth in right hand"
+    dish = (
+        "hold glass plate with left hand, wipe glass plate with cloth in right hand"
+    )
     assert (
         choose_final_label(
-            wipe,
+            "wipe glass plate with cloth in right hand",
             leftover,
             frames_have_video=True,
         )
-        == wipe
+        == dish
     )
-    assert choose_final_label(wipe, leftover) == leftover
+    assert choose_final_label(
+        "wipe glass plate with cloth in right hand", leftover
+    ) == leftover
 
 
 def test_reconcile_does_not_keep_generic_animal_draft():
@@ -320,7 +324,7 @@ def test_strips_micro_movement_during_continuous_work():
     ) == "hold paper with left hand, cut paper with scissors in right hand"
     assert sanitize_label(
         "wipe plate with cloth in right hand, rotate plate with left hand"
-    ) == "wipe plate with cloth in right hand"
+    ) == "wipe plate with cloth in right hand, rotate plate with left hand"
     assert sanitize_label(
         "shift plastic bag with left hand, pick up plastic bag with right hand"
     ) == "shift plastic bag with left hand, pick up plastic bag with right hand"
@@ -338,7 +342,7 @@ def test_caps_labels_at_three_actions():
         "hold bowl with left hand, stir soup with spoon in right hand, "
         "wipe rim with left hand, place bowl on table with left hand"
     ) == (
-        "stir soup with spoon in right hand, wipe rim with left hand, "
+        "hold bowl with left hand, stir soup with spoon in right hand, "
         "place bowl on table with left hand"
     )
 
@@ -355,6 +359,17 @@ def test_attaches_object_to_bare_place():
     assert sanitize_label(
         "pick up cup with right hand, place on table with right hand"
     ) == "pick up cup with right hand, place cup on table with right hand"
+    assert sanitize_label(
+        "pick up cup, place cup on table with right hand"
+    ) == "pick up cup with right hand, place cup on table with right hand"
+
+
+def test_keeps_workpiece_pickup_before_wipe():
+    assert sanitize_label(
+        "pick up plate with left hand, wipe plate with cloth in right hand"
+    ) == (
+        "pick up plate with left hand, wipe plate with cloth in right hand"
+    )
 
 
 def test_choose_final_label_drops_extra_pickup_keeps_missing_place():
@@ -383,9 +398,7 @@ def test_splits_false_both_hands_on_dish_wipe():
         "hold glass plate with left hand, wipe glass plate with cloth in right hand"
     )
     assert sanitize_label(gold) == gold
-    assert sanitize_label("wipe glass plate with cloth in right hand") == (
-        "wipe glass plate with cloth in right hand"
-    )
+    assert sanitize_label("wipe glass plate with cloth in right hand") == gold
 
 
 def test_does_not_split_true_both_hands_work():

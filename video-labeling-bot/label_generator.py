@@ -169,7 +169,11 @@ def _strip_instrumental_pickup(text: str) -> str:
                 continue
             if use_verb not in USE_VERBS and use_verb not in CONTINUOUS_VERBS:
                 continue
-            if not re.search(rf"\b{re.escape(picked)}\b", clauses[use_index], re.IGNORECASE):
+            use_clause = clauses[use_index]
+            tool = _named_tool_in(use_clause)
+            used_as_implement = bool(tool) and _objects_match(picked, tool)
+            used_as_verb = use_verb == picked.lower()
+            if not used_as_implement and not used_as_verb:
                 continue
             print(f"[Sanitize]: Dropped instrumental pick up '{clause}'")
             del clauses[index]
@@ -179,7 +183,7 @@ def _strip_instrumental_pickup(text: str) -> str:
 
 
 def _strip_micro_movements(text: str) -> str:
-    """Drop shift/align/slide/rotate inside a continuous cut/wipe/dig/water/write."""
+    """Drop shift/align/slide/tilt/tap inside a continuous cut/wipe/dig/water/write."""
     clauses = split_actions(text)
     if len(clauses) < 2:
         return text
@@ -219,21 +223,29 @@ def _cap_actions(text: str, limit: int = MAX_ACTIONS_PER_LABEL) -> str:
         return text
     print(f"[Sanitize]: Capping {len(clauses)} actions to {limit}")
 
-    def drop_score(clause: str) -> int:
+    def drop_score(item: tuple[int, str]) -> tuple[int, int]:
+        orig_index, clause = item
         verb = _leading_verb(clause)
         if verb in WORK_MICROS:
-            return 0
+            return (0, -orig_index)
         if verb == "hold":
-            return 1
+            held = _clause_object(clause)
+            for other_index, other in indexed:
+                if other_index == orig_index:
+                    continue
+                tool = _named_tool_in(other)
+                if tool and held and not _objects_match(held, tool):
+                    return (8, -orig_index)
+            return (1, -orig_index)
         if verb in CONTINUOUS_VERBS:
-            return 2
+            return (2, -orig_index)
         if verb in MISSING_IF_DROPPED or verb == "pick up":
-            return 9
-        return 3
+            return (9, -orig_index)
+        return (3, -orig_index)
 
     indexed = list(enumerate(clauses))
     while len(indexed) > limit:
-        victim = min(indexed, key=lambda item: (drop_score(item[1]), -item[0]))
+        victim = min(indexed, key=drop_score)
         indexed.remove(victim)
     indexed.sort()
     return ", ".join(clause for _, clause in indexed)
@@ -322,6 +334,85 @@ def _fill_missing_clause_objects(text: str) -> str:
             last_obj = obj
         filled.append(clause)
     return ", ".join(filled)
+
+
+def _ensure_offhand_hold_for_dish_wipe(text: str) -> str:
+    """Name the stabilizing hand when one hand wipes a dish the other is holding."""
+    clauses = split_actions(text)
+    if len(clauses) != 1:
+        return text
+    clause = clauses[0]
+    if _leading_verb(clause) not in WIPE_VERBS or not _is_dish_clause(clause):
+        return text
+    if "both hands" in clause.lower() or HOLD_CLAUSE_PATTERN.search(clause):
+        return text
+    obj = _clause_object(clause)
+    if not obj:
+        return text
+    uses_right = re.search(r"\b(?:in|with) right hand\b", clause, re.IGNORECASE)
+    uses_left = re.search(r"\b(?:in|with) left hand\b", clause, re.IGNORECASE)
+    if uses_right and not uses_left:
+        return f"hold {obj} with left hand, {clause}"
+    if uses_left and not uses_right:
+        return f"hold {obj} with right hand, {clause}"
+    return text
+
+
+def _clause_hand(clause: str) -> str:
+    text = clause or ""
+    if re.search(r"\bboth hands\b", text, re.IGNORECASE):
+        return "both hands"
+    if re.search(r"\bleft hand\b", text, re.IGNORECASE):
+        return "left hand"
+    if re.search(r"\bright hand\b", text, re.IGNORECASE):
+        return "right hand"
+    return ""
+
+
+def _attach_missing_hands(text: str) -> str:
+    """Guideline: every clause must name a hand. Copy a sibling hand if one is missing."""
+    clauses = split_actions(text)
+    known = ""
+    for clause in clauses:
+        known = _clause_hand(clause)
+        if known:
+            break
+    if not known:
+        return text
+    attached = []
+    for clause in clauses:
+        if _leading_verb(clause) and not _clause_hand(clause):
+            attached.append(f"{clause} with {known}")
+        else:
+            attached.append(clause)
+    return ", ".join(attached)
+
+
+def _drop_contradictory_hold_after_pickup(text: str) -> str:
+    """pick up X, hold X is contradictory. Keep pick up (object left the surface)."""
+    clauses = split_actions(text)
+    if len(clauses) != 2:
+        return text
+    if _leading_verb(clauses[0]) != "pick up" or _leading_verb(clauses[1]) != "hold":
+        return text
+    if _objects_match(_pickup_object(clauses[0]), _clause_object(clauses[1])):
+        return clauses[0]
+    return text
+
+
+def _is_case_a_stabilize(label: str) -> bool:
+    parts = split_actions(label)
+    if len(parts) != 2:
+        return False
+    if _leading_verb(parts[0]) == "hold":
+        hold, work = parts[0], parts[1]
+    elif _leading_verb(parts[1]) == "hold":
+        hold, work = parts[1], parts[0]
+    else:
+        return False
+    tool = _named_tool_in(work)
+    held = _clause_object(hold)
+    return bool(tool) and bool(held) and not _objects_match(held, tool)
 
 
 def _finish_incomplete_hands(text: str) -> str:
@@ -489,8 +580,8 @@ def _align_object_names(label: str, previous_label: str | None) -> str:
         return label
     prev = previous_label.lower()
     updated = label
-    if re.search(r"\bplate\b", prev) and re.search(r"\bbowl\b", updated, re.IGNORECASE):
-        updated = re.sub(r"\bbowl\b", "plate", updated, flags=re.IGNORECASE)
+    if re.search(r"\bplate\b", prev) and re.search(r"\b(?:bowl|dish)\b", updated, re.IGNORECASE):
+        updated = re.sub(r"\b(?:bowl|dish)\b", "plate", updated, flags=re.IGNORECASE)
     if re.search(r"\bglass plate\b", prev):
         updated = re.sub(r"(?<!glass )\bplate\b", "glass plate", updated, flags=re.IGNORECASE)
         updated = re.sub(r"\bglass glass plate\b", "glass plate", updated, flags=re.IGNORECASE)
@@ -699,7 +790,10 @@ def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
     if (
         len(draft_parts) == len(model_parts) + 1
         and len(draft_parts) <= MAX_ACTIONS_PER_LABEL
-        and _leading_verb(draft_parts[-1]) in {"place", "set", "pass", "gather"}
+        and (
+            _leading_verb(draft_parts[-1]) in {"place", "set", "pass", "gather"}
+            or _is_case_a_stabilize(draft)
+        )
         and HAND_PATTERN.search(draft)
     ):
         return draft
@@ -743,6 +837,12 @@ def choose_final_label(
             )
             return draft
         if len(split_actions(model)) > len(split_actions(draft)):
+            if _is_case_a_stabilize(model) and not _is_case_a_stabilize(draft):
+                print(
+                    "[Pipeline]: Draft missed an off-hand stabilize. "
+                    f"Using the model: '{model}'"
+                )
+                return model
             if _hid_distinct_hands(draft_raw) and _has_distinct_hands(model):
                 print(
                     "[Pipeline]: Draft hid distinct hands as both hands. "
@@ -759,6 +859,15 @@ def choose_final_label(
                 f"[Pipeline]: Model added extra actions. Keeping Atlas draft: '{draft}'"
             )
             return draft
+        if len(split_actions(draft)) > len(split_actions(model)):
+            if _is_case_a_stabilize(draft) or (
+                _has_release(draft) and not _has_release(model)
+            ):
+                print(
+                    "[Pipeline]: Model dropped a required hold/place. "
+                    f"Keeping Atlas draft: '{draft}'"
+                )
+                return draft
         chosen = reconcile_with_draft(model, draft)
         if is_generic_placeholder_label(chosen):
             return draft
@@ -929,6 +1038,7 @@ def sanitize_label(text: str) -> str:
 
     # 8. Articles, illegal separators, plural-only tools
     cleaned = ARTICLE_PATTERN.sub("", cleaned)
+    cleaned = re.sub(r"\busing\b", "with", cleaned, flags=re.IGNORECASE)
     cleaned = COMMA_AND_PATTERN.sub(",", cleaned)
     cleaned = SLASH_PATTERN.sub(", ", cleaned)
     cleaned = SEMICOLON_PATTERN.sub(", ", cleaned)
@@ -942,10 +1052,13 @@ def sanitize_label(text: str) -> str:
     cleaned = _fill_missing_clause_objects(cleaned)
     cleaned = _split_false_both_hands(cleaned)
     cleaned = _name_wipe_cloth(cleaned)
+    cleaned = _ensure_offhand_hold_for_dish_wipe(cleaned)
     cleaned = _strip_instrumental_pickup(cleaned)
     cleaned = _strip_micro_movements(cleaned)
     cleaned = _collapse_repeated_work(cleaned)
+    cleaned = _drop_contradictory_hold_after_pickup(cleaned)
     cleaned = _collapse_redundant_hold(cleaned)
+    cleaned = _attach_missing_hands(cleaned)
     cleaned = _cap_actions(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
@@ -1067,6 +1180,7 @@ def _vision_user_content(
             "Do write place/set/pass if the object is released or changes hands. "
             "If one hand holds a plate and the other wipes with a cloth, write two clauses "
             "with left hand and right hand. Do not write both hands for that. "
+            "Missing the hold is Missing Action. "
             "A clear dish is glass plate, not bowl. "
             "Do not write stuffed animal, scissors, dough, hose, or any example unless it is visible. "
             "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. "
