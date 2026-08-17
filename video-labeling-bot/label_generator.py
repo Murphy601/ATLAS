@@ -7,25 +7,35 @@ from dotenv import load_dotenv
 from config import (
     DIGIT_PATTERN,
     FORBIDDEN_WORDS,
-    LABEL_PROVIDER,
     NUMBER_MAP,
-    OPENAI_MODEL,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_HEADERS,
     SYSTEM_PROMPT,
     TEMPERATURE,
     VERB_CORRECTIONS,
+    VISION_MODELS,
 )
 
 load_dotenv()
 
 
 def _api_key() -> str | None:
-    key = (os.getenv("OPENAI_API_KEY") or "").strip().strip('"').strip("'")
-    if not key or key.startswith("your-actual-api-key"):
-        return None
-    return key
+    for name in ("OPENROUTER_API_KEY", "OPENAI_API_KEY"):
+        key = (os.getenv(name) or "").strip().strip('"').strip("'")
+        if key and not key.startswith("your-actual-api-key"):
+            return key
+    return None
 
 
-client = openai.OpenAI(api_key=_api_key())
+def _build_client() -> openai.OpenAI:
+    return openai.OpenAI(
+        base_url=OPENROUTER_BASE_URL,
+        api_key=_api_key(),
+        default_headers=OPENROUTER_HEADERS,
+    )
+
+
+client = _build_client()
 
 ONES = [
     "zero",
@@ -133,15 +143,9 @@ def sanitize_label(text: str) -> str:
 
 
 def generate_label_from_frames(base64_frames: list[str]) -> str:
-    """Sends encoded frame images to the vision model and returns a compliant label."""
-    if LABEL_PROVIDER != "openai":
-        print(
-            f"[API Warning]: LABEL_PROVIDER={LABEL_PROVIDER} is not implemented. "
-            "Falling back to OpenAI GPT-4o."
-        )
-
+    """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
-        print("[API Error]: OPENAI_API_KEY is missing. Returning 'No Action'.")
+        print("[API Error]: OPENROUTER_API_KEY is missing. Returning 'No Action'.")
         return "No Action"
 
     image_contents = [
@@ -166,17 +170,29 @@ def generate_label_from_frames(base64_frames: list[str]) -> str:
         },
     ]
 
-    try:
-        response = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=messages,
-            temperature=TEMPERATURE,
-        )
-        raw_label = response.choices[0].message.content
-        return sanitize_label(raw_label)
-    except Exception as e:
-        print(f"[API Error]: {e}")
-        return "No Action"
+    last_error = None
+    for index, model in enumerate(VISION_MODELS):
+        try:
+            print(f"[OpenRouter]: Trying {model}...")
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=TEMPERATURE,
+                extra_body={"models": VISION_MODELS[index + 1 :]},
+                extra_headers=OPENROUTER_HEADERS,
+            )
+            raw_label = response.choices[0].message.content
+            if not raw_label or not str(raw_label).strip():
+                raise ValueError("Empty model response")
+            print(f"[OpenRouter]: Success with {model}")
+            return sanitize_label(raw_label)
+        except Exception as e:
+            last_error = e
+            print(f"[Warning] {model} failed: {e}. Trying next fallback...")
+            continue
+
+    print(f"[Error] All free vision models failed. Last error: {last_error}")
+    return "No Action"
 
 
 if __name__ == "__main__":

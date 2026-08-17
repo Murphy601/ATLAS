@@ -35,16 +35,18 @@
         class="w-full rounded-lg border"
         value=""
       />
-      <button type="button" id="next">Next</button>
-      <button type="submit" id="submit">Submit</button>
+      <button
+        data-slot="button"
+        type="submit"
+        class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium h-9 px-4 py-2 min-w-40 bg-[#6c5ce7] text-white hover:bg-[#5848d8]"
+      >
+        Submit practice clip
+      </button>
     </form>
     <p id="submitted" hidden>submitted</p>
     <script>
       document.getElementById("annotation-form").addEventListener("submit", (event) => {
         event.preventDefault();
-        document.getElementById("submitted").hidden = false;
-      });
-      document.getElementById("next").addEventListener("click", () => {
         document.getElementById("submitted").hidden = false;
       });
     </script>

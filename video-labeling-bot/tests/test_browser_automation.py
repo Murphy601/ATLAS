@@ -37,6 +37,7 @@ def test_fill_atlas_segment_labels(tmp_path):
 
         bot.submit_final_task()
         assert bot.page.locator("#submitted").is_visible()
+        assert bot.page.locator('button:has-text("Submit practice clip")').count() == 1
     finally:
         bot.stop()
 

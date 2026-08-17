@@ -67,12 +67,37 @@ NUMBER_MAP = {
 # Regex pattern matching standalone digits
 DIGIT_PATTERN = re.compile(r"\b\d+\b")
 
-# AI API Configuration
-OPENAI_MODEL = "gpt-4o"
-# Architecture alternative (not used unless LABEL_PROVIDER=qwen): Qwen2-VL
-QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen2-vl")
-LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openai")
+# AI API Configuration — OpenRouter free vision models
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_HEADERS = {
+    "HTTP-Referer": "https://github.com/Murphy601/ATLAS",
+    "X-Title": "ATLAS Video Labeling Bot",
+}
+LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
+
+# Primary free VLMs, then fallbacks, then OpenRouter auto-router
+VISION_MODELS = [
+    "qwen/qwen-2-vl-7b-instruct:free",
+    "google/gemini-2.5-flash:free",
+    "google/gemini-2.0-flash-exp:free",
+    "meta-llama/llama-3.2-11b-vision-instruct:free",
+    "mistralai/pixtral-12b:free",
+    "qwen/qwen-2.5-vl-72b-instruct:free",
+    "openrouter/auto",
+]
+
+# Atlas Capture audit portal selectors
+SELECTORS = {
+    "label_input": 'input[aria-label*="label"]',
+    "label_input_alt": 'input[data-ph-unmask="true"]',
+    "segment_input": 'input[data-segment-start-seconds], input[aria-label^="Segment"][aria-label*="label"]',
+    "video": "video",
+    "play_button": 'button[aria-label*="Play" i], button:has-text("Play")',
+    "submit_button": 'button:has-text("Submit practice clip")',
+    "submit_button_generic": 'button[data-slot="button"]:has-text("Submit")',
+    "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button:has-text("Next"), button[type="submit"]',
+}
 
 # Pipeline defaults (overridable via environment variables)
 DEFAULT_PORTAL_URL = os.getenv("PORTAL_URL", "https://audit.atlascapture.io/")

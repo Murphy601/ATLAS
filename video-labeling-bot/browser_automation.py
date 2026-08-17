@@ -5,15 +5,7 @@ from dataclasses import dataclass
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
-SELECTORS = {
-    # Atlas Capture audit portal (https://audit.atlascapture.io/)
-    "label_input": 'input[aria-label*="label"]',
-    "label_input_alt": 'input[data-ph-unmask="true"]',
-    "segment_input": 'input[data-segment-start-seconds], input[aria-label^="Segment"][aria-label*="label"]',
-    "video": "video",
-    "play_button": 'button[aria-label*="Play" i], button:has-text("Play")',
-    "submit_btn": 'button:has-text("Submit"), button:has-text("Next"), button[type="submit"]',
-}
+from config import SELECTORS
 
 TASK_READY_SELECTOR = SELECTORS["segment_input"]
 MAX_LABEL_LENGTH = 2000
@@ -273,20 +265,32 @@ class VideoBrowserBot:
             print(f"[Browser Bot Error]: Failed to inject data - {e}")
 
     def submit_final_task(self):
-        """Triggers Submit/Next if visible. Exact button HTML still pending if this misses."""
-        try:
-            submit_btn = self.page.locator(SELECTORS["submit_btn"]).first
-            if submit_btn.count() > 0 and submit_btn.is_visible():
+        """Clicks Atlas Submit practice clip, then generic Submit fallbacks."""
+        selector_keys = ("submit_button", "submit_button_generic", "submit_btn")
+        last_error = None
+        for key in selector_keys:
+            selector = SELECTORS.get(key)
+            if not selector:
+                continue
+            try:
+                submit_btn = self.page.locator(selector).first
+                if submit_btn.count() == 0:
+                    continue
+                if not submit_btn.is_visible():
+                    continue
                 submit_btn.click()
-                print("[Browser Bot]: Task submitted successfully.")
-            else:
-                print(
-                    "[Browser Bot]: Submit/Next button not accessible. "
-                    "Paste that button's HTML to wire an exact selector. "
-                    "Leaving the form filled for manual submit."
-                )
-        except Exception as e:
-            print(f"[Browser Bot Error]: Submission failed - {e}")
+                print(f"[Browser Bot]: Clicked submit via {key} ({selector}).")
+                return
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error:
+            print(f"[Browser Bot Error]: Submission failed - {last_error}")
+        else:
+            print(
+                "[Browser Bot]: Submit button not accessible. "
+                "Leaving the form filled for manual submit."
+            )
 
     def stop(self):
         """Safely terminates browser resources."""
