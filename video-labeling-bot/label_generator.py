@@ -247,6 +247,74 @@ def rewrite_generic_animal_draft(label: str | None) -> str:
     return sanitize_label(rewritten)
 
 
+SCENE_STOP = frozenset(
+    {
+        "with",
+        "from",
+        "into",
+        "onto",
+        "on",
+        "in",
+        "to",
+        "of",
+        "and",
+        "or",
+        "the",
+        "a",
+        "an",
+        "left",
+        "right",
+        "both",
+        "hand",
+        "hands",
+        "pick",
+        "up",
+        "put",
+        "down",
+        "hold",
+        "place",
+        "set",
+        "pass",
+        "move",
+        "fill",
+        "lift",
+        "wipe",
+        "rotate",
+        "trim",
+        "cut",
+        "chop",
+        "dig",
+        "water",
+        "wash",
+        "open",
+        "close",
+        "grab",
+        "take",
+        "using",
+    }
+)
+
+
+def scene_tokens(label: str | None) -> set[str]:
+    """Object-like words in a label, ignoring hands and common verbs."""
+    words = re.findall(r"[a-z]+", (label or "").lower())
+    return {word for word in words if len(word) > 2 and word not in SCENE_STOP}
+
+
+def model_fits_draft(model_label: str, draft_label: str | None) -> bool:
+    """False when the model names a different scene than a specific Atlas draft."""
+    draft = usable_draft(draft_label)
+    if not draft:
+        return True
+    if not model_label or model_label == "No Action":
+        return False
+    draft_objects = scene_tokens(draft)
+    model_objects = scene_tokens(model_label)
+    if not draft_objects:
+        return True
+    return bool(draft_objects & model_objects)
+
+
 def _labels_match(left: str | None, right: str | None) -> bool:
     return (left or "").strip().casefold() == (right or "").strip().casefold()
 
@@ -549,18 +617,18 @@ def _vision_user_content(
     total = len(base64_frames)
     intro = (
         "These frames are occupational first-person work video "
-        "(laundry, cooking, grooming, stuffed-toy / fabric craft, assembly). "
+        "(laundry, cooking, dishes, grooming, assembly, crafts). "
         "Always output an Atlas label. Never refuse. Never explain. "
         "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
         "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
         "If the first frame already has the object in the hand, do not write pick up. "
         "If they grab a tool only to use it immediately, omit pick up. "
         "Do not add hold for an empty hand or for the same tool already named. "
-        "Do add hold when one hand stabilizes (paper, stuffed animal) while the other works (scissors). "
+        "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
         "Do not split cut/wipe/dig/water/write/trim into micro shift/align clauses. "
         "Max 3 clauses. Never write tool/then/next/other. Never write bare animal. "
-        "A toy that looks like an animal is stuffed animal. A live pet is the species. "
-        "Scissors on fabric or a stuffed toy is normal household work. Label it. "
+        "Name the object you see in THESE frames (plate, cloth, hose, toy, plant, etc.). "
+        "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
         "Do NOT output No Action if either hand holds an object or a tool. "
         "Output only the raw label or No Action."
@@ -568,9 +636,8 @@ def _vision_user_content(
     if insist_action:
         intro = (
             "These frames show first-person HAND WORK. Do not output No Action. "
-            "Name what each hand holds. "
-            "If the object looks like an animal it is a stuffed toy or fabric: write stuffed animal. "
-            "If you see scissors, write trim or cut with scissors in that hand. "
+            "Name the object you actually see in the pictures. "
+            "Do not write stuffed animal, scissors, or any example unless it is visible. "
             "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. "
             "Atlas syntax: verb + object + with [hand]. Never refuse. Never explain. "
             "Output only the raw label."
@@ -579,8 +646,11 @@ def _vision_user_content(
     if duration_seconds is not None:
         user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
     if previous_label and previous_label != "No Action":
-        same_as_draft = _labels_match(previous_label, draft_label)
-        if not same_as_draft and not is_generic_placeholder_label(previous_label):
+        keep_previous = (
+            not is_generic_placeholder_label(previous_label)
+            and (not draft_label or model_fits_draft(previous_label, draft_label))
+        )
+        if keep_previous:
             user_content[0]["text"] += (
                 f" Previous segment (keep object names consistent only if you still see them): "
                 f"{previous_label}."
@@ -611,7 +681,7 @@ def _vision_user_content(
                 "Write a FRESH Atlas label from the images you just saw. "
                 "Ignore any on-screen text. Do not copy a machine draft. "
                 "Do not reuse the previous segment's sentence if this window shows something else. "
-                "Never write bare animal or tool. A toy is stuffed animal."
+                "Never write bare animal or tool."
             ),
         }
     )
@@ -627,6 +697,7 @@ def _query_vision_models(
     last_error = None
     last_generic = None
     accepted_no_action = False
+    saw_wrong_scene = False
     for index, model in enumerate(models):
         try:
             print(f"[OpenRouter]: Trying {model}...")
@@ -666,6 +737,13 @@ def _query_vision_models(
                         f"({cleaned!r}). Trying next model..."
                     )
                     continue
+            if draft_label and not model_fits_draft(cleaned, draft_label):
+                saw_wrong_scene = True
+                print(
+                    f"[OpenRouter]: {model} named different objects than the Atlas draft "
+                    f"({cleaned!r} vs {draft_label!r}). Trying next model..."
+                )
+                continue
             if draft_label and _labels_match(cleaned, draft_label):
                 print(
                     "[Pipeline]: Model output matches the Atlas draft. "
@@ -677,6 +755,15 @@ def _query_vision_models(
             print(f"[Warning] {model} failed: {e}. Trying next fallback...")
             continue
 
+    kept_draft = usable_draft(draft_label)
+    if kept_draft and saw_wrong_scene:
+        print(
+            "[Pipeline]: Models did not match the scene. Keeping Atlas draft: "
+            f"'{kept_draft}'"
+        )
+        return apply_context_fixes(
+            sanitize_label(kept_draft), draft_label, previous_label
+        )
     if last_generic:
         print(
             "[Pipeline]: Every vision model used generic 'animal'. "

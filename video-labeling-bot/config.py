@@ -130,7 +130,6 @@ CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
 * place bucket on floor with left hand, pick up hoe with right hand
 * dig soil with hoe in right hand
 * place hoe on ground with right hand, gather soil with both hands
-* hold stuffed animal with left hand, trim stuffed animal with scissors in right hand
 * pick up bottle with right hand, pass bottle from right hand to left hand
 * place bottle on counter with left hand
 * hold wrench with left hand, pass wrench from left hand to right hand, place wrench on table with right hand
@@ -379,9 +378,9 @@ TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 # anthropic/claude-3.5-sonnet is not a valid OpenRouter slug; use claude-sonnet-5.
 DEFAULT_MODELS = [
     "google/gemini-2.5-flash",
-    "openai/gpt-4o-mini",
     "anthropic/claude-sonnet-5",
     "qwen/qwen2.5-vl-72b-instruct",
+    "openai/gpt-4o-mini",
 ]
 _primary_model = (os.getenv("VISION_MODEL") or "").strip()
 VISION_MODELS = (

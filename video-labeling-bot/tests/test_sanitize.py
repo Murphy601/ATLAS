@@ -207,6 +207,22 @@ def test_usable_draft_ignores_no_action():
     assert usable_draft("pick up sock with both hands") == "pick up sock with both hands"
 
 
+def test_model_fits_draft_rejects_wrong_objects():
+    from label_generator import model_fits_draft
+
+    plate = "rotate glass plate with both hands"
+    toy = (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
+    assert not model_fits_draft(toy, plate)
+    assert model_fits_draft(
+        "wipe glass plate with cloth in right hand, hold glass plate with left hand",
+        "wipe glass plate with cloth in right hand, hold glass plate with left hand",
+    )
+    assert model_fits_draft(toy, None)
+    assert model_fits_draft(toy, "No Action")
+
+
 def test_reconcile_does_not_keep_generic_animal_draft():
     from label_generator import (
         is_generic_placeholder_label,

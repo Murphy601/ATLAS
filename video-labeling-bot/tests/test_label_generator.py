@@ -6,8 +6,8 @@ from label_generator import generate_label_from_frames
 
 def test_default_models_prefer_gemini():
     assert DEFAULT_MODELS[0] == "google/gemini-2.5-flash"
-    assert DEFAULT_MODELS[1] == "openai/gpt-4o-mini"
-    assert "anthropic/claude-sonnet-5" in DEFAULT_MODELS
+    assert DEFAULT_MODELS[1] == "anthropic/claude-sonnet-5"
+    assert "openai/gpt-4o-mini" in DEFAULT_MODELS
     assert "anthropic/claude-3.5-sonnet" not in DEFAULT_MODELS
     assert "qwen/qwen2.5-vl-72b-instruct" in DEFAULT_MODELS
     assert VISION_MODELS[0] == DEFAULT_MODELS[0]
@@ -214,8 +214,9 @@ def test_prompt_does_not_include_atlas_draft(monkeypatch):
     assert draft not in prompt
     assert "Do NOT copy:" not in prompt
     assert "FRESH Atlas label" in prompt
-    assert "stuffed animal" in prompt.lower()
-    assert "bare animal" in prompt.lower()
+    assert "bare animal" in prompt.lower() or 'NEVER write generic "animal"' in prompt
+    assert "A toy is stuffed animal." not in prompt
+    assert "If you see scissors, write trim" not in prompt
 
 
 def test_generic_animal_output_tries_next_model(monkeypatch):
@@ -297,3 +298,25 @@ def test_retries_no_action_with_hand_work_prompt(monkeypatch):
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
     assert len(calls) > len(VISION_MODELS)
+
+
+def test_keeps_glass_plate_draft_when_model_repeats_stuffed_animal(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    draft = "rotate glass plate with both hands"
+
+    def fake_create(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "hold stuffed animal with left hand, "
+                            "trim stuffed animal with scissors in right hand"
+                        )
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(["aaa"], draft_label=draft) == draft
