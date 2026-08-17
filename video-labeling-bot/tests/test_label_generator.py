@@ -73,3 +73,28 @@ def test_sanitize_still_runs_on_model_output(monkeypatch):
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
     assert generate_label_from_frames(["aaa"]) == "pick up two spoons"
+
+
+def test_generate_label_reconciles_trailing_hold_with_draft(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+
+    def fake_create(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=(
+                            "water plant in bucket with hose in left hand, "
+                            "hold watering can with right hand"
+                        )
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label="water plant in bucket with hose in both hands",
+        duration_seconds=5.0,
+    ) == "water plant in bucket with hose in both hands"

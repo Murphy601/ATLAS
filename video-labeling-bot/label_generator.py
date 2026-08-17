@@ -8,6 +8,7 @@ from config import (
     ARTICLE_PATTERN,
     COMMA_AND_PATTERN,
     DIGIT_PATTERN,
+    FILL_SOURCE_TOOLS,
     FORBIDDEN_WORDS,
     HAND_PATTERN,
     LOOKING_VERBS,
@@ -20,12 +21,116 @@ from config import (
     SLASH_PATTERN,
     SYSTEM_PROMPT,
     TEMPERATURE,
+    TRANSFER_VERBS,
     VERB_CORRECTIONS,
     VERB_REPLACEMENTS,
     VISION_MODELS,
 )
 
 load_dotenv()
+
+
+LEADING_VERB_PATTERN = re.compile(
+    r"^(pick up|put down|pass|place|set|hold|move|fill|water|spray|wash|"
+    r"rinse|scrub|sweep|dig|pour|stir|mix|iron|cut|chop|wipe|work|knead|"
+    r"fold|flatten|tighten|squeeze|open|close|slide|shift|align|rotate|"
+    r"tuck|grip|press|push|pull|twist|pinch|turn|straighten|tilt|scoop|"
+    r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
+    r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
+    r"put|grab|hand)\b",
+    re.IGNORECASE,
+)
+HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
+FILL_SOURCE_PATTERN = re.compile(
+    rf"\bfill\s+(.+?)\s+with\s+({'|'.join(FILL_SOURCE_TOOLS)})\b",
+    re.IGNORECASE,
+)
+PLACE_ON_GROUND_PATTERN = re.compile(
+    r"\bplace\s+(.+?)\s+on\s+(ground|floor)\b",
+    re.IGNORECASE,
+)
+
+
+def split_actions(label: str) -> list[str]:
+    """Split an Atlas label into grader-counted action clauses."""
+    text = (label or "").strip()
+    if not text or text.lower() == "no action":
+        return []
+    if "," in text:
+        return [part.strip() for part in text.split(",") if part.strip()]
+    parts = re.split(r"\s+and\s+", text, flags=re.IGNORECASE)
+    if len(parts) < 2:
+        return [text]
+    clauses = [parts[0].strip()]
+    for part in parts[1:]:
+        piece = part.strip()
+        if LEADING_VERB_PATTERN.search(piece):
+            clauses.append(piece)
+        else:
+            clauses[-1] = f"{clauses[-1]} and {piece}"
+    return [clause for clause in clauses if clause]
+
+
+def _leading_verb(clause: str) -> str:
+    match = LEADING_VERB_PATTERN.search((clause or "").strip())
+    return match.group(1).lower() if match else ""
+
+
+def _use_both_hands(clause: str) -> str:
+    updated = re.sub(
+        r"\bwith (?:left|right) hand\b", "with both hands", clause, flags=re.IGNORECASE
+    )
+    updated = re.sub(
+        r"\bin (?:left|right) hand\b", "in both hands", updated, flags=re.IGNORECASE
+    )
+    return updated
+
+
+def _collapse_redundant_hold(text: str) -> str:
+    """One cooperating goal + trailing hold → one both-hands clause.
+
+    Keep two clauses when the first action is a transfer (set/place/pick up)
+    or when hold is the first clause (off-hand stabilize + work).
+    """
+    clauses = split_actions(text)
+    if len(clauses) != 2 or not HOLD_CLAUSE_PATTERN.search(clauses[1]):
+        return text
+    first_verb = _leading_verb(clauses[0])
+    if not first_verb or first_verb in TRANSFER_VERBS:
+        return text
+    return _use_both_hands(clauses[0])
+
+
+def _fill_with_visible_substance(text: str) -> str:
+    if not re.search(r"\bfill\b", text, re.IGNORECASE):
+        return text
+    if re.search(r"\bwith water\b", text, re.IGNORECASE):
+        return text
+    return FILL_SOURCE_PATTERN.sub(r"fill \1 with water with \2", text)
+
+
+def _place_ground_to_set(text: str) -> str:
+    return PLACE_ON_GROUND_PATTERN.sub(r"set \1 on \2", text)
+
+
+def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
+    """Keep a one-action draft when the model only invented a trailing hold."""
+    if not draft_label:
+        return model_label
+    draft = sanitize_label(draft_label)
+    if draft == "No Action":
+        return model_label
+    model_parts = split_actions(model_label)
+    draft_parts = split_actions(draft)
+    if len(model_parts) >= 2 and HOLD_CLAUSE_PATTERN.search(model_parts[-1]):
+        if len(draft_parts) == 1:
+            return draft
+        if (
+            len(draft_parts) == len(model_parts)
+            and _leading_verb(draft_parts[-1]) == "pick up"
+        ):
+            return draft
+    return model_label
 
 
 def _api_key() -> str | None:
@@ -158,6 +263,9 @@ def sanitize_label(text: str) -> str:
     for continuous, imperative in VERB_CORRECTIONS.items():
         pattern = re.compile(rf"\b{continuous}\b", re.IGNORECASE)
         cleaned = pattern.sub(imperative, cleaned)
+    cleaned = re.sub(
+        r"\bwatering\b(?!\s+can\b)", "water", cleaned, flags=re.IGNORECASE
+    )
 
     # 4. Drop looking language (never rewrite as "adjust")
     cleaned = _strip_looking_language(cleaned)
@@ -188,7 +296,11 @@ def sanitize_label(text: str) -> str:
     cleaned = SEMICOLON_PATTERN.sub(", ", cleaned)
     cleaned = _fix_plural_only_tools(cleaned)
     cleaned = _drop_mixed_no_action(cleaned)
-
+    cleaned = " ".join(cleaned.split())
+    cleaned = cleaned.strip(" ,")
+    cleaned = _place_ground_to_set(cleaned)
+    cleaned = _fill_with_visible_substance(cleaned)
+    cleaned = _collapse_redundant_hold(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
 
@@ -201,7 +313,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -222,6 +334,7 @@ def generate_label_from_frames(
     base64_frames: list[str],
     previous_label: str | None = None,
     draft_label: str | None = None,
+    duration_seconds: float | None = None,
 ) -> str:
     """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
@@ -238,14 +351,25 @@ def generate_label_from_frames(
 
     instruction = (
         "These are consecutive ego-camera keyframes from ONE existing Atlas segment, "
-        "played in order. Label what THE WORKER'S HANDS actually do. "
-        "Digging, stirring, carrying, picking up buckets or tools, passing, placing, and holding "
-        "ARE actions. Output No Action ONLY if hands are idle and touching nothing. "
-        "Keep the same segment; do not invent extra segments. "
-        "Account for both hands. Output only the raw label or No Action."
+        "in time order. First image is the START of the window. Last image is the END. "
+        "Watch what THE WORKER'S HANDS actually do. "
+        "Count DISTINCT goals, not hands. If both hands cooperate on one tool/one goal, "
+        "output ONE clause with both hands. Do not add a second hold clause. "
+        "pick up = object lifts off a surface. hold = stays in the same hand, no lift. "
+        "set = released onto ground/floor. place = released onto a table/board/shelf or into a container. "
+        "If the current AI draft already has the correct action count, keep it and only fix errors. "
+        "Output No Action ONLY if hands are idle and touching nothing. "
+        "Output only the raw label or No Action."
     )
+    if duration_seconds is not None:
+        instruction += f" Segment length: {duration_seconds:.1f} seconds."
+        if duration_seconds >= 4:
+            instruction += " Long window: prefer one coarse goal verb unless two objects clearly change."
     if draft_label:
-        instruction += f" Current AI draft to correct: {draft_label}."
+        instruction += (
+            f" Current AI draft to correct (prefer its action count if it is already one valid goal): "
+            f"{draft_label}."
+        )
     if previous_label and previous_label != "No Action":
         instruction += (
             f" Previous segment label (keep object names and hand-state consistent): "
@@ -283,7 +407,8 @@ def generate_label_from_frames(
             if not raw_label or not str(raw_label).strip():
                 raise ValueError("Empty model response")
             print(f"[OpenRouter]: Success with {model}")
-            return sanitize_label(raw_label)
+            cleaned = sanitize_label(raw_label)
+            return reconcile_with_draft(cleaned, draft_label)
         except Exception as e:
             last_error = e
             print(f"[Warning] {model} failed: {e}. Trying next fallback...")

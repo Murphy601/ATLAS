@@ -121,3 +121,48 @@ def test_system_prompt_bans_adjust_and_requires_hands():
     assert "DO NOT USE \"adjust\"" in SYSTEM_PROMPT
     assert "scissors" in SYSTEM_PROMPT
     assert "Use \"adjust\"" not in SYSTEM_PROMPT
+    assert "The window contains 1 action" in SYSTEM_PROMPT
+    assert "both hands" in SYSTEM_PROMPT
+    assert "set hose on ground" in SYSTEM_PROMPT
+
+
+def test_collapses_cooperating_hands_into_one_both_hands_action():
+    assert sanitize_label(
+        "water plant in bucket with hose in left hand, hold watering can with right hand"
+    ) == "water plant in bucket with hose in both hands"
+    assert sanitize_label(
+        "fill watering can with hose in left hand, hold watering can with right hand"
+    ) == "fill watering can with water with hose in both hands"
+
+
+def test_keeps_two_actions_when_one_hand_sets_and_the_other_holds():
+    assert sanitize_label(
+        "place hose on ground with left hand, hold watering can with right hand"
+    ) == "set hose on ground with left hand, hold watering can with right hand"
+
+
+def test_does_not_collapse_stabilize_then_work():
+    gold = (
+        "hold mushrooms on board with left hand, "
+        "chop mushrooms on board with knife in right hand"
+    )
+    assert sanitize_label(gold) == gold
+
+
+def test_place_on_ground_becomes_set():
+    assert sanitize_label("place hose on ground with left hand") == (
+        "set hose on ground with left hand"
+    )
+
+
+def test_reconcile_keeps_one_action_draft_and_pick_up_draft():
+    from label_generator import reconcile_with_draft
+
+    assert reconcile_with_draft(
+        "set hose on ground with left hand, hold watering can with right hand",
+        "water plant in bucket with hose in both hands",
+    ) == "water plant in bucket with hose in both hands"
+    assert reconcile_with_draft(
+        "set hose on ground with left hand, hold watering can with right hand",
+        "set hose on ground with left hand, pick up watering can with right hand",
+    ) == "set hose on ground with left hand, pick up watering can with right hand"
