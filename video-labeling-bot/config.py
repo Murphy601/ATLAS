@@ -11,11 +11,21 @@ You are an expert video annotation bot for first-person (ego) video task labelli
 
 A segment is ONE continuous interaction with a primary object toward a single goal.
 
-#1 audit failures on assessment: MISSING ACTION and WRONG HAND.
-You MUST account for BOTH hands in every window. If the left hand holds or stabilizes while the right hand works, write both clauses.
-  RIGHT: hold paper with left hand, cut paper with scissors in right hand
-  WRONG: cut paper with scissors in right hand
-Never invent a hold if that hand is empty. Never drop a real hold.
+#1 remaining fail: EXTRA ACTION. Do not invent pick up, hold, or micro-shifts.
+#2 remaining fail: MISSING a real place/pass at the end, or a true off-hand stabilize.
+
+Instrumental pickup: if the hand grabs a tool only to use it immediately, omit pick up.
+  RIGHT: water plant with hose in right hand
+  WRONG: pick up hose with right hand, water plant with hose in right hand
+  RIGHT: iron shirt
+  WRONG: pick up iron, iron shirt
+Keep pick up ONLY when the object leaves a surface and is not immediately used, or when the next clause is place/set/pass.
+
+Micro-movements inside cutting, wiping, digging, writing, watering, scrubbing are NOT extra clauses.
+
+Max 3 clauses. Prefer one coarse verb when the motion is continuous.
+
+Off-hand hold is required ONLY when that hand is clearly stabilizing a different role (hold paper, cut with scissors). Empty hand → do not mention it. Already in the hand at START → not pick up.
 
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
@@ -45,8 +55,9 @@ EGO CAMERA: these images are from the worker's head. Do not mirror.
 * The hand on the LEFT SIDE of the image is the LEFT hand.
 * The hand on the RIGHT SIDE of the image is the RIGHT hand.
 Compare FIRST frame (start) to LAST frame (end):
-* pick up = object was at rest and LEAVES a surface or container.
-* hold / stabilize / align / smooth = object STAYS in that hand. If the off-hand is gripping anything, you MUST label it.
+* pick up = object was at rest on a surface AND leaves it. If it is already in the hand in the FIRST frame, it is not pick up.
+* hold = off-hand keeps gripping while the other hand does different work. Do not add hold for an empty hand or for the same tool already named.
+* Micro shift/align/slide inside a continuous cut/wipe/dig/write/water/scrub is not its own clause.
 * set = released onto ground.
 * place = released onto a table, board, shelf, floor, or INTO a container. place ALWAYS needs a location.
 * If an object is lifted at the end of the window, that is pick up, NOT hold.
@@ -58,19 +69,19 @@ Compare FIRST frame (start) to LAST frame (end):
 ### 4. ACTION COUNT: BOTH HANDS (CRITICAL)
 Look at left hand, then right hand, in every frame.
 
-CASE A — off-hand hold + working hand (MOST COMMON; write TWO clauses, max three):
+CASE A — off-hand stabilize + working hand (two clauses, only if you SEE the stabilize):
   RIGHT: hold paper with left hand, cut paper with scissors in right hand
-  RIGHT: hold mushrooms on board with left hand, chop mushrooms on board with knife in right hand
-  RIGHT: hold bowl with left hand, stir soup with spoon in right hand
-  WRONG: cut paper with scissors in both hands
-  WRONG: cut paper with scissors in right hand   (missing the hold)
+  WRONG: cut paper with scissors in right hand, hold scissors with left hand
+  WRONG: pick up scissors with right hand, cut paper with scissors in right hand
 
-CASE B — both hands on the SAME tool, same motion:
+CASE B — one continuous goal (ONE clause; this avoids Extra Action):
   RIGHT: water plant in bucket with hose in both hands
+  RIGHT: dig soil with hoe in right hand
   RIGHT: work dough with both hands
-  Do not add a fake hold of a different object.
+  WRONG: pick up hoe with right hand, dig soil with hoe in right hand
+  WRONG: dig soil with hoe in right hand, hold hoe with left hand
 
-CASE C — transfers in one window (do not drop any):
+CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
   RIGHT: place hoe on ground with right hand, gather soil with both hands
   RIGHT: pick up wrench and place wrench on table with right hand
   RIGHT: pick up bottle with right hand, pass bottle from right hand to left hand
@@ -91,7 +102,8 @@ CASE C — transfers in one window (do not drop any):
   work dough with both hands / scrub pan with brush / water plant in bucket with hose in both hands
   Repeated cycles inside ~10 seconds stay ONE coarse clause. Never write a repetition count.
 * DENSE: list distinct actions only when no single goal verb is honest. Up to 3 clauses.
-* Instrumental Pickup Rule: if pickup is only to do the goal immediately, do not write "pick up iron, iron shirt" — write "iron shirt".
+* Instrumental Pickup Rule: if pickup is only to do the goal immediately, do not write "pick up iron, iron shirt" — write "iron shirt". Same for hose/hoe/knife/brush used at once.
+* Never exceed 3 atomic actions in one label. If more, drop micro-shifts and instrumental pickups first.
 * "MOVE" RULE: "move [object] to [location]" is allowed as coarse relocation ONLY for segments 10 seconds or less. Otherwise: "pick up [object] with [hand], place [object] on [location] with [hand]".
 
 ### 7. OBJECT & LOCATION RULES
@@ -110,6 +122,7 @@ CASE C — transfers in one window (do not drop any):
 * shift plastic bag with left hand, pick up plastic bag with right hand
 * pass plastic bag to left hand, open plastic bag with both hands
 * hold knife with right hand, place mushrooms in container with left hand, wipe knife with left hand
+* water plant with hose in right hand
 * water plant in bucket with hose in both hands
 * fill watering can with water with hose in both hands
 * set hose on ground with left hand, pick up watering can with right hand
@@ -289,6 +302,64 @@ NAMED_IMPLEMENTS = (
 
 GENERIC_NOUNS = ("tool", "object", "utensil", "item")
 
+MAX_ACTIONS_PER_LABEL = 3
+
+# Goal-use verbs: pick up of the same tool right before these is instrumental (extra action).
+USE_VERBS = {
+    "water",
+    "fill",
+    "cut",
+    "chop",
+    "dig",
+    "wipe",
+    "iron",
+    "scrub",
+    "wash",
+    "stir",
+    "mix",
+    "spray",
+    "sweep",
+    "shovel",
+    "work",
+    "knead",
+    "fold",
+    "flatten",
+    "tighten",
+    "squeeze",
+    "scrape",
+    "scoop",
+    "pour",
+    "rinse",
+    "smooth",
+    "gather",
+    "pack",
+    "peel",
+    "write",
+    "brush",
+    "sand",
+    "hammer",
+    "drill",
+}
+
+MICRO_VERBS = {"shift", "align", "slide", "tilt", "tap", "pat"}
+CONTINUOUS_VERBS = {
+    "cut",
+    "chop",
+    "wipe",
+    "write",
+    "dig",
+    "water",
+    "scrub",
+    "iron",
+    "work",
+    "knead",
+    "stir",
+    "wash",
+    "smooth",
+    "gather",
+    "sweep",
+}
+
 # AI API Configuration — OpenRouter (paid vision models, cheapest first)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_HEADERS = {
@@ -298,12 +369,13 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Cheapest vision-capable model first, then fallbacks.
+# Fewer extra-action hallucinations first (Claude 3.5 is not on OpenRouter; Sonnet 4 is).
+# Then cheaper Flash / mini / Qwen fallbacks.
 DEFAULT_MODELS = [
+    "anthropic/claude-sonnet-4",
     "google/gemini-2.5-flash",
     "openai/gpt-4o-mini",
     "qwen/qwen2.5-vl-72b-instruct",
-    "anthropic/claude-3.5-sonnet",
 ]
 _primary_model = (os.getenv("VISION_MODEL") or "").strip()
 VISION_MODELS = (

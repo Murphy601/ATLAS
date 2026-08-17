@@ -7,12 +7,15 @@ from dotenv import load_dotenv
 from config import (
     ARTICLE_PATTERN,
     COMMA_AND_PATTERN,
+    CONTINUOUS_VERBS,
     DIGIT_PATTERN,
     FILL_SOURCE_TOOLS,
     FORBIDDEN_WORDS,
     GENERIC_NOUNS,
     HAND_PATTERN,
     LOOKING_VERBS,
+    MAX_ACTIONS_PER_LABEL,
+    MICRO_VERBS,
     NAMED_IMPLEMENTS,
     NARRATIVE_WORDS,
     NUMBER_MAP,
@@ -25,6 +28,7 @@ from config import (
     SYSTEM_PROMPT,
     TEMPERATURE,
     TRANSFER_VERBS,
+    USE_VERBS,
     VERB_CORRECTIONS,
     VERB_REPLACEMENTS,
     VISION_MODELS,
@@ -40,7 +44,7 @@ LEADING_VERB_PATTERN = re.compile(
     r"tuck|grip|press|push|pull|twist|pinch|turn|straighten|tilt|scoop|"
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
-    r"put|grab|hand|gather)\b",
+    r"put|grab|hand|gather|write|brush|sand|hammer|drill)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
@@ -92,6 +96,58 @@ def _use_both_hands(clause: str) -> str:
         r"\bin (?:left|right) hand\b", "in both hands", updated, flags=re.IGNORECASE
     )
     return updated
+
+
+def _pickup_object(clause: str) -> str:
+    text = LEADING_VERB_PATTERN.sub("", clause, count=1).strip()
+    text = re.sub(
+        r"\s+with\s+(?:left hand|right hand|both hands)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.strip()
+
+
+def _strip_instrumental_pickup(text: str) -> str:
+    """Drop pick up X when the next clause immediately uses X (not place/pass)."""
+    clauses = split_actions(text)
+    if len(clauses) < 2 or _leading_verb(clauses[0]) != "pick up":
+        return text
+    next_verb = _leading_verb(clauses[1])
+    if not next_verb or next_verb in TRANSFER_VERBS or next_verb == "pick up":
+        return text
+    if next_verb not in USE_VERBS:
+        return text
+    picked = _pickup_object(clauses[0])
+    if not picked:
+        return text
+    if not re.search(rf"\b{re.escape(picked)}\b", clauses[1], re.IGNORECASE):
+        return text
+    print(f"[Sanitize]: Dropped instrumental pick up '{clauses[0]}'")
+    return ", ".join(clauses[1:])
+
+
+def _strip_micro_movements(text: str) -> str:
+    """Drop shift/align/slide after a continuous work verb on the same idea."""
+    clauses = split_actions(text)
+    if len(clauses) != 2:
+        return text
+    first_verb = _leading_verb(clauses[0])
+    second_verb = _leading_verb(clauses[1])
+    if first_verb in CONTINUOUS_VERBS and second_verb in MICRO_VERBS:
+        return clauses[0]
+    if second_verb in CONTINUOUS_VERBS and first_verb in MICRO_VERBS:
+        return clauses[1]
+    return text
+
+
+def _cap_actions(text: str, limit: int = MAX_ACTIONS_PER_LABEL) -> str:
+    clauses = split_actions(text)
+    if len(clauses) <= limit:
+        return text
+    print(f"[Sanitize]: Capping {len(clauses)} actions to {limit}")
+    return ", ".join(clauses[:limit])
 
 
 def _collapse_redundant_hold(text: str) -> str:
@@ -161,11 +217,31 @@ def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
         return model_label
     model_parts = split_actions(model_label)
     draft_parts = split_actions(draft)
+    if len(model_parts) == len(draft_parts) + 1 and HAND_PATTERN.search(draft):
+        extra_pickup = (
+            _leading_verb(model_parts[0]) == "pick up"
+            and _leading_verb(draft_parts[0]) != "pick up"
+        )
+        extra_hold = HOLD_CLAUSE_PATTERN.search(model_parts[-1]) and not any(
+            HOLD_CLAUSE_PATTERN.search(part) for part in draft_parts
+        )
+        extra_micro = _leading_verb(model_parts[-1]) in MICRO_VERBS
+        if extra_pickup or extra_micro:
+            return draft
+        if extra_hold and "both hands" in draft.lower():
+            return draft
     if (
         len(model_parts) >= 2
         and HOLD_CLAUSE_PATTERN.search(model_parts[-1])
         and len(draft_parts) == len(model_parts)
         and _leading_verb(draft_parts[-1]) == "pick up"
+    ):
+        return draft
+    if (
+        len(draft_parts) == len(model_parts) + 1
+        and len(draft_parts) <= MAX_ACTIONS_PER_LABEL
+        and _leading_verb(draft_parts[-1]) in {"place", "set", "pass", "gather"}
+        and HAND_PATTERN.search(draft)
     ):
         return draft
     return model_label
@@ -339,6 +415,9 @@ def sanitize_label(text: str) -> str:
     cleaned = cleaned.strip(" ,")
     cleaned = _fill_with_visible_substance(cleaned)
     cleaned = _collapse_redundant_hold(cleaned)
+    cleaned = _strip_instrumental_pickup(cleaned)
+    cleaned = _strip_micro_movements(cleaned)
+    cleaned = _cap_actions(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
 
@@ -387,13 +466,15 @@ def generate_label_from_frames(
             "text": (
                 "Ego-camera frames from ONE Atlas segment, in time order. "
                 "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
-                "For every frame ask: what is the left hand doing, and what is the right hand doing? "
-                "If a hand is gripping or stabilizing an object, that hold MUST appear in the label. "
-                "If a hand is empty, do not invent a hold. "
-                "both hands only when both grip the SAME tool. "
-                "Name the exact object. Never write tool/then/next/other. "
+                "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
+                "If the first frame already has the object in the hand, do not write pick up. "
+                "If they grab a tool only to use it immediately, omit pick up. "
+                "Do not add hold for an empty hand or for the same tool already named. "
+                "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
+                "Do not split cut/wipe/dig/water/write into micro shift/align clauses. "
+                "Max 3 clauses. Never write tool/then/next/other. "
                 "If an object changes hands, write pass [object] from [hand] to [hand]. "
-                "Do NOT output No Action if either hand holds something. "
+                "Do NOT output No Action if either hand is working. "
                 "Output only the raw label or No Action."
             ),
         }
@@ -419,8 +500,8 @@ def generate_label_from_frames(
         user_content[0]["text"] += f" Segment length: {duration_seconds:.1f} seconds."
     if draft_label:
         user_content[0]["text"] += (
-            f" Current AI draft to correct (fix hands and missing holds, keep specific object names): "
-            f"{draft_label}."
+            f" Current AI draft to correct (keep its action count unless a real place/pass is missing; "
+            f"strip instrumental pick up): {draft_label}."
         )
     if previous_label and previous_label != "No Action":
         user_content[0]["text"] += (
