@@ -15,11 +15,14 @@ from config import (
     HAND_PATTERN,
     LOOKING_VERBS,
     MAX_ACTIONS_PER_LABEL,
+    NO_ACTION_MIN_SECONDS,
     WORK_MICROS,
     KEEP_PICKUP_BEFORE,
     MISSING_IF_DROPPED,
     NAMED_IMPLEMENTS,
     NARRATIVE_WORDS,
+    PRONOUN_WORDS,
+    CLEANING_VERBS,
     NUMBER_MAP,
     OPENROUTER_BASE_URL,
     OPENROUTER_HEADERS,
@@ -47,7 +50,7 @@ LEADING_VERB_PATTERN = re.compile(
     r"tuck|grip|press|push|pull|twist|pinch|turn|straighten|tilt|scoop|"
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
-    r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim)\b",
+    r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim|seal)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
@@ -61,8 +64,22 @@ FILL_SOURCE_PATTERN = re.compile(
     rf"\bfill\s+(.+?)\s+with\s+({'|'.join(FILL_SOURCE_TOOLS)})\b",
     re.IGNORECASE,
 )
+PRONOUN_PATTERN = re.compile(
+    rf"\b(?:{'|'.join(PRONOUN_WORDS)})\b",
+    re.IGNORECASE,
+)
 NARRATIVE_PATTERN = re.compile(
     rf"\b(?:{'|'.join(NARRATIVE_WORDS)})\b",
+    re.IGNORECASE,
+)
+BODY_PART_PATTERN = re.compile(
+    r"\bwith (?:the )?(?:fingers|finger|thumb|thumbs|palm|palms|wrist|wrists)\b",
+    re.IGNORECASE,
+)
+BARE_HANDS_PATTERN = re.compile(r"\bwith\s+hands\b", re.IGNORECASE)
+PLACE_LOCATION_PATTERN = re.compile(r"\b(?:on|in|into|onto)\b", re.IGNORECASE)
+PLACE_LOCATION_CAPTURE = re.compile(
+    r"\b((?:on|in|into|onto) (?!left |right |both )[a-z]+)",
     re.IGNORECASE,
 )
 GENERIC_NOUN_PATTERN = re.compile(
@@ -295,6 +312,15 @@ def _collapse_redundant_hold(text: str) -> str:
             tool = _named_tool_in(work)
             work_obj = _clause_object(work)
             same_tool = bool(tool) and _objects_match(held, tool)
+            hold_hand = _clause_hand(updated[hold_index])
+            work_hand = _clause_hand(work)
+            distinct_hands = (
+                hold_hand in {"left hand", "right hand"}
+                and work_hand in {"left hand", "right hand"}
+                and hold_hand != work_hand
+            )
+            if distinct_hands and not same_tool:
+                continue
             same_object_no_tool = (
                 not tool
                 and _objects_match(held, work_obj)
@@ -592,6 +618,92 @@ def _align_object_names(label: str, previous_label: str | None) -> str:
     return updated
 
 
+def _align_work_verbs(label: str, previous_label: str | None) -> str:
+    """If the last row used wash, do not switch to wipe on the same object."""
+    if not previous_label:
+        return label
+    prev_cleaning = [
+        (_leading_verb(clause), _clause_object(clause))
+        for clause in split_actions(previous_label)
+        if _leading_verb(clause) in CLEANING_VERBS
+    ]
+    if not prev_cleaning:
+        return label
+    updated = []
+    for clause in split_actions(label):
+        verb = _leading_verb(clause)
+        obj = _clause_object(clause)
+        if verb in CLEANING_VERBS and obj:
+            for prev_verb, prev_obj in prev_cleaning:
+                if prev_verb != verb and _objects_match(obj, prev_obj):
+                    clause = re.sub(
+                        rf"^{re.escape(verb)}\b",
+                        prev_verb,
+                        clause,
+                        count=1,
+                        flags=re.IGNORECASE,
+                    )
+                    break
+        updated.append(clause)
+    return ", ".join(updated) if updated else label
+
+
+def _rewrite_hand_change_as_pass(
+    label: str, previous_label: str | None
+) -> str:
+    """hold cup with right after hold cup with left → pass cup from left hand to right hand."""
+    if not previous_label or not label or label == "No Action":
+        return label
+    clauses = split_actions(label)
+    if len(clauses) != 1:
+        return label
+    verb = _leading_verb(clauses[0])
+    if verb not in {"hold", "pick up"}:
+        return label
+    obj = _clause_object(clauses[0])
+    new_hand = _clause_hand(clauses[0])
+    if not obj or new_hand not in {"left hand", "right hand"}:
+        return label
+    prev_hand = ""
+    for prev in split_actions(previous_label):
+        if not _objects_match(_clause_object(prev), obj):
+            continue
+        hand = _clause_hand(prev)
+        if hand in {"left hand", "right hand"}:
+            prev_hand = hand
+            break
+    if prev_hand and prev_hand != new_hand:
+        return f"pass {obj} from {prev_hand} to {new_hand}"
+    return label
+
+
+def _ensure_place_location(label: str, previous_label: str | None) -> str:
+    """place cup with right hand → place cup on table with right hand when location is known."""
+    clauses = split_actions(label)
+    loc = ""
+    if previous_label:
+        match = PLACE_LOCATION_CAPTURE.search(previous_label)
+        if match:
+            loc = match.group(1).lower()
+    filled = []
+    for clause in clauses:
+        verb = _leading_verb(clause)
+        if verb in {"place", "set"} and not PLACE_LOCATION_PATTERN.search(clause):
+            insert = loc
+            if not insert and verb == "set":
+                insert = "on ground"
+            if insert:
+                clause = re.sub(
+                    r"\s+with\s+",
+                    f" {insert} with ",
+                    clause,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+        filled.append(clause)
+    return ", ".join(filled)
+
+
 def _fill_with_visible_substance(text: str) -> str:
     if not re.search(r"\bfill\b", text, re.IGNORECASE):
         return text
@@ -602,6 +714,10 @@ def _fill_with_visible_substance(text: str) -> str:
 
 def _strip_narrative_words(text: str) -> str:
     cleaned = NARRATIVE_PATTERN.sub("", text)
+    cleaned = PRONOUN_PATTERN.sub("", cleaned)
+    cleaned = " ".join(cleaned.split())
+    cleaned = BODY_PART_PATTERN.sub("with right hand", cleaned)
+    cleaned = BARE_HANDS_PATTERN.sub("with both hands", cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = re.sub(r"\s+,", ",", cleaned)
     return cleaned.strip(" ,")
@@ -627,6 +743,9 @@ def apply_context_fixes(
         return label
     updated = _align_object_names(label, previous_label)
     updated = _align_object_names(updated, draft_label)
+    updated = _align_work_verbs(updated, previous_label)
+    updated = _rewrite_hand_change_as_pass(updated, previous_label)
+    updated = _ensure_place_location(updated, previous_label)
     restored = _restore_stabilize_wipe(updated, previous_label)
     if restored != updated:
         updated = restored
@@ -805,6 +924,7 @@ def choose_final_label(
     draft_label: str | None,
     previous_label: str | None = None,
     frames_have_video: bool = False,
+    duration_seconds: float | None = None,
 ) -> str:
     """Keep a specific Atlas row unless the frames show a different scene or extra clauses."""
     draft_raw = usable_draft(draft_label)
@@ -813,7 +933,14 @@ def choose_final_label(
     model = apply_context_fixes(
         sanitize_label(model_label or ""), draft_raw, previous_label
     )
+    long_idle = (
+        duration_seconds is not None
+        and duration_seconds >= NO_ACTION_MIN_SECONDS
+        and frames_have_video
+    )
     if model == "No Action":
+        if long_idle:
+            return "No Action"
         model = ""
 
     if draft_raw:
@@ -1059,6 +1186,7 @@ def sanitize_label(text: str) -> str:
     cleaned = _drop_contradictory_hold_after_pickup(cleaned)
     cleaned = _collapse_redundant_hold(cleaned)
     cleaned = _attach_missing_hands(cleaned)
+    cleaned = _ensure_place_location(cleaned, None)
     cleaned = _cap_actions(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
@@ -1072,7 +1200,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -1148,17 +1276,21 @@ def _vision_user_content(
     intro = (
         "These frames are sampled while the clip plays at normal speed "
         "(laundry, cooking, dishes, grooming, assembly, crafts). "
-        "Always output an Atlas label. Never refuse. Never explain. "
+        "Always output an Atlas label or No Action. Never refuse. Never explain. "
         "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
-        "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
-        "If the first frame already has the object in the hand, do not write pick up. "
-        "If they grab a tool only to use it immediately, omit pick up. "
+        "Name the hand, the object, and the motion. No pronouns. No -ing. No articles. "
+        "Always label the off-hand when it holds or works. "
+        "If an object changes hands, write pass [object] from [hand] to [hand]. "
+        "place/set always needs a location. "
+        "If they grab a tool only to use it immediately, omit pick up. Write pick up not grab. "
         "Do not add hold for an empty hand or for the same tool already named. "
-        "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
-        "Do not split cut/wipe/dig/water/write/trim into micro shift/align/rotate clauses. "
-        "Max 3 clauses. Prefer one coarse verb. Never write tool/then/next/other. "
-        "Never write bare animal. "
-        "If the object is released, write place/set. If it changes hands, write pass. "
+        "Do add hold when one hand stabilizes (carrot, paper, plate) while the other works. "
+        "Do not split cut/wipe/dig/water/write/trim into micro shift/align/tap clauses. "
+        "Max 3 clauses. Prefer one coarse verb. Never write tool/then/next/other/fingers. "
+        "Never write bare animal. Stay consistent with prior object and verb names. "
+        "If the object is released, write place/set. "
+        "No Action ONLY if hands are off the task for at least five seconds. "
+        "A task-relevant hold is not No Action. Never mix No Action with a real action. "
         "Name the object you see in THESE frames (plate, cloth, hose, toy, plant, etc.). "
         "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
@@ -1173,8 +1305,13 @@ def _vision_user_content(
     )
     if insist_action:
         intro = (
-            "These frames show first-person HAND WORK. Do not output No Action. "
+            "These frames show first-person HAND WORK. "
+            "Write No Action only if hands are off the task for at least five seconds. "
+            "A hold that matters to the task is not No Action. "
             "Name the object you actually see in the pictures. "
+            "Always name left hand, right hand, or both hands. Always label the off-hand if it holds. "
+            "If the object changes hands, write pass [object] from [hand] to [hand]. "
+            "place/set needs a location. No articles. No pronouns. No grab (write pick up). "
             "Do not write pick up if the tool is used immediately. "
             "Do not write shift/align/slide inside a continuous action. "
             "Do write place/set/pass if the object is released or changes hands. "
@@ -1250,6 +1387,7 @@ def _query_vision_models(
     previous_label: str | None,
     models: list[str],
     frames_have_video: bool = False,
+    duration_seconds: float | None = None,
 ) -> str:
     last_error = None
     last_generic = None
@@ -1280,6 +1418,16 @@ def _query_vision_models(
             cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
             print(f"[Pipeline]: Vision model: '{cleaned}'")
             if cleaned == "No Action":
+                short_window = (
+                    duration_seconds is not None
+                    and duration_seconds < NO_ACTION_MIN_SECONDS
+                )
+                if short_window:
+                    print(
+                        f"[OpenRouter]: {model} said No Action on a "
+                        f"{duration_seconds:.1f}s window. Trying next model..."
+                    )
+                    continue
                 accepted_no_action = True
                 if index + 1 < len(models):
                     print(
@@ -1385,13 +1533,18 @@ def generate_label_from_frames(
         previous_label,
         list(VISION_MODELS),
         frames_have_video=frames_have_video,
+        duration_seconds=duration_seconds,
     )
     if label == "No Action" and not draft_label:
         print(
             "[Pipeline]: All models said No Action and there is no usable Atlas draft."
         )
     return choose_final_label(
-        label, draft_label, previous_label, frames_have_video=frames_have_video
+        label,
+        draft_label,
+        previous_label,
+        frames_have_video=frames_have_video,
+        duration_seconds=duration_seconds,
     )
 
 

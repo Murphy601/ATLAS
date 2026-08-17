@@ -248,7 +248,7 @@ def test_real_frames_use_action_prompt_that_forbids_no_action(monkeypatch):
         ["aaa"], frames_have_video=True
     ) == DISH_GOLD
     prompt = seen[0]
-    assert "Never write No Action" in prompt
+    assert "five seconds" in prompt
     assert 'or "No Action"' not in prompt
     assert "START — both hands" not in prompt
     assert "LEFT hand and RIGHT hand separately" in prompt
@@ -308,7 +308,7 @@ def test_retries_no_action_with_hand_work_prompt(monkeypatch):
                     if isinstance(part, dict) and part.get("type") == "text":
                         texts.append(part.get("text") or "")
         prompt = "\n".join(texts)
-        if "Do not output No Action" in prompt:
+        if "five seconds" in prompt or "task-relevant hold" in prompt:
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(

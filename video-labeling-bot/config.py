@@ -31,7 +31,11 @@ Off-hand hold is required ONLY when that hand is clearly stabilizing a different
 * TEMPLATE: [action] [object] ([location]) with [hand]
 * IMPERATIVE VOICE ONLY: Command form (e.g., "pick up spoon", "place cup on table"). NEVER use past/present tense ("picked", "picking").
 * NO ARTICLES: NEVER write "a", "an", or "the".
-* HAND MANDATE: Every action MUST specify the hand: "with left hand", "with right hand", "with both hands", or "with knife in right hand".
+* HAND MANDATE: Every action MUST specify the hand: "with left hand", "with right hand", "with both hands", or "with knife in right hand". Never imply the hand. Never write "with their hands" or "with fingers".
+* NO PRONOUNS: NEVER write their, his, her, they, them.
+* OFF-HAND CLAUSE: Always label what the other hand is doing when it holds, passes, or works. Incomplete: "cut carrot with right hand". Complete: "hold carrot with left hand, cut carrot with right hand". Empty idle hand → omit it.
+* PASS: If an object moves from one hand to the other, ALWAYS write "pass [object] from [hand] to [hand]". Incomplete: "hold cup with right hand" after it was in the left hand.
+* PLACE LOCATION: place/set ALWAYS needs a location when one is visible (on table, in bin, on ground).
 * SEPARATORS: Separate multiple actions using ONLY commas (,) or "and". NEVER use slashes (/), semicolons (;), or ", and".
 * NO NUMERALS: Spell out numbers below ten ("three knives") or omit quantities ("knives"). NEVER write digits ("3").
 * NO INTENT: Label only physical, observable actions. NEVER guess mental intent (e.g., write "pick up scissors", NOT "prepare to cut tape").
@@ -43,7 +47,7 @@ Off-hand hold is required ONLY when that hand is clearly stabilizing a different
   - DO NOT USE "adjust" (use precise verbs: slide, shift, align, tilt, rotate, turn, flatten, straighten, tuck).
   - DO NOT USE "reach" (except when action is truncated at the exact end of an episode).
   - DO NOT USE "manipulate" (use grip, press, push, pull, twist, squeeze, pinch).
-  - USE "grab" SPARINGLY (default to "pick up" unless the grip style is the focus).
+  - USE "grab" NEVER. Write "pick up" (be literal).
 * FORBIDDEN NOUNS: Do NOT use generic nouns like "tool", "object", or "utensil" if the specific item is identifiable (e.g., use "hoe", "trowel", "wrench", "knife", "scissors", "screwdriver"). "tool" FAILS audit.
 * NEVER write generic "animal" by itself. A stuffed toy is "stuffed animal". A live pet is the species (dog, cat, sheep, goat, horse, cow, rabbit, pig, chicken) or a body part (fur, wool, ear, hoof).
 * NO STORY WORDS: NEVER write then, next, after, before, first, or other. Labels are not narratives.
@@ -93,9 +97,8 @@ CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
 * LABEL goal-directed hand–object actions that move the task forward.
 * EVERY real pick up, set/place, pass, and task-relevant hold. Missed actions fail audit.
 * NEVER LABEL: walking/navigating, looking, idle gestures, scratching, phone, camera.
-* Hands touch nothing and do no task work → "No Action".
-* Do not combine "No Action" with a real action.
-* Do not split a segment just to isolate a short idle pause.
+* Hands off the task objects for at least five seconds → "No Action". Shorter idle pauses stay inside the work label. A task-relevant hold is NOT No Action.
+* Do not combine "No Action" with a real action. It is one or the other.
 
 ### 6. GRANULARITY: DENSE VS. COARSE
 * A segment is 100% Dense OR 100% Coarse. NEVER mix in one label.
@@ -110,12 +113,17 @@ CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
 ### 7. OBJECT & LOCATION RULES
 * fill [container] with [substance] with [tool] in [hand] when you can see the substance (water, soil).
 * place needs a location. set is the verb for ground/floor.
-* Adjectives ONLY to tell twins apart. Consistency: same object name and hand-state across segments.
+* Only name objects you are sure of. A general description is better than a wrong guess.
+* Adjectives ONLY to tell twins apart (blue cloth vs white cloth). Stay consistent: if it was a bottle, it stays a bottle. If the verb was wash, do not switch to wipe.
 * Avoid body parts unless unavoidable. Prefer "with right hand" over "with fingers".
 * Attach every verb to an object: not "pick up, place on table" — "pick up cup, place cup on table".
+* Be specific about the hand, object, and motion. Vague labels fail. RIGHT: "seal snacks bag with both hands". WRONG: "Sealing their snacks bag with their hands".
 
 ### GOLD EXAMPLES
 * GOLD EXAMPLES are FORMAT ONLY. Never output one of them unless those exact objects are in the frames.
+* seal snacks bag with both hands
+* hold carrot with left hand, cut carrot with right hand
+* pass cup from left hand to right hand
 * pick up nail polish bottle with left hand
 * place nail polish bottle in box with left hand
 * hold paper with left hand, cut paper with scissors in right hand
@@ -144,37 +152,39 @@ Output ONLY the raw label string or "No Action". No explanation, no intro text, 
 # override made every model dump No Action even on insist retries.
 ACTION_SYSTEM_PROMPT = """
 You label first-person occupational hand-work stills for Atlas Capture.
-Output ONLY one Atlas label. Never write No Action. Never explain. Never refuse.
+Output ONLY one Atlas label. Never explain. Never refuse.
 
 TEMPLATE: verb + object + with [left hand|right hand|both hands]
-No articles (a/an/the). No digits. No trailing period.
-No inspect, check, adjust, reach, manipulate, then, next, other, or generic tool/animal.
+No articles (a/an/the). No digits. No trailing period. No pronouns (their/his/her).
+No inspect, check, adjust, reach, manipulate, grab, then, next, other, fingers, or generic tool/animal.
+grab → pick up. adjust → slide/align/rotate/flatten/tighten/fold/tuck/squeeze.
 Max 3 comma-separated clauses. LEFT side of each image is the LEFT hand.
+place/set always needs a location (on table, in bin, on ground).
 
-both hands ONLY when both hands do the SAME motion on the SAME object (knead dough, lift a box).
-If the hands have different jobs, write TWO clauses. Never hide that as both hands.
+both hands ONLY when both hands do the SAME motion on the SAME object (knead dough, lift a box, seal a bag).
+If the hands have different jobs, write TWO clauses. Always label the off-hand when it holds or works.
+  RIGHT: hold carrot with left hand, cut carrot with right hand
+  WRONG: cut carrot with right hand
   RIGHT: hold glass plate with left hand, wipe glass plate with cloth in right hand
   WRONG: wipe plate with both hands
-  WRONG: hold bowl with both hands
+If an object changes hands: pass [object] from [hand] to [hand].
 A clear dish is glass plate, not bowl. Name the wiping cloth if you see it.
 
+NO ACTION five-second rule: write No Action ONLY if hands are off the task for this whole window AND the window is at least five seconds.
+A task-relevant hold is not No Action. Never mix No Action with a real action.
+Shorter idle stays in the work label.
+
 #1 EXTRA ACTION: do not invent pick up or micro-shifts.
-If they grab a tool only to use it immediately, omit pick up.
+If they pick up a tool only to use it immediately, omit pick up.
   RIGHT: water plant with hose in right hand
   WRONG: pick up hose with right hand, water plant with hose in right hand
 Do not write shift/align/slide/tilt/tap inside cut/wipe/dig/water/write/scrub.
 Do not write hold of the SAME tool already named in the work clause.
-Max 3 clauses. Prefer one coarse verb for continuous motion.
 
 #2 MISSING ACTION: do write place/set/pass if the object is released or changes hands.
 If one hand keeps the workpiece still while the other works with a different tool, write BOTH clauses.
-  RIGHT: hold glass plate with left hand, wipe glass plate with cloth in right hand
-  RIGHT: hold paper with left hand, cut paper with scissors in right hand
-  WRONG: wipe glass plate with cloth in right hand
-Empty hand → do not mention it. Already in the hand at START → not pick up.
 
-Every clause needs a verb, an object, and a hand. No articles. No then/next/other.
-
+Every clause needs a verb, an object, and a named hand. Stay consistent with prior object/verb names.
 If the object is already in the hand in the first frame, do not write pick up.
 Name the object you see. Do not copy gold-style examples unless they are visible.
 """
@@ -230,6 +240,7 @@ VERB_CORRECTIONS = {
     "filling": "fill",
     "setting": "set",
     "stabilizing": "hold",
+    "sealing": "seal",
 }
 
 # Banned verb replacements that stay audit-safe
@@ -306,6 +317,9 @@ NARRATIVE_WORDS = (
     "other",
 )
 
+PRONOUN_WORDS = ("their", "his", "her", "they", "them", "our")
+CLEANING_VERBS = ("wash", "wipe", "rinse", "scrub")
+
 # Prefer these names when a label says "tool" / "object" / "utensil"
 NAMED_IMPLEMENTS = (
     "watering can",
@@ -355,6 +369,7 @@ PROMPT_EXAMPLE_LABELS = frozenset(
 )
 
 MAX_ACTIONS_PER_LABEL = 3
+NO_ACTION_MIN_SECONDS = 5.0
 
 # Goal-use verbs: pick up of the same tool right before these is instrumental (extra action).
 USE_VERBS = {

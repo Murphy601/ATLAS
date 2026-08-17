@@ -128,15 +128,23 @@ def test_system_prompt_bans_adjust_and_requires_hands():
     assert "Instrumental pickup" in SYSTEM_PROMPT or "Instrumental Pickup" in SYSTEM_PROMPT
     assert 'NEVER write generic "animal"' in SYSTEM_PROMPT
     assert '"tool" FAILS audit' in SYSTEM_PROMPT
+    assert "five seconds" in SYSTEM_PROMPT
+    assert "OFF-HAND CLAUSE" in SYSTEM_PROMPT
+    assert "pass cup from left hand to right hand" in SYSTEM_PROMPT
+    assert "seal snacks bag with both hands" in SYSTEM_PROMPT
+    assert "NO PRONOUNS" in SYSTEM_PROMPT
+    assert 'USE "grab" NEVER' in SYSTEM_PROMPT
 
 
 def test_action_system_prompt_forbids_no_action():
     from config import ACTION_SYSTEM_PROMPT
 
-    assert "Never write No Action" in ACTION_SYSTEM_PROMPT
+    assert "five seconds" in ACTION_SYSTEM_PROMPT
     assert 'or "No Action"' not in ACTION_SYSTEM_PROMPT
     assert "EXTRA ACTION" in ACTION_SYSTEM_PROMPT
     assert "MISSING ACTION" in ACTION_SYSTEM_PROMPT
+    assert "hold carrot with left hand" in ACTION_SYSTEM_PROMPT
+    assert "grab → pick up" in ACTION_SYSTEM_PROMPT
 
 
 def test_collapses_cooperating_hands_into_one_both_hands_action():
@@ -434,3 +442,61 @@ def test_aligns_bowl_to_plate_and_restores_hold_wipe():
     assert choose_final_label(
         "wipe plate with both hands", "wipe plate with both hands"
     ) == "hold plate with left hand, wipe plate with cloth in right hand"
+
+
+def test_official_atlas_format_examples():
+    assert sanitize_label("Sealing their snacks bag with their hands") == (
+        "seal snacks bag with both hands"
+    )
+    assert sanitize_label("wash spoon with fingers") == "wash spoon with right hand"
+    gold = "hold carrot with left hand, cut carrot with right hand"
+    assert sanitize_label(gold) == gold
+    assert sanitize_label(
+        "pick up cup with right hand / place cup on table with right hand"
+    ) == "pick up cup with right hand, place cup on table with right hand"
+
+
+def test_rewrites_hand_change_as_pass():
+    from label_generator import apply_context_fixes
+
+    assert apply_context_fixes(
+        "hold cup with right hand",
+        previous_label="hold cup with left hand",
+    ) == "pass cup from left hand to right hand"
+
+
+def test_keeps_cleaning_verb_consistent():
+    from label_generator import apply_context_fixes
+
+    assert apply_context_fixes(
+        "wipe plate with cloth in right hand",
+        previous_label="wash plate with cloth in right hand",
+    ) == "wash plate with cloth in right hand"
+
+
+def test_adds_place_location_from_previous_or_set_ground():
+    from label_generator import apply_context_fixes
+
+    assert apply_context_fixes(
+        "place cup with right hand",
+        previous_label="pick up cup on table with right hand",
+    ) == "place cup on table with right hand"
+    assert sanitize_label("set hoe with right hand") == "set hoe on ground with right hand"
+
+
+def test_short_window_does_not_keep_no_action_over_work_draft():
+    from label_generator import choose_final_label
+
+    draft = "seal snacks bag with both hands"
+    assert choose_final_label(
+        "No Action",
+        draft,
+        frames_have_video=True,
+        duration_seconds=3.0,
+    ) == draft
+    assert choose_final_label(
+        "No Action",
+        draft,
+        frames_have_video=True,
+        duration_seconds=7.4,
+    ) == "No Action"
