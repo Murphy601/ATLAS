@@ -400,9 +400,34 @@ def _insert_pass_on_hand_change(text: str) -> str:
         return text
     if left == right:
         return text
-    hold = f"hold {obj} with {left}"
     pas = f"pass {obj} from {left} to {right}"
+    if _leading_verb(second) == "hold":
+        if _leading_verb(first) == "pick up":
+            return f"{first}, {pas}"
+        hold = f"hold {obj} with {left}"
+        return f"{hold}, {pas}"
+    hold = f"hold {obj} with {left}"
     return f"{hold}, {pas}, {second}"
+
+
+def _trim_redundant_pass_stabilizers(text: str) -> str:
+    """hold + pass + hold is pick up + pass, not three clauses."""
+    parts = split_actions(text)
+    if len(parts) != 3 or _leading_verb(parts[1]) != "pass":
+        return text
+    if _leading_verb(parts[2]) != "hold":
+        return text
+    if _leading_verb(parts[0]) not in {"hold", "pick up"}:
+        return text
+    match = re.search(
+        r"pass (.+?) from (left hand|right hand) to (left hand|right hand)",
+        parts[1],
+        re.IGNORECASE,
+    )
+    if not match:
+        return text
+    obj, src, dest = match.group(1), match.group(2).lower(), match.group(3).lower()
+    return f"pick up {obj} with {src}, pass {obj} from {src} to {dest}"
 
 
 def _drop_soil_pickup_while_digging(text: str) -> str:
@@ -1266,19 +1291,31 @@ def _named_implement_in(*texts: str | None) -> str | None:
 
 
 def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
-    """Short windows rarely contain more than two distinct actions.
+    """Windows under four seconds rarely contain more than two distinct actions.
 
-    Never drop a real hand-off: hold/pick up + pass + place must stay three clauses.
+    Keep hold + pass + place (wrench on table) and sewing needle mechanics.
+    Collapse hold + pass + hold into pick up + pass.
     """
     if not label or label == "No Action":
         return label
-    if duration_sec is None or duration_sec >= 3.0:
+    label = _trim_redundant_pass_stabilizers(label)
+    if duration_sec is None or duration_sec >= 4.0:
         return label
     clauses = split_actions(label)
     if len(clauses) <= 2:
         return label
-    verbs = {_leading_verb(clause) for clause in clauses}
+    verbs = [_leading_verb(clause) for clause in clauses]
     if "pass" in verbs:
+        if len(clauses) == 3 and verbs[2] in {"place", "set"}:
+            return label
+        if len(clauses) == 3 and verbs[0] == "hold" and verbs[2] == "hold":
+            return _trim_redundant_pass_stabilizers(label)
+        if len(clauses) == 3 and {"insert", "pull"} & set(verbs):
+            return label
+        if verbs[0] in {"pick up", "hold"} and verbs[1] == "pass":
+            return ", ".join(clauses[:2])
+    work_verbs = [verb for verb in verbs if verb not in {"hold", "pass"}]
+    if len(clauses) == 3 and len(work_verbs) >= 2:
         return label
     return ", ".join(clauses[:2])
 
@@ -1502,17 +1539,31 @@ def _rewrite_short_bag_place_to_pass(
 
 
 def _split_false_both_hands_pickup(text: str) -> str:
-    """pick up cloth with both hands -> pick up cloth with left hand."""
+    """Single-hand pick up or cloth work; not both hands unless placing on shelf."""
     clauses = split_actions(text)
     if len(clauses) != 1:
         return text
     clause = clauses[0]
-    if _leading_verb(clause) != "pick up" or "both hands" not in clause.lower():
+    if "both hands" not in clause.lower():
         return text
-    if re.search(
+    verb = _leading_verb(clause)
+    if verb == "pick up" and re.search(
         r"\b(?:cloth|garment|shirt|bag|sachet|snack)\b", clause, re.IGNORECASE
     ):
         return re.sub(r"\bboth hands\b", "left hand", clause, flags=re.IGNORECASE)
+    if verb in CLOTH_WORK_VERBS and _is_cloth_clause(clause) and not _is_dish_clause(clause):
+        obj = _clause_object(clause) or ""
+        if not re.search(r"\b(?:cloth|garment|shirt|rag|towel)\b", obj, re.IGNORECASE):
+            return text
+        if PLACE_LOCATION_PATTERN.search(clause) and verb == "fold":
+            return text
+        obj = _clause_object(clause) or "cloth"
+        work = (
+            "smoothen"
+            if verb in {"fold", "flatten", "smooth", "smoothen"}
+            else verb
+        )
+        return f"hold {obj} in left hand, {work} {obj} with right hand"
     return text
 
 
@@ -1601,6 +1652,31 @@ def _lock_workpiece_nouns(
     return updated
 
 
+def _lock_atlas_draft_objects(label: str, draft_label: str | None) -> str:
+    """Keep Atlas object names (sachet, bag, hoe) over generic VLM renames."""
+    if not label or not draft_label:
+        return label
+    draft = draft_label.lower()
+    updated = label
+    if re.search(r"\bsachet\b", draft):
+        for generic in (
+            r"food from refrigerator",
+            r"snack from refrigerator",
+            r"red box",
+            r"red snack bag",
+            r"snack bag",
+        ):
+            updated = re.sub(generic, "sachet", updated, flags=re.IGNORECASE)
+    elif re.search(r"\bbag\b", draft) and not re.search(r"\bsachet\b", draft):
+        for generic in (r"food from refrigerator", r"red box"):
+            updated = re.sub(generic, "bag", updated, flags=re.IGNORECASE)
+    if re.search(r"\bcloth\b", draft):
+        updated = re.sub(r"\bred box\b", "cloth", updated, flags=re.IGNORECASE)
+    if re.search(r"\bhoe\b", draft):
+        updated = re.sub(r"\bshovel\b", "hoe", updated, flags=re.IGNORECASE)
+    return updated
+
+
 def _model_skipped_setup(model: str, draft: str, previous_label: str | None) -> bool:
     """dig soil on segment 1 when Atlas still has place bucket + pick up hoe."""
     if previous_label:
@@ -1615,6 +1691,21 @@ def _model_skipped_setup(model: str, draft: str, previous_label: str | None) -> 
     if not model_verbs & {"dig", "gather"}:
         return False
     return not model_verbs & {"place", "pick up", "set", "pass"}
+
+
+def _model_inflated_pass_chain(model: str, draft: str) -> bool:
+    """hold + pass + hold when Atlas only has pick up + pass."""
+    model_parts = split_actions(model)
+    draft_parts = split_actions(draft)
+    if len(model_parts) != 3 or len(draft_parts) != 2:
+        return False
+    if _leading_verb(model_parts[1]) != "pass":
+        return False
+    if _leading_verb(draft_parts[1]) != "pass":
+        return False
+    if _leading_verb(model_parts[2]) != "hold":
+        return False
+    return _leading_verb(draft_parts[0]) == "pick up"
 
 
 def apply_context_fixes(
@@ -1657,6 +1748,7 @@ def apply_context_fixes(
     updated = _rewrite_cut_to_align_after_hold(updated, previous_label)
     updated = _fix_strip_workpiece_hold(updated, previous_label, draft_label)
     updated = _lock_workpiece_nouns(updated, previous_label, draft_label)
+    updated = _lock_atlas_draft_objects(updated, draft_label)
     updated = _append_end_of_window_pickup(updated, next_label, draft_label)
     updated = _complete_set_then_pickup(updated, previous_label, next_label)
     updated = _complete_place_bucket_pickup_hoe(
@@ -1796,6 +1888,8 @@ HALLUCINATION_PAIRS = (
     (r"\bpatch\b", r"\b(?:pen|sticker)\b"),
     (r"\bhold scissors\b", r"\bcut\b"),
     (r"\bpaper", r"\bplastic bag\b"),
+    (r"\bsachet\b", r"\b(?:red box|food from refrigerator|snack from refrigerator)\b"),
+    (r"\bbag\b", r"\b(?:red box|food from refrigerator)\b"),
     (r"\bsachet\b", r"\bbottle\b"),
     (r"\bsachet\b", r"\bsnack bag\b"),
     (r"\bsnack bag\b", r"\bbottle\b"),
@@ -2145,6 +2239,12 @@ def choose_final_label(
                 f"Keeping Atlas draft: '{draft}'"
             )
             return draft
+        if _model_inflated_pass_chain(model, draft):
+            print(
+                "[Pipeline]: Model added stabilizing holds around a pass. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
         if (
             _same_goal_verb(model, draft)
             and len(split_actions(model)) == 1
@@ -2191,7 +2291,7 @@ def choose_final_label(
         if len(split_actions(model)) > len(split_actions(draft)):
             if (
                 duration_seconds is not None
-                and duration_seconds < 3.0
+                and duration_seconds < 4.0
                 and not looks_like_leftover_label(draft_raw)
             ):
                 print(
@@ -2425,6 +2525,7 @@ def sanitize_label(text: str) -> str:
     cleaned = _finish_incomplete_hands(cleaned)
     cleaned = _fill_missing_clause_objects(cleaned)
     cleaned = _insert_pass_on_hand_change(cleaned)
+    cleaned = _trim_redundant_pass_stabilizers(cleaned)
     cleaned = _drop_soil_pickup_while_digging(cleaned)
     cleaned = _normalize_glass_cup(cleaned)
     cleaned = _split_false_both_hands_pickup(cleaned)

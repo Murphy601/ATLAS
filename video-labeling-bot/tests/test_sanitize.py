@@ -957,3 +957,40 @@ def test_bucket_hoe_setup_and_wire_strip_golds():
         "twist blue wire with both hands",
         next_label=strip,
     ) == "twist blue wire with both hands"
+
+
+def test_assessment_pass_count_object_and_hand_golds():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    sachet_pass = (
+        "pick up sachet with right hand, pass sachet from right hand to left hand"
+    )
+    inflated = (
+        "hold sachet with right hand, pass sachet from right hand to left hand, "
+        "hold sachet with left hand"
+    )
+    assert sanitize_label(inflated) == sachet_pass
+    assert choose_final_label(
+        inflated,
+        sachet_pass,
+        duration_seconds=3.2,
+        frames_have_video=True,
+    ) == sachet_pass
+    assert sanitize_label(
+        "pick up sachet with right hand, hold sachet with left hand"
+    ) == sachet_pass
+    assert apply_context_fixes(
+        "pick up food from refrigerator with right hand",
+        draft_label=sachet_pass,
+    ) == "pick up sachet with right hand"
+    assert sanitize_label("smoothen cloth with both hands") == (
+        "hold cloth in left hand, smoothen cloth with right hand"
+    )
+    assert sanitize_label("iron shirt with right hand") == "iron shirt with right hand"
+    assert sanitize_label(
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    ) == (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
