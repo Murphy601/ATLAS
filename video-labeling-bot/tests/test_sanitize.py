@@ -500,3 +500,28 @@ def test_short_window_does_not_keep_no_action_over_work_draft():
         frames_have_video=True,
         duration_seconds=7.4,
     ) == "No Action"
+
+
+def test_practice_golds_cloth_book_and_rake():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    assert sanitize_label("fold cloth with both hands") == (
+        "hold cloth in left hand, smoothen cloth with right hand"
+    )
+    assert sanitize_label("fold garment on table with both hands") == (
+        "fold garment on table with both hands"
+    )
+    assert sanitize_label("erase book with eraser in right hand") == (
+        "hold book with left hand, wipe book with cloth in right hand"
+    )
+    assert sanitize_label("rake leaves with both hands") == (
+        "rake leaves on ground with rake in both hands"
+    )
+    assert choose_final_label(
+        "pick up cloth with both hands",
+        "place cloth on shelf with both hands",
+    ) == "place cloth on shelf with both hands"
+    assert apply_context_fixes(
+        "pick up cloth with left hand",
+        previous_label="pick up red cloth with left hand",
+    ) == "pick up red cloth with left hand"

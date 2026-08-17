@@ -50,12 +50,27 @@ LEADING_VERB_PATTERN = re.compile(
     r"tuck|grip|press|push|pull|twist|pinch|turn|straighten|tilt|scoop|"
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
-    r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim|seal)\b",
+    r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim|seal|smoothen|"
+    r"rake)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
 TWO_HANDED_TOOLS = ("hose", "rope")
 WIPE_VERBS = {"wipe", "scrub", "wash", "dry", "polish"}
+CLOTH_WORK_VERBS = {"smoothen", "smooth", "fold", "flatten", "wipe"}
+CLOTH_PATTERN = re.compile(
+    r"\b(?:cloth|towel|rag|garment|shirt)\b", re.IGNORECASE
+)
+SELF_NAMED_TOOLS = {
+    "rake": "rake",
+    "shovel": "shovel",
+    "hoe": "hoe",
+    "hammer": "hammer",
+}
+GROUND_WORK_VERBS = {"rake", "shovel", "sweep", "dig"}
+NOUN_REPLACEMENTS = {
+    "eraser": "cloth",
+}
 INCOMPLETE_HAND_PATTERN = re.compile(
     r"\b(with|in) (left|right)\b(?!\s+hand)",
     re.IGNORECASE,
@@ -368,7 +383,12 @@ def _ensure_offhand_hold_for_dish_wipe(text: str) -> str:
     if len(clauses) != 1:
         return text
     clause = clauses[0]
-    if _leading_verb(clause) not in WIPE_VERBS or not _is_dish_clause(clause):
+    if _leading_verb(clause) not in WIPE_VERBS:
+        return text
+    if not (
+        _is_dish_clause(clause)
+        or re.search(r"\b(cloth|rag|towel|sponge)\b", clause, re.IGNORECASE)
+    ):
         return text
     if "both hands" in clause.lower() or HOLD_CLAUSE_PATTERN.search(clause):
         return text
@@ -381,6 +401,34 @@ def _ensure_offhand_hold_for_dish_wipe(text: str) -> str:
         return f"hold {obj} with left hand, {clause}"
     if uses_left and not uses_right:
         return f"hold {obj} with right hand, {clause}"
+    return text
+
+
+def _ensure_offhand_hold_for_cloth_work(text: str) -> str:
+    """fold/smoothen cloth with right hand needs the holding left hand."""
+    clauses = split_actions(text)
+    if len(clauses) != 1:
+        return text
+    clause = clauses[0]
+    verb = _leading_verb(clause)
+    if verb not in CLOTH_WORK_VERBS or not _is_cloth_clause(clause):
+        return text
+    if "both hands" in clause.lower() or HOLD_CLAUSE_PATTERN.search(clause):
+        return text
+    if PLACE_LOCATION_PATTERN.search(clause) and verb == "fold":
+        return text
+    obj = _clause_object(clause)
+    if not obj:
+        return text
+    work = "smoothen" if verb in {"fold", "flatten", "smooth"} else verb
+    if work != verb:
+        clause = re.sub(rf"^{re.escape(verb)}\b", work, clause, count=1, flags=re.IGNORECASE)
+    uses_right = re.search(r"\b(?:in|with) right hand\b", clause, re.IGNORECASE)
+    uses_left = re.search(r"\b(?:in|with) left hand\b", clause, re.IGNORECASE)
+    if uses_right and not uses_left:
+        return f"hold {obj} in left hand, {clause}"
+    if uses_left and not uses_right:
+        return f"hold {obj} in right hand, {clause}"
     return text
 
 
@@ -438,7 +486,17 @@ def _is_case_a_stabilize(label: str) -> bool:
         return False
     tool = _named_tool_in(work)
     held = _clause_object(hold)
-    return bool(tool) and bool(held) and not _objects_match(held, tool)
+    if tool and held and not _objects_match(held, tool):
+        return True
+    work_verb = _leading_verb(work)
+    hold_hand = _clause_hand(hold)
+    work_hand = _clause_hand(work)
+    distinct = (
+        hold_hand in {"left hand", "right hand"}
+        and work_hand in {"left hand", "right hand"}
+        and hold_hand != work_hand
+    )
+    return distinct and work_verb in CLOTH_WORK_VERBS | WIPE_VERBS
 
 
 def _finish_incomplete_hands(text: str) -> str:
@@ -477,24 +535,37 @@ def _cloth_in(text: str) -> str:
     return match.group(1).lower() if match else "cloth"
 
 
+def _is_cloth_clause(clause: str) -> bool:
+    return bool(CLOTH_PATTERN.search(clause or ""))
+
+
 def _split_false_both_hands(text: str) -> str:
-    """Do not hide hold-left + wipe-right as wipe with both hands."""
+    """Do not hide hold-left + work-right as one both-hands clause."""
     clauses = split_actions(_finish_incomplete_hands(text))
     if len(clauses) == 1:
         clause = clauses[0]
         verb = _leading_verb(clause)
-        if (
-            verb not in WIPE_VERBS
-            or "both hands" not in clause.lower()
-            or not _is_dish_clause(clause)
-        ):
+        if "both hands" not in clause.lower():
             return ", ".join(clauses)
-        obj = _clause_object(clause) or "plate"
-        implement = _cloth_in(clause)
-        return (
-            f"hold {obj} with left hand, "
-            f"{verb} {obj} with {implement} in right hand"
-        )
+        if verb in WIPE_VERBS and _is_dish_clause(clause):
+            obj = _clause_object(clause) or "plate"
+            implement = _cloth_in(clause)
+            return (
+                f"hold {obj} with left hand, "
+                f"{verb} {obj} with {implement} in right hand"
+            )
+        if (
+            verb in CLOTH_WORK_VERBS
+            and _is_cloth_clause(clause)
+            and not PLACE_LOCATION_PATTERN.search(clause)
+        ):
+            obj = _clause_object(clause) or "cloth"
+            work = "smoothen" if verb in {"fold", "flatten", "smooth", "smoothen"} else verb
+            return (
+                f"hold {obj} in left hand, "
+                f"{work} {obj} with right hand"
+            )
+        return ", ".join(clauses)
     if len(clauses) == 2:
         first, second = clauses[0], clauses[1]
         if _leading_verb(first) == "hold":
@@ -506,16 +577,27 @@ def _split_false_both_hands(text: str) -> str:
         if "both hands" not in hold.lower():
             return ", ".join(clauses)
         work_verb = _leading_verb(work)
-        if work_verb not in WIPE_VERBS:
-            return ", ".join(clauses)
-        if not (_is_dish_clause(hold) or _is_dish_clause(work)):
-            return ", ".join(clauses)
-        obj = _clause_object(hold) or _clause_object(work) or "plate"
-        implement = _cloth_in(work)
-        return (
-            f"hold {obj} with left hand, "
-            f"{work_verb} {obj} with {implement} in right hand"
-        )
+        if work_verb in WIPE_VERBS and (_is_dish_clause(hold) or _is_dish_clause(work)):
+            obj = _clause_object(hold) or _clause_object(work) or "plate"
+            implement = _cloth_in(work)
+            return (
+                f"hold {obj} with left hand, "
+                f"{work_verb} {obj} with {implement} in right hand"
+            )
+        if work_verb in CLOTH_WORK_VERBS and (
+            _is_cloth_clause(hold) or _is_cloth_clause(work)
+        ):
+            obj = _clause_object(hold) or _clause_object(work) or "cloth"
+            work_name = (
+                "smoothen"
+                if work_verb in {"fold", "flatten", "smooth", "smoothen"}
+                else work_verb
+            )
+            return (
+                f"hold {obj} in left hand, "
+                f"{work_name} {obj} with right hand"
+            )
+        return ", ".join(clauses)
     return ", ".join(clauses)
 
 
@@ -615,6 +697,22 @@ def _align_object_names(label: str, previous_label: str | None) -> str:
         r"\b(rag|towel)\b", updated, re.IGNORECASE
     ):
         updated = re.sub(r"\b(?:rag|towel)\b", "cloth", updated, flags=re.IGNORECASE)
+    for match in re.finditer(
+        r"\b(red|blue|white|black|green|yellow|orange|pink|grey|gray|brown)\s+(\w+)\b",
+        prev,
+        re.IGNORECASE,
+    ):
+        color, noun = match.group(1), match.group(2)
+        if re.search(rf"\b{re.escape(noun)}\b", updated, re.IGNORECASE) and not re.search(
+            rf"\b{re.escape(color)} {re.escape(noun)}\b", updated, re.IGNORECASE
+        ):
+            updated = re.sub(
+                rf"\b{re.escape(noun)}\b",
+                f"{color} {noun}",
+                updated,
+                count=1,
+                flags=re.IGNORECASE,
+            )
     return updated
 
 
@@ -721,6 +819,69 @@ def _strip_narrative_words(text: str) -> str:
     cleaned = " ".join(cleaned.split())
     cleaned = re.sub(r"\s+,", ",", cleaned)
     return cleaned.strip(" ,")
+
+
+def _replace_unapproved_nouns(text: str) -> str:
+    updated = text
+    for banned, allowed in NOUN_REPLACEMENTS.items():
+        updated = re.sub(rf"\b{banned}\b", allowed, updated, flags=re.IGNORECASE)
+    return updated
+
+
+def _name_self_tool_and_location(text: str) -> str:
+    """rake leaves with both hands -> rake leaves on ground with rake in both hands."""
+    clauses = split_actions(text)
+    named = []
+    for clause in clauses:
+        verb = _leading_verb(clause)
+        tool = SELF_NAMED_TOOLS.get(verb)
+        if tool and not re.search(rf"\bwith {re.escape(tool)}\b", clause, re.IGNORECASE):
+            hand = _clause_hand(clause)
+            if hand == "both hands":
+                prep = "in both hands"
+            elif hand:
+                prep = f"in {hand}"
+            else:
+                prep = "in both hands"
+            clause = re.sub(
+                r"\s+with (?:left hand|right hand|both hands)\s*$",
+                "",
+                clause,
+                flags=re.IGNORECASE,
+            )
+            if verb in GROUND_WORK_VERBS and not PLACE_LOCATION_PATTERN.search(clause):
+                clause = f"{clause} on ground"
+            clause = f"{clause} with {tool} {prep}"
+        elif verb in GROUND_WORK_VERBS and not PLACE_LOCATION_PATTERN.search(clause):
+            if re.search(r"\s+with\s+", clause, re.IGNORECASE):
+                clause = re.sub(
+                    r"\s+with\s+",
+                    " on ground with ",
+                    clause,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+            else:
+                clause = f"{clause} on ground"
+        named.append(clause)
+    return ", ".join(named)
+
+
+def _prefer_place_over_pickup(model: str, draft: str) -> str | None:
+    """pick up vs place of the same object: the object ended on a surface."""
+    model_parts = split_actions(model)
+    draft_parts = split_actions(draft)
+    if len(model_parts) != 1 or len(draft_parts) != 1:
+        return None
+    model_verb = _leading_verb(model_parts[0])
+    draft_verb = _leading_verb(draft_parts[0])
+    if {model_verb, draft_verb} != {"pick up", "place"}:
+        return None
+    model_obj = _pickup_object(model_parts[0]) or _clause_object(model_parts[0])
+    draft_obj = _pickup_object(draft_parts[0]) or _clause_object(draft_parts[0])
+    if not _objects_match(model_obj, draft_obj):
+        return None
+    return draft if draft_verb == "place" else model
 
 
 def _named_implement_in(*texts: str | None) -> str | None:
@@ -963,6 +1124,12 @@ def choose_final_label(
                 f"[Pipeline]: Model named different objects. Keeping Atlas draft: '{draft}'"
             )
             return draft
+        placed = _prefer_place_over_pickup(model, draft)
+        if placed:
+            print(
+                "[Pipeline]: pick up vs place of the same object. Keeping place."
+            )
+            return placed
         if len(split_actions(model)) > len(split_actions(draft)):
             if _is_case_a_stabilize(model) and not _is_case_a_stabilize(draft):
                 print(
@@ -1178,8 +1345,11 @@ def sanitize_label(text: str) -> str:
     cleaned = _finish_incomplete_hands(cleaned)
     cleaned = _fill_missing_clause_objects(cleaned)
     cleaned = _split_false_both_hands(cleaned)
+    cleaned = _replace_unapproved_nouns(cleaned)
     cleaned = _name_wipe_cloth(cleaned)
     cleaned = _ensure_offhand_hold_for_dish_wipe(cleaned)
+    cleaned = _ensure_offhand_hold_for_cloth_work(cleaned)
+    cleaned = _name_self_tool_and_location(cleaned)
     cleaned = _strip_instrumental_pickup(cleaned)
     cleaned = _strip_micro_movements(cleaned)
     cleaned = _collapse_repeated_work(cleaned)
@@ -1200,7 +1370,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold|seal|smoothen|rake|fold)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -1296,9 +1466,9 @@ def _vision_user_content(
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
         "Hands holding or using an object is an action even if the stills look similar. "
         "both hands ONLY if both hands do the same job. "
-        "If left holds a plate and right wipes with a cloth, write: "
-        "hold glass plate with left hand, wipe glass plate with cloth in right hand. "
-        "Never write wipe plate with both hands for that scene. A clear dish is glass plate, not bowl. "
+        "If one hand holds a cloth and the other rubs it, write hold cloth in left hand, smoothen cloth with right hand. Not fold with both hands. "
+        "rake leaves needs on ground and with rake in [hand]. Never erase — write wipe with cloth. "
+        "If the LAST frame shows the object on a shelf or table, write place not pick up. "
         "Do NOT output No Action if either hand holds an object or a tool. "
         "Never copy a gold example (dough, hose, wrench, scissors) unless it is in the pictures. "
         "Output only the raw label."

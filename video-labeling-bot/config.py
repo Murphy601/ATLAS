@@ -182,9 +182,14 @@ Do not write shift/align/slide/tilt/tap inside cut/wipe/dig/water/write/scrub.
 Do not write hold of the SAME tool already named in the work clause.
 
 #2 MISSING ACTION: do write place/set/pass if the object is released or changes hands.
-If one hand keeps the workpiece still while the other works with a different tool, write BOTH clauses.
-
-Every clause needs a verb, an object, and a named hand. Stay consistent with prior object/verb names.
+If one hand holds a cloth and the other flattens/rubs it, that is smoothen, not fold.
+  RIGHT: hold cloth in left hand, smoothen cloth with right hand
+  WRONG: fold cloth with both hands
+fold is only when the cloth is creased into layers (fold garment on table with both hands).
+Name the tool even when the verb is the tool: rake leaves on ground with rake in both hands.
+Never write erase/eraser. Write wipe with cloth.
+Compare FIRST vs LAST frame: if the object ends on a shelf/table, write place not pick up.
+Adjectives only when two similar items: pick up red cloth with left hand.
 If the object is already in the hand in the first frame, do not write pick up.
 Name the object you see. Do not copy gold-style examples unless they are visible.
 """
@@ -241,6 +246,10 @@ VERB_CORRECTIONS = {
     "setting": "set",
     "stabilizing": "hold",
     "sealing": "seal",
+    "smoothing": "smoothen",
+    "smoothe": "smoothen",
+    "smooth": "smoothen",
+    "erasing": "wipe",
 }
 
 # Banned verb replacements that stay audit-safe
@@ -251,6 +260,8 @@ VERB_REPLACEMENTS = {
     "touch": "hold",
     "grab": "pick up",
     "stabilize": "hold",
+    "erase": "wipe",
+    "clean": "wipe",
 }
 
 # Mapping digits to words for string replacement
@@ -410,6 +421,9 @@ USE_VERBS = {
     "unfold",
     "open",
     "close",
+    "smoothen",
+    "fold",
+    "rake",
 }
 
 MICRO_VERBS = {"shift", "align", "slide", "tilt", "tap", "pat"}
@@ -442,6 +456,9 @@ CONTINUOUS_VERBS = {
     "sweep",
     "trim",
     "unfold",
+    "smoothen",
+    "fold",
+    "rake",
 }
 
 # AI API Configuration — OpenRouter (paid vision models, cheapest first)
