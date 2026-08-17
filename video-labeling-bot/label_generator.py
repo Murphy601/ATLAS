@@ -1030,7 +1030,11 @@ def _prefer_place_over_pickup(model: str, draft: str) -> str | None:
     return draft if draft_verb == "place" else model
 
 
-def _append_end_of_window_pickup(label: str, next_label: str | None) -> str:
+def _append_end_of_window_pickup(
+    label: str,
+    next_label: str | None,
+    draft_label: str | None = None,
+) -> str:
     """Keep pick up of a tool the next row uses when this window only did the prior work."""
     if not label or label == "No Action" or not next_label:
         return label
@@ -1039,7 +1043,20 @@ def _append_end_of_window_pickup(label: str, next_label: str | None) -> str:
         return label
     if any(_leading_verb(part) == "pick up" for part in parts):
         return label
+    if any(_leading_verb(part) in {"strip", "fold"} for part in parts):
+        return label
+    if draft_label and re.search(r"\bstrip\b", draft_label, re.IGNORECASE):
+        return label
     if not re.search(r"\b(?:wire|cable)\b", label, re.IGNORECASE):
+        return label
+    next_parts = split_actions(next_label)
+    if next_parts and _leading_verb(next_parts[0]) == "strip":
+        return label
+    if re.search(r"\bstrip\b", next_label, re.IGNORECASE) and not re.search(
+        r"pick up (?:pliers|shears)", next_label, re.IGNORECASE
+    ):
+        return label
+    if not re.search(r"pick up (?:pliers|shears)", next_label, re.IGNORECASE):
         return label
     for tool in ("shears", "pliers", "scissors"):
         if re.search(rf"\b{tool}\b", next_label, re.IGNORECASE) and not re.search(
@@ -1187,9 +1204,19 @@ def _complete_place_bucket_pickup_hoe(
     return f"{', '.join(parts)}, pick up hoe with {other}"
 
 
-def _complete_place_hoe_gather(label: str, previous_label: str | None) -> str:
+def _complete_place_hoe_gather(
+    label: str,
+    previous_label: str | None,
+    draft_label: str | None = None,
+    duration_seconds: float | None = None,
+) -> str:
     """After digging with a hoe, the next window is place hoe + gather soil."""
     if not label or not previous_label:
+        return label
+    if duration_seconds is not None and duration_seconds < 3.5:
+        return label
+    draft_parts = split_actions(usable_draft(draft_label) or "")
+    if len(draft_parts) == 1 and _leading_verb(draft_parts[0]) == "dig":
         return label
     if not re.search(r"\b(?:hoe|dig)\b", previous_label, re.IGNORECASE):
         return label
@@ -1474,6 +1501,122 @@ def _rewrite_short_bag_place_to_pass(
     return f"pick up {obj} with {hand}, pass {obj} from {hand} to {other}"
 
 
+def _split_false_both_hands_pickup(text: str) -> str:
+    """pick up cloth with both hands -> pick up cloth with left hand."""
+    clauses = split_actions(text)
+    if len(clauses) != 1:
+        return text
+    clause = clauses[0]
+    if _leading_verb(clause) != "pick up" or "both hands" not in clause.lower():
+        return text
+    if re.search(
+        r"\b(?:cloth|garment|shirt|bag|sachet|snack)\b", clause, re.IGNORECASE
+    ):
+        return re.sub(r"\bboth hands\b", "left hand", clause, flags=re.IGNORECASE)
+    return text
+
+
+def _strip_book_page_turn(text: str) -> str:
+    """Flat book wiping is not turn page."""
+    if not text or not re.search(r"\bbook\b", text, re.IGNORECASE):
+        return text
+    if not re.search(r"\bturn page\b", text, re.IGNORECASE):
+        return text
+    if re.search(r"\bwipe\b", text, re.IGNORECASE):
+        return re.sub(
+            r"turn page[^,]*",
+            "wipe book with cloth in right hand",
+            text,
+            flags=re.IGNORECASE,
+        )
+    return "hold book with left hand, wipe book with cloth in right hand"
+
+
+def _fix_strip_workpiece_hold(
+    label: str,
+    previous_label: str | None = None,
+    draft_label: str | None = None,
+) -> str:
+    """During strip, the off-hand holds wire/cable, not pliers/shears."""
+    context = f"{label} {previous_label or ''} {draft_label or ''}"
+    if not re.search(r"\bstrip\b", context, re.IGNORECASE):
+        return label
+    wire = "blue cable" if re.search(r"\bblue cable\b", context, re.IGNORECASE) else (
+        "blue wire"
+        if re.search(r"\bblue wire\b", context, re.IGNORECASE)
+        else "cable"
+        if re.search(r"\bcable\b", context, re.IGNORECASE)
+        else "wire"
+    )
+    if draft_label:
+        for part in split_actions(draft_label):
+            if _leading_verb(part) == "hold" and re.search(
+                r"\b(?:wire|cable)\b", part, re.IGNORECASE
+            ):
+                wire = _clause_object(part) or wire
+                break
+    fixed = []
+    for clause in split_actions(label):
+        if (
+            _leading_verb(clause) == "hold"
+            and re.search(r"\b(?:pliers|shears)\b", clause, re.IGNORECASE)
+            and not re.search(r"\b(?:wire|cable)\b", clause, re.IGNORECASE)
+        ):
+            hand = _clause_hand(clause) or "left hand"
+            fixed.append(f"hold {wire} with {hand}")
+        else:
+            fixed.append(clause)
+    return ", ".join(fixed)
+
+
+def _lock_workpiece_nouns(
+    label: str, previous_label: str | None, draft_label: str | None = None
+) -> str:
+    """Keep wire/book/cloth/pin names unless the object was released or passed."""
+    if not label or not previous_label:
+        return label
+    if re.search(r"\b(?:place|set|pass)\b", label, re.IGNORECASE):
+        return label
+    updated = label
+    prev = previous_label.lower()
+    if re.search(r"\b(?:wire|cable)\b", prev):
+        updated = _fix_strip_workpiece_hold(updated, previous_label, draft_label)
+    if re.search(r"\bbook\b", prev) and re.search(r"\bcloth\b", updated, re.IGNORECASE):
+        if re.search(r"\bwipe\b", updated, re.IGNORECASE) and not re.search(
+            r"\bbook\b", updated, re.IGNORECASE
+        ):
+            updated = re.sub(
+                r"\bwipe cloth\b",
+                "wipe book with cloth",
+                updated,
+                flags=re.IGNORECASE,
+            )
+    if re.search(r"\bmetal pin\b", prev) or (
+        draft_label and re.search(r"\bmetal pin\b", draft_label, re.IGNORECASE)
+    ):
+        if re.search(r"\bwrench\b", updated, re.IGNORECASE) and not re.search(
+            r"\bmetal pin\b", updated, re.IGNORECASE
+        ):
+            updated = re.sub(r"\bwrench\b", "metal pin", updated, flags=re.IGNORECASE)
+    return updated
+
+
+def _model_skipped_setup(model: str, draft: str, previous_label: str | None) -> bool:
+    """dig soil on segment 1 when Atlas still has place bucket + pick up hoe."""
+    if previous_label:
+        return False
+    draft_blob = draft.lower()
+    if not (
+        re.search(r"place.*bucket", draft_blob)
+        and re.search(r"pick up hoe", draft_blob)
+    ):
+        return False
+    model_verbs = {_leading_verb(part) for part in split_actions(model)}
+    if not model_verbs & {"dig", "gather"}:
+        return False
+    return not model_verbs & {"place", "pick up", "set", "pass"}
+
+
 def apply_context_fixes(
     label: str,
     draft_label: str | None = None,
@@ -1512,12 +1655,16 @@ def apply_context_fixes(
     updated = _restore_draft_locations(updated, draft_label)
     updated = _restore_draft_implements(updated, draft_label, previous_label)
     updated = _rewrite_cut_to_align_after_hold(updated, previous_label)
-    updated = _append_end_of_window_pickup(updated, next_label)
+    updated = _fix_strip_workpiece_hold(updated, previous_label, draft_label)
+    updated = _lock_workpiece_nouns(updated, previous_label, draft_label)
+    updated = _append_end_of_window_pickup(updated, next_label, draft_label)
     updated = _complete_set_then_pickup(updated, previous_label, next_label)
     updated = _complete_place_bucket_pickup_hoe(
         updated, draft_label, previous_label, next_label
     )
-    updated = _complete_place_hoe_gather(updated, previous_label)
+    updated = _complete_place_hoe_gather(
+        updated, previous_label, draft_label, duration_seconds
+    )
     updated = _rewrite_short_bag_place_to_pass(updated, duration_seconds)
     return enforce_segment_action_limit(updated, duration_seconds)
 
@@ -1849,6 +1996,20 @@ def _model_adds_required_extra(model: str, draft: str) -> bool:
         return False
     if verb == "pick up" and extra is model_parts[0]:
         return False
+    if verb == "gather" and len(draft_parts) == 1:
+        if _leading_verb(draft_parts[0]) in {
+            "dig",
+            "strip",
+            "twist",
+            "rake",
+            "mop",
+            "wipe",
+            "iron",
+        }:
+            return False
+    if verb == "pick up" and re.search(r"\b(?:pliers|shears)\b", extra, re.IGNORECASE):
+        if any(_leading_verb(part) == "strip" for part in draft_parts):
+            return False
     return True
 
 
@@ -1975,6 +2136,12 @@ def choose_final_label(
         if _invented_cut_on_hold_draft(model, draft):
             print(
                 "[Pipeline]: Model invented a cut. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        if _model_skipped_setup(model, draft, previous_label):
+            print(
+                "[Pipeline]: Model skipped setup before the main task. "
                 f"Keeping Atlas draft: '{draft}'"
             )
             return draft
@@ -2260,6 +2427,8 @@ def sanitize_label(text: str) -> str:
     cleaned = _insert_pass_on_hand_change(cleaned)
     cleaned = _drop_soil_pickup_while_digging(cleaned)
     cleaned = _normalize_glass_cup(cleaned)
+    cleaned = _split_false_both_hands_pickup(cleaned)
+    cleaned = _strip_book_page_turn(cleaned)
     cleaned = _split_false_both_hands(cleaned)
     cleaned = _replace_unapproved_nouns(cleaned)
     cleaned = _name_wipe_cloth(cleaned)

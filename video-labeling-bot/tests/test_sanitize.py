@@ -531,6 +531,12 @@ def test_practice_golds_cloth_book_and_rake():
         "pick up cloth with left hand",
         previous_label="pick up red cloth with left hand",
     ) == "pick up red cloth with left hand"
+    assert sanitize_label("pick up cloth with both hands") == (
+        "pick up cloth with left hand"
+    )
+    assert sanitize_label(
+        "hold book with left hand, turn page of book with right hand"
+    ) == "hold book with left hand, wipe book with cloth in right hand"
 
 
 def test_splits_glass_cup_wipe_and_keeps_iron_shirt():
@@ -915,3 +921,39 @@ def test_keeps_pass_chain_and_metal_pin_draft():
         "pick up metal pin and place metal pin on table with right hand",
         frames_have_video=True,
     ) == "pick up metal pin with right hand, place metal pin on table with right hand"
+
+
+def test_bucket_hoe_setup_and_wire_strip_golds():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    setup = "place bucket on floor with left hand, pick up hoe with right hand"
+    assert choose_final_label(
+        "dig soil with hoe in right hand",
+        setup,
+        frames_have_video=True,
+    ) == setup
+    assert choose_final_label(
+        "dig soil with hoe in right hand, gather soil with left hand",
+        "dig soil with hoe in right hand",
+        previous_label=setup,
+        duration_seconds=2.8,
+        frames_have_video=True,
+    ) == "dig soil with hoe in right hand"
+    twist = "twist blue wire with both hands, pick up pliers with right hand"
+    strip = "strip blue wire with pliers in right hand, hold wire with left hand"
+    assert choose_final_label(
+        "twist blue wire with both hands, pick up pliers with right hand",
+        strip,
+        previous_label=twist,
+        next_label="",
+        frames_have_video=True,
+    ) == strip
+    assert apply_context_fixes(
+        "strip blue wire with pliers in right hand, hold pliers with left hand",
+        previous_label=twist,
+        draft_label=strip,
+    ) == strip
+    assert apply_context_fixes(
+        "twist blue wire with both hands",
+        next_label=strip,
+    ) == "twist blue wire with both hands"

@@ -56,6 +56,11 @@ CRITICAL ACTION RULES:
    - A metal pin is not a wrench. A wiping cloth is the implement, not the target: wipe the glass cup, not the cloth.
 6. DO NOT COPY THE PREVIOUS SEGMENT:
    - If this window shows a new motion (fold, strip, place, insert), write that motion. Never paste the previous label.
+7. SETUP BEFORE MAIN TASK:
+   - place bucket on floor with left hand, pick up hoe with right hand comes BEFORE dig soil. Never jump to dig on the first row.
+8. TOOL vs WORKPIECE:
+   - During strip, hold wire/cable in one hand; pliers/shears are only named in the strip clause.
+   - pick up cloth uses one hand unless both hands lift together for place on shelf.
 
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
@@ -249,6 +254,9 @@ KEEP pass when the object changes hands (hold, pass, place). Do not drop it.
 When the exact object subtype is unclear, use bag, needle, cable, shears, or cap.
 A metal pin is not a wrench. When wiping a glass cup, the cup is the target and cloth is the implement.
 Do not copy the previous segment's label if this window shows a new motion (fold, strip, place, insert).
+place bucket on floor with left hand, pick up hoe with right hand BEFORE dig soil.
+During strip, hold wire/cable in the off-hand; pliers/shears belong in the strip clause only.
+Never write turn page while wiping a book. pick up cloth uses left hand unless placing with both hands.
 """
 
 # Banned terminology for automated sanitization
