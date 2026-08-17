@@ -45,6 +45,7 @@ Off-hand hold is required ONLY when that hand is clearly stabilizing a different
   - DO NOT USE "manipulate" (use grip, press, push, pull, twist, squeeze, pinch).
   - USE "grab" SPARINGLY (default to "pick up" unless the grip style is the focus).
 * FORBIDDEN NOUNS: Do NOT use generic nouns like "tool", "object", or "utensil" if the specific item is identifiable (e.g., use "hoe", "trowel", "wrench", "knife", "scissors", "screwdriver"). "tool" FAILS audit.
+* NEVER write generic "animal". Name the species (dog, cat, sheep, goat, horse, cow, rabbit, pig, chicken) or the body part (fur, wool, ear, hoof).
 * NO STORY WORDS: NEVER write then, next, after, before, first, or other. Labels are not narratives.
   WRONG: move soil from pot to other pot
   RIGHT: dig soil with hoe in right hand

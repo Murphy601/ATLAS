@@ -667,7 +667,12 @@ class VideoBrowserBot:
         target.click()
         target.fill("")
         target.fill(cleaned)
-        if previous and previous != cleaned:
+        if previous and previous == cleaned:
+            print(
+                f"[Browser Bot]: Segment {segment_number} still matches the Atlas draft "
+                f"(unchanged): '{cleaned}'"
+            )
+        elif previous and previous != cleaned:
             print(
                 f"[Browser Bot]: Replaced AI draft on Segment {segment_number}: "
                 f"'{previous}' -> '{cleaned}'"

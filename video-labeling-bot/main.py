@@ -11,7 +11,12 @@ from config import (
     DEFAULT_SEGMENT_DURATION,
 )
 from frame_extractor import extract_frames_from_video, format_timestamp
-from label_generator import apply_context_fixes, generate_label_from_frames, sanitize_label
+from label_generator import (
+    apply_context_fixes,
+    generate_label_from_frames,
+    is_generic_placeholder_label,
+    sanitize_label,
+)
 
 load_dotenv()
 
@@ -91,6 +96,7 @@ def process_live_task(
             label == "No Action"
             and segment.draft_label
             and segment.draft_label.strip().lower() != "no action"
+            and not is_generic_placeholder_label(segment.draft_label)
         ):
             kept = apply_context_fixes(
                 sanitize_label(segment.draft_label),
@@ -111,6 +117,13 @@ def process_live_task(
             else:
                 previous_label = segment.draft_label
             continue
+        if is_generic_placeholder_label(segment.draft_label) and (
+            not label or label == "No Action" or is_generic_placeholder_label(label)
+        ):
+            print(
+                "[Pipeline]: Atlas draft uses generic 'animal'. "
+                "Not keeping it. Label from frames instead."
+            )
 
         bot.fill_segment_label(
             segment.number,
@@ -248,6 +261,8 @@ def run_live_queue(
         except KeyboardInterrupt:
             raise
         except Exception as exc:
+            if _is_browser_disconnect(exc):
+                raise
             print(f"[Pipeline]: Clip {episode} failed: {exc}")
             processed = False
         if not processed:
@@ -278,6 +293,19 @@ def run_live_queue(
                 continue
             print("[Pipeline]: Queue looks idle. Stopping.")
             return
+
+
+def _is_browser_disconnect(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "connection closed",
+            "target closed",
+            "browser has been closed",
+            "driver crashed",
+        )
+    )
 
 
 def parse_args():
@@ -381,7 +409,14 @@ def main():
     except KeyboardInterrupt:
         print("\n[Pipeline]: Stopped by Ctrl+C. Closing the browser.")
     except Exception as e:
-        print(f"[Execution Error]: {e}")
+        if _is_browser_disconnect(e):
+            print(
+                "[Execution Error]: Chrome closed while the bot was reading the page. "
+                "Leave the Chrome window open — do not close it. Then re-run: "
+                ".\\venv\\Scripts\\python.exe main.py"
+            )
+        else:
+            print(f"[Execution Error]: {e}")
     finally:
         if bot is not None:
             bot.stop()

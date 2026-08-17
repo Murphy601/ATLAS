@@ -135,3 +135,85 @@ def test_skips_no_action_when_draft_describes_work(monkeypatch):
     ) == "dig soil with hoe in right hand"
     assert calls[0] == VISION_MODELS[0]
     assert calls[1] == VISION_MODELS[1]
+
+
+def _prompt_text(messages) -> str:
+    chunks = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            chunks.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    chunks.append(part.get("text") or "")
+    return "\n".join(chunks)
+
+
+def test_prompt_does_not_include_atlas_draft(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    seen = []
+    draft = "hold animal with left hand, trim animal with scissors in right hand"
+
+    def fake_create(**kwargs):
+        seen.append(_prompt_text(kwargs["messages"]))
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="hold sheep with left hand, trim wool with scissors in right hand"
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label=draft,
+        previous_label=draft,
+        duration_seconds=5.0,
+    ) == "hold sheep with left hand, trim wool with scissors in right hand"
+    prompt = seen[0]
+    assert draft not in prompt
+    assert "Do NOT copy:" not in prompt
+    assert "FRESH Atlas label" in prompt
+    assert "never animal" in prompt.lower()
+
+
+def test_generic_animal_output_tries_next_model(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == VISION_MODELS[0]:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=(
+                                "hold animal with left hand, "
+                                "trim animal with scissors in right hand"
+                            )
+                        )
+                    )
+                ]
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="hold sheep with left hand, trim wool with scissors in right hand"
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label="hold animal with left hand, trim animal with scissors in right hand",
+    ) == "hold sheep with left hand, trim wool with scissors in right hand"
+    assert calls[0] == VISION_MODELS[0]
+    assert calls[1] == VISION_MODELS[1]

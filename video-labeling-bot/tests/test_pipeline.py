@@ -78,6 +78,52 @@ def test_process_live_task_keeps_ai_draft_when_model_says_no_action():
     assert recorded == [(1, "dig soil with tool in right hand")]
 
 
+def test_process_live_task_does_not_keep_generic_animal_draft():
+    recorded = []
+
+    class FakeBot:
+        def prepare_video_playback(self):
+            return None
+
+        def play_segment_clip(self, segment_number):
+            return None
+
+        def discover_segments(self):
+            return [
+                SegmentRow(
+                    number=1,
+                    start_seconds=0.0,
+                    locator_index=0,
+                    draft_label=(
+                        "hold animal with left hand, trim animal with scissors in right hand"
+                    ),
+                )
+            ]
+
+        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds):
+            return [(0.0, "frame-a")]
+
+        def fill_segment_label(self, segment_number, label, start_seconds=None):
+            recorded.append((segment_number, label))
+
+    with (
+        patch("main.generate_label_from_frames", return_value="No Action"),
+        patch("main.time.sleep", return_value=None),
+    ):
+        process_live_task(FakeBot(), segment_duration=3.0, interval_seconds=1.0)
+
+    assert recorded == [(1, "No Action")]
+
+
+def test_browser_disconnect_message_matches_playwright_crash():
+    from main import _is_browser_disconnect
+
+    assert _is_browser_disconnect(
+        Exception("Connection closed while reading from the driver")
+    )
+    assert not _is_browser_disconnect(Exception("OpenRouter rate limit"))
+
+
 def test_process_video_task_maps_chunks_onto_atlas_rows(tmp_path):
     video_path = tmp_path / "clip.mp4"
     video_path.write_text("placeholder")

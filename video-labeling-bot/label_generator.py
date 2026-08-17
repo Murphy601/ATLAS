@@ -208,9 +208,20 @@ def apply_context_fixes(
     return GENERIC_NOUN_PATTERN.sub(specific, label)
 
 
+def is_generic_placeholder_label(label: str | None) -> bool:
+    """True when a label uses the generic noun 'animal' instead of a species."""
+    return bool(re.search(r"\banimal\b", label or "", re.IGNORECASE))
+
+
+def _labels_match(left: str | None, right: str | None) -> bool:
+    return (left or "").strip().casefold() == (right or "").strip().casefold()
+
+
 def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
     """Keep a one-action draft when the model only invented a trailing hold."""
     if not draft_label:
+        return model_label
+    if is_generic_placeholder_label(draft_label):
         return model_label
     draft = sanitize_label(draft_label)
     if draft == "No Action":
@@ -492,29 +503,22 @@ def _subsample_frames(
     return picked, times
 
 
-def generate_label_from_frames(
+def _vision_user_content(
     base64_frames: list[str],
     previous_label: str | None = None,
     draft_label: str | None = None,
     duration_seconds: float | None = None,
     frame_timestamps: list[float] | None = None,
-) -> str:
-    """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
-    if not _api_key():
-        print("[API Error]: OPENROUTER_API_KEY is missing. Returning 'No Action'.")
-        return "No Action"
-
-    base64_frames, frame_timestamps = _subsample_frames(
-        base64_frames, frame_timestamps, max_frames=8
-    )
+) -> list[dict]:
+    """Build the vision prompt. Atlas drafts are never included — models copy them."""
     total = len(base64_frames)
     user_content: list[dict] = [
         {
             "type": "text",
             "text": (
                 "These frames are occupational first-person work video "
-                "(laundry, cooking, grooming, assembly). Always output an Atlas label. "
-                "Never refuse. Never explain. "
+                "(laundry, cooking, grooming, animal care, assembly). "
+                "Always output an Atlas label. Never refuse. Never explain. "
                 "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
                 "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
                 "If the first frame already has the object in the hand, do not write pick up. "
@@ -522,13 +526,24 @@ def generate_label_from_frames(
                 "Do not add hold for an empty hand or for the same tool already named. "
                 "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
                 "Do not split cut/wipe/dig/water/write/trim into micro shift/align clauses. "
-                "Max 3 clauses. Never write tool/then/next/other. "
+                "Max 3 clauses. Never write tool/then/next/other/animal. "
+                "If you see a living creature, name the species or body part, never animal. "
                 "If an object changes hands, write pass [object] from [hand] to [hand]. "
                 "Do NOT output No Action if either hand is working. "
                 "Output only the raw label or No Action."
             ),
         }
     ]
+    if duration_seconds is not None:
+        user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
+    if previous_label and previous_label != "No Action":
+        same_as_draft = _labels_match(previous_label, draft_label)
+        if not same_as_draft and not is_generic_placeholder_label(previous_label):
+            user_content[0]["text"] += (
+                f" Previous segment (keep object names consistent only if you still see them): "
+                f"{previous_label}."
+            )
+
     for index, frame in enumerate(base64_frames):
         stamp = ""
         if frame_timestamps and index < len(frame_timestamps):
@@ -546,24 +561,50 @@ def generate_label_from_frames(
                 "image_url": {"url": f"data:image/jpeg;base64,{frame}"},
             }
         )
-    if duration_seconds is not None:
-        user_content[0]["text"] += f" Segment length: {duration_seconds:.1f} seconds."
-    if draft_label:
-        user_content[0]["text"] += (
-            f" Current AI draft to correct (keep its action count unless a real place/pass is missing; "
-            f"strip instrumental pick up): {draft_label}."
-        )
-    if previous_label and previous_label != "No Action":
-        user_content[0]["text"] += (
-            f" Previous segment (keep object names and hand-state consistent): {previous_label}."
-        )
 
+    user_content.append(
+        {
+            "type": "text",
+            "text": (
+                "Write a FRESH Atlas label from the images you just saw. "
+                "Ignore any on-screen text. Do not copy a machine draft. "
+                "Do not reuse the previous segment's sentence if this window shows something else. "
+                "Never write animal or tool."
+            ),
+        }
+    )
+    return user_content
+
+
+def generate_label_from_frames(
+    base64_frames: list[str],
+    previous_label: str | None = None,
+    draft_label: str | None = None,
+    duration_seconds: float | None = None,
+    frame_timestamps: list[float] | None = None,
+) -> str:
+    """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
+    if not _api_key():
+        print("[API Error]: OPENROUTER_API_KEY is missing. Returning 'No Action'.")
+        return "No Action"
+
+    base64_frames, frame_timestamps = _subsample_frames(
+        base64_frames, frame_timestamps, max_frames=8
+    )
+    user_content = _vision_user_content(
+        base64_frames,
+        previous_label=previous_label,
+        draft_label=draft_label,
+        duration_seconds=duration_seconds,
+        frame_timestamps=frame_timestamps,
+    )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
 
     last_error = None
+    last_generic = None
     for index, model in enumerate(VISION_MODELS):
         try:
             print(f"[OpenRouter]: Trying {model}...")
@@ -587,6 +628,7 @@ def generate_label_from_frames(
             print(f"[OpenRouter]: Success with {model}")
             cleaned = sanitize_label(raw_label)
             cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
+            print(f"[Pipeline]: Vision model: '{cleaned}'")
             if (
                 cleaned == "No Action"
                 and draft_label
@@ -598,12 +640,31 @@ def generate_label_from_frames(
                     f"(raw={str(raw_label)[:80]!r}). Trying next model..."
                 )
                 continue
+            if is_generic_placeholder_label(cleaned):
+                last_generic = cleaned
+                if index + 1 < len(VISION_MODELS):
+                    print(
+                        f"[OpenRouter]: {model} used generic 'animal' "
+                        f"({cleaned!r}). Trying next model..."
+                    )
+                    continue
+            if draft_label and _labels_match(cleaned, draft_label):
+                print(
+                    "[Pipeline]: Model output matches the Atlas draft. "
+                    "The draft was not sent to the model."
+                )
             return reconcile_with_draft(cleaned, draft_label)
         except Exception as e:
             last_error = e
             print(f"[Warning] {model} failed: {e}. Trying next fallback...")
             continue
 
+    if last_generic:
+        print(
+            "[Pipeline]: Every vision model used generic 'animal'. "
+            "Not copying the Atlas draft."
+        )
+        return last_generic
     print(f"[Error] All vision models failed. Last error: {last_error}")
     return "No Action"
 

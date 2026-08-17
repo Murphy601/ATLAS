@@ -126,6 +126,8 @@ def test_system_prompt_bans_adjust_and_requires_hands():
     assert "both hands" in SYSTEM_PROMPT
     assert "hold paper with left hand" in SYSTEM_PROMPT
     assert "Instrumental pickup" in SYSTEM_PROMPT or "Instrumental Pickup" in SYSTEM_PROMPT
+    assert 'NEVER write generic "animal"' in SYSTEM_PROMPT
+    assert '"tool" FAILS audit' in SYSTEM_PROMPT
 
 
 def test_collapses_cooperating_hands_into_one_both_hands_action():
@@ -194,6 +196,20 @@ def test_reconcile_keeps_pick_up_draft_instead_of_trailing_hold():
         "set hose on ground with left hand, hold watering can with right hand",
         "set hose on ground with left hand, pick up watering can with right hand",
     ) == "set hose on ground with left hand, pick up watering can with right hand"
+
+
+def test_reconcile_does_not_keep_generic_animal_draft():
+    from label_generator import is_generic_placeholder_label, reconcile_with_draft
+
+    animal = "hold animal with left hand, trim animal with scissors in right hand"
+    species = "hold sheep with left hand, trim wool with scissors in right hand"
+    assert is_generic_placeholder_label(animal)
+    assert not is_generic_placeholder_label(species)
+    assert reconcile_with_draft(species, animal) == species
+    assert reconcile_with_draft(
+        "cut paper with scissors in right hand, hold paper with left hand",
+        animal,
+    ) == "cut paper with scissors in right hand, hold paper with left hand"
 
 
 def test_strips_instrumental_pickup_before_immediate_use():
