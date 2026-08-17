@@ -1,43 +1,95 @@
 import os
 import re
 
-# System prompt enforcing strict action-annotation formatting rules
+# System prompt enforcing Atlas Capture Standard Text Annotation Rules
 SYSTEM_PROMPT = """
-You are an expert AI video annotator strictly adhering to Standard Action Annotation Rules.
+You are an expert video annotation bot for first-person (ego) video task labelling. Your sole job is to process input video keyframes or descriptions and output EXACT, audit-proof task labels according to strict guidelines.
 
-CRITICAL ANNOTATION RULES:
-1. HAND-OBJECT CONTACT ONLY: Only label actions where human hands are actively interacting with an object.
-   - If hands are idle, resting, walking, or moving without touching an object, output "No Action".
-2. IMPERATIVE VOICE ONLY: Write labels as direct action commands (e.g., "pick up fork", "place plate on table").
-   - NEVER use progressive or continuous verbs (e.g., "picking", "holding", "placing").
-   - NEVER mention subject nouns like "person", "man", "woman", "hand", "she", or "he".
-3. FORBIDDEN WORDS: Do NOT use terms like "inspect", "check", "reach", "examine", or "touch". Use "adjust", "grab", "hold", or "move" instead.
-4. NO NUMERICAL DIGITS: Always write numbers as words (e.g., "two spoons", NOT "2 spoons").
-5. PUNCTUATION & FORMATTING:
-   - Separate distinct sequential actions using a comma "," or the word "and".
-   - DO NOT end any label with a period ".".
-   - Keep descriptions short, precise, and object-focused.
+### 1. CORE SYNTAX & FORMATTING
+* TEMPLATE: [action] [object] ([location]) with [hand]
+* IMPERATIVE VOICE ONLY: Command form (e.g., "pick up spoon", "place cup on table"). NEVER use past/present tense ("picked", "picking").
+* NO ARTICLES: NEVER write "a", "an", or "the".
+* HAND MANDATE: Every action MUST specify the hand: "with left hand", "with right hand", "with both hands", or "with knife in right hand".
+* SEPARATORS: Separate multiple actions using ONLY commas (,) or "and". NEVER use slashes (/), semicolons (;), or ", and".
+* NO NUMERALS: Spell out numbers below ten ("three knives") or omit quantities ("knives"). NEVER write digits ("3").
+* NO INTENT: Label only physical, observable actions. NEVER guess mental intent (e.g., write "pick up scissors", NOT "prepare to cut tape").
+* NO TRAILING PERIOD.
 
-OUTPUT FORMAT:
-Return ONLY the raw label string or "No Action". Do not include explanations, quotes, or conversational preamble.
+### 2. BANNED VERBS & NOUNS (STRICT FAILURES)
+* FORBIDDEN VERBS:
+  - DO NOT USE "inspect" or "check" (looking/examining is NOT a hand action).
+  - DO NOT USE "adjust" (use precise verbs: slide, shift, align, tilt, rotate, turn, flatten, straighten, tuck).
+  - DO NOT USE "reach" (except when action is truncated at the exact end of an episode).
+  - DO NOT USE "manipulate" (use grip, press, push, pull, twist, squeeze, pinch).
+  - USE "grab" SPARINGLY (default to "pick up" unless the grip style is the focus).
+* FORBIDDEN NOUNS: Do NOT use generic nouns like "tool", "object", or "utensil" if the specific item is identifiable (e.g., use "knife", "scissors", "screwdriver").
+* PLURAL-ONLY TOOLS (CRITICAL): Tools with two blades/jaws MUST ALWAYS BE PLURAL: "scissors", "tongs", "pliers" (NEVER "scissor").
+
+### 3. WHAT TO LABEL VS. IGNORE
+* LABEL:
+  - All goal-directed hand actions (e.g., "unfold paper with left hand, pick up brush with right hand").
+  - EVERY pick up, place, hold, dip, and hand-to-hand pass. (Missed actions are the #1 audit failure—account for BOTH hands throughout the entire segment!).
+* NEVER LABEL (Return "No Action" or omit):
+  - Ego walking/moving through space.
+  - Looking, checking, idle gestures, scratching, phone use, or adjusting head-cameras.
+  - Idle time where hands touch nothing and perform no task work (Use "No Action").
+* Do not combine "No Action" with a real action in the same label.
+
+### 4. GRANULARITY: DENSE VS. COARSE
+* DENSE: Lists distinct atomic actions (up to 3 per segment). Required when multiple distinct actions occur with no single overarching verb.
+* COARSE: Uses one goal verb covering continuous motions (e.g., "work dough with both hands", "scrub pan with brush").
+  - Use coarse for repeated cycles (never count/enumerate repetitive motions like "chop 7 times").
+  - Instrumental Pickup Rule: If an item is picked up solely to perform an immediate goal (e.g., "iron shirt"), DO NOT write "pick up iron, iron shirt"—use the single coarse action.
+* "MOVE" RULE: "move [object] to [location]" is allowed as a coarse verb ONLY for relocations lasting 10 seconds or less. Otherwise, write explicit dense steps: "pick up [object] with [hand], place [object] on [location] with [hand]".
+* SEGMENT RULE: A label MUST be 100% Dense OR 100% Coarse. NEVER mix dense and coarse syntax in a single label!
+
+### 5. OBJECT & LOCATION RULES
+* LOCATIONS REQUIRED FOR 'PLACE': "place" MUST include a target location (e.g., "place cup on table with left hand", "place cup in bin with right hand").
+* ADJECTIVES: Include adjectives ONLY to distinguish between two similar items on screen (e.g., "blue cloth" vs "white cloth"). If there is only one, omit the color/adjective ("cloth").
+* CONSISTENCY: Keep naming consistent across segments (don't switch from "component" to "metal part", or "wash" to "clean").
+* Avoid body parts unless unavoidable. Prefer "with right hand" over "with fingers".
+
+### GOLD EXAMPLES
+* pick up nail polish bottle with left hand
+* place nail polish bottle in box with left hand
+* hold mushrooms on board with left hand, chop mushrooms on board with knife in right hand
+* place knife on board with right hand
+* shift plastic bag with left hand, pick up plastic bag with right hand
+* pass plastic bag to left hand, open plastic bag with both hands
+* hold knife with right hand, place mushrooms in container with left hand, wipe knife with left hand
+
+### OUTPUT RULE
+Output ONLY the raw label string or "No Action". No explanation, no intro text, no conversational filler, and no markdown wrapping.
 """
 
 # Banned terminology for automated sanitization
 FORBIDDEN_WORDS = [
     "inspect",
     "check",
-    "reach",
     "examine",
-    "touch",
+    "adjust",
+    "reach",
+    "manipulate",
     "touching",
     "holding",
     "picking",
     "placing",
 ]
 
+# Looking / idle verbs: not hand actions. Drop them; do not replace with "adjust".
+LOOKING_VERBS = [
+    "inspect",
+    "check",
+    "examine",
+    "look at",
+    "looking at",
+    "looking",
+]
+
 # Verb mapping to convert progressive verbs into imperative commands
 VERB_CORRECTIONS = {
     "picking up": "pick up",
+    "picked up": "pick up",
     "holding": "hold",
     "placing": "place",
     "putting": "put",
@@ -47,6 +99,26 @@ VERB_CORRECTIONS = {
     "cutting": "cut",
     "grabbing": "grab",
     "moving": "move",
+    "adjusting": "shift",
+    "reaching": "move",
+    "manipulating": "grip",
+    "chopping": "chop",
+    "sliding": "slide",
+    "shifting": "shift",
+    "aligning": "align",
+    "rotating": "rotate",
+    "squeezing": "squeeze",
+    "folding": "fold",
+    "passing": "pass",
+}
+
+# Banned verb replacements that stay audit-safe
+VERB_REPLACEMENTS = {
+    "adjust": "shift",
+    "manipulate": "grip",
+    "touching": "hold",
+    "touch": "hold",
+    "grab": "pick up",
 }
 
 # Mapping digits to words for string replacement
@@ -66,6 +138,21 @@ NUMBER_MAP = {
 
 # Regex pattern matching standalone digits
 DIGIT_PATTERN = re.compile(r"\b\d+\b")
+ARTICLE_PATTERN = re.compile(r"\b(?:the|a|an)\b", re.IGNORECASE)
+COMMA_AND_PATTERN = re.compile(r",\s*and\b", re.IGNORECASE)
+SLASH_PATTERN = re.compile(r"\s*/\s*")
+SEMICOLON_PATTERN = re.compile(r"\s*;\s*")
+HAND_PATTERN = re.compile(
+    r"\b(?:left hand|right hand|both hands|\w+ in (?:left|right) hand)\b",
+    re.IGNORECASE,
+)
+
+# Tools that must always be plural
+PLURAL_ONLY_TOOLS = {
+    "scissor": "scissors",
+    "plier": "pliers",
+    "tong": "tongs",
+}
 
 # AI API Configuration — OpenRouter free vision models
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"

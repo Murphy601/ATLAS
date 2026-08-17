@@ -53,6 +53,7 @@ def process_live_task(
         f"({interval_seconds:g}s frames / {segment_duration:g}s windows)..."
     )
 
+    previous_label = None
     for segment in segments:
         chunk = bot.capture_segment_frames(
             start_seconds=segment.start_seconds,
@@ -68,7 +69,9 @@ def process_live_task(
 
         start_str = format_timestamp(segment.start_seconds)
         end_str = format_timestamp(segment.start_seconds + segment_duration)
-        label = generate_label_from_frames([frame[1] for frame in chunk])
+        label = generate_label_from_frames(
+            [frame[1] for frame in chunk], previous_label=previous_label
+        )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
         print(f"Generated Label: '{label}'")
@@ -78,6 +81,7 @@ def process_live_task(
             label,
             start_seconds=segment.start_seconds,
         )
+        previous_label = label
         time.sleep(0.4)
 
 
@@ -114,6 +118,7 @@ def process_video_task(
 
     print(f"\n[Pipeline]: Processing video in {segment_duration}-second segments...")
 
+    previous_label = None
     for segment in segments:
         chunk = _chunk_frames(keyframes, segment.start_seconds, segment_duration)
         if not chunk:
@@ -121,7 +126,9 @@ def process_video_task(
 
         start_str = format_timestamp(segment.start_seconds)
         end_str = format_timestamp(segment.start_seconds + segment_duration)
-        label = generate_label_from_frames([frame[1] for frame in chunk])
+        label = generate_label_from_frames(
+            [frame[1] for frame in chunk], previous_label=previous_label
+        )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
         print(f"Generated Label: '{label}'")
@@ -133,6 +140,7 @@ def process_video_task(
                 start_seconds=segment.start_seconds,
             )
             time.sleep(1)
+        previous_label = label
 
 
 def _pause_for_review_then_submit(bot: VideoBrowserBot, auto_submit: bool):
@@ -144,7 +152,7 @@ def _pause_for_review_then_submit(bot: VideoBrowserBot, auto_submit: bool):
     try:
         input(
             "\n[Review Mode]: Inspect the filled Atlas labels in the browser, "
-            "then press ENTER to click Submit/Next (or Ctrl+C to quit without submitting)..."
+            "then press ENTER to click Submit practice clip (or Ctrl+C to quit without submitting)..."
         )
     except EOFError:
         print(

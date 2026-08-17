@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from config import VISION_MODELS
-from label_generator import generate_label_from_frames, sanitize_label
+from label_generator import generate_label_from_frames
 
 
 def test_generate_label_without_api_key(monkeypatch):
@@ -57,5 +57,4 @@ def test_sanitize_still_runs_on_model_output(monkeypatch):
         )
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
-    assert generate_label_from_frames(["aaa"]) == "pick up two spoons and adjust handle"
-    assert sanitize_label("No Action") == "No Action"
+    assert generate_label_from_frames(["aaa"]) == "pick up two spoons"

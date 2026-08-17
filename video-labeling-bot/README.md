@@ -6,7 +6,7 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 [Atlas portal video player]
     -> Playwright screenshots (1 fps)
     -> OpenRouter free VLMs (with fallbacks)
-    -> sanitize rules
+    -> Atlas Standard Text Annotation Rules
     -> fill input[aria-label="Segment N label"]
     -> you review, then "Submit practice clip"
 ```

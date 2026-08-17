@@ -29,7 +29,7 @@ def test_process_live_task_fills_every_segment_including_no_action():
 
     labels = iter(["pick up fork", "No Action"])
     with (
-        patch("main.generate_label_from_frames", side_effect=lambda _: next(labels)),
+        patch("main.generate_label_from_frames", side_effect=lambda *args, **kwargs: next(labels)),
         patch("main.time.sleep", return_value=None),
     ):
         process_live_task(FakeBot(), segment_duration=3.0, interval_seconds=1.0)
@@ -64,7 +64,7 @@ def test_process_video_task_maps_chunks_onto_atlas_rows(tmp_path):
 
     with (
         patch("main.extract_frames_from_video", return_value=frames),
-        patch("main.generate_label_from_frames", side_effect=lambda _: next(labels)),
+        patch("main.generate_label_from_frames", side_effect=lambda *args, **kwargs: next(labels)),
         patch("main.time.sleep", return_value=None),
     ):
         process_video_task(
