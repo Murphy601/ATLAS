@@ -625,7 +625,7 @@ def test_practice_golds_hose_scissors_stir_and_fridge():
         "set hose on ground with left hand",
         previous_label=prev_fill,
         frames_have_video=True,
-    ) == "set hose on ground with left hand, pick up watering can with right hand"
+    ) == "hold hose with both hands"
 
     hold_scissors = "hold paper with left hand, hold scissors in right hand"
     assert choose_final_label(
@@ -808,8 +808,7 @@ def test_copied_twist_pliers_becomes_shears_twist_fold():
         "twist blue wire with both hands, pick up pliers with right hand"
     )
     fold = (
-        "hold shears with right hand, twist blue cable with both hands, "
-        "fold blue cable with both hands"
+        "hold shears with right hand, twist blue cable with both hands"
     )
     assert apply_context_fixes(
         copied, previous_label=copied, duration_seconds=3.4
@@ -842,7 +841,9 @@ def test_short_window_keeps_place_draft_and_rewrites_bag_pass():
         "place bottle in refrigerator with right hand"
     )
     place = "place bottle on counter with left hand"
-    assert enforce_segment_action_limit(bloated, 2.0) == bloated
+    assert enforce_segment_action_limit(bloated, 2.0) == (
+        "hold bottle with left hand, pass bottle from left hand to right hand"
+    )
     assert choose_final_label(
         bloated,
         place,
@@ -915,7 +916,9 @@ def test_keeps_pass_chain_and_metal_pin_draft():
         "place wrench on table with right hand"
     )
     assert sanitize_label(transfer) == three
-    assert apply_context_fixes(three, duration_seconds=2.5) == three
+    assert apply_context_fixes(three, duration_seconds=2.5) == (
+        "hold wrench with left hand, pass wrench from left hand to right hand"
+    )
     assert choose_final_label(
         "pick up wrench from toolbox with right hand, place wrench on table with right hand",
         "pick up metal pin and place metal pin on table with right hand",
@@ -957,6 +960,30 @@ def test_bucket_hoe_setup_and_wire_strip_golds():
         "twist blue wire with both hands",
         next_label=strip,
     ) == "twist blue wire with both hands"
+
+
+def test_trusts_simpler_vision_over_compound_draft():
+    from label_generator import choose_final_label
+
+    assert choose_final_label(
+        "pick up wrench from toolbox with right hand",
+        "pick up wrench with right hand, place wrench in toolbox with right hand",
+        duration_seconds=3.0,
+        frames_have_video=True,
+    ) == "pick up wrench from toolbox with right hand"
+    assert choose_final_label(
+        "hold hose with both hands",
+        "set hose on ground with left hand, pick up watering can with right hand",
+        duration_seconds=4.0,
+        frames_have_video=True,
+    ) == "hold hose with both hands"
+    assert sanitize_label("hold page with left hand") == "hold book with left hand"
+    assert sanitize_label("place jar on table with right hand") == (
+        "place cup on table with right hand"
+    )
+    assert sanitize_label("rake leaves on lawn with rake in both hands") == (
+        "rake leaves on ground with rake in both hands"
+    )
 
 
 def test_assessment_pass_count_object_and_hand_golds():

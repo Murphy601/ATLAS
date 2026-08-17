@@ -49,10 +49,12 @@ CRITICAL ACTION RULES:
    - Track hand ownership across frames: If an object moves from Hand A to Hand B, explicitly output "pass [object] from [hand A] to [hand B]".
    - Do not write hold/open when the first motion is pick up then pass.
 4. SHORT WINDOWS:
-   - A window under 4 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains.
-   - KEEP a real hand-off: hold/pick up + pass + place is three clauses only when placing on a surface.
+   - Under 2 seconds: at most ONE action clause.
+   - Under 5 seconds: at most TWO action clauses. Do not invent extra hold/pass/place chains.
    - pick up + pass is TWO clauses. Never write hold + pass + hold.
+   - When Vision sees a single hold or pick up, do not force compound Atlas draft steps into the label.
 5. OBJECT NAMES:
+   - Use environment baseline terms: book not page, ground not lawn, cup not jar.
    - If the exact subtype is unclear, prefer bag, needle, cable, shears, or cap over a guessed brand or color name.
    - A metal pin is not a wrench. A wiping cloth is the implement, not the target: wipe the glass cup, not the cloth.
 6. DO NOT COPY THE PREVIOUS SEGMENT:
@@ -250,10 +252,10 @@ CRITICAL ACTION RULES:
 NEVER use sew, draw, write, press, or use tool for sewing. Sewing is insert sewing needle into [object] with [hand] and pull sewing needle with [hand].
 If a hand turns a glass cup while wiping, write rotate [object] with [hand], not hold.
 If an object moves from one hand to the other, write pass [object] from [hand A] to [hand B].
-A window under 4 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains.
-KEEP pass when the object changes hands (hold, pass, place). Do not drop it.
+A window under 2 seconds has at most ONE action. Under 5 seconds, at most TWO actions. Do not invent extra hold/pass/place chains.
 pick up + pass is TWO clauses. Never write hold + pass + hold.
-When the exact object subtype is unclear, use bag, needle, cable, shears, or cap.
+Use baseline object names: book not page, ground not lawn, cup not jar.
+When Vision reports fewer actions than the Atlas draft, trust the simpler Vision label unless frame quality is very poor.
 Keep Atlas names: sachet not food from refrigerator or red box. bag not red box.
 A metal pin is not a wrench. When wiping a glass cup, the cup is the target and cloth is the implement.
 Do not copy the previous segment's label if this window shows a new motion (fold, strip, place, insert).

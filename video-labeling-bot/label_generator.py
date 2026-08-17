@@ -74,6 +74,9 @@ SELF_NAMED_TOOLS = {
 GROUND_WORK_VERBS = {"rake", "shovel", "sweep", "dig"}
 NOUN_REPLACEMENTS = {
     "eraser": "cloth",
+    "lawn": "ground",
+    "jar": "cup",
+    "page": "book",
 }
 INCOMPLETE_HAND_PATTERN = re.compile(
     r"\b(with|in) (left|right)\b(?!\s+hand)",
@@ -1290,34 +1293,58 @@ def _named_implement_in(*texts: str | None) -> str | None:
     return None
 
 
-def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
-    """Windows under four seconds rarely contain more than two distinct actions.
+def _max_clauses_for_duration(duration_sec: float | None) -> int | None:
+    """Hard caps: under 2s → 1 clause; under 5s → 2 clauses."""
+    if duration_sec is None:
+        return None
+    if duration_sec < 2.0:
+        return 1
+    if duration_sec < 5.0:
+        return 2
+    return None
 
-    Keep hold + pass + place (wrench on table) and sewing needle mechanics.
-    Collapse hold + pass + hold into pick up + pass.
-    """
+
+def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
+    """Cap action count by window length. Collapse hold + pass + hold first."""
     if not label or label == "No Action":
         return label
     label = _trim_redundant_pass_stabilizers(label)
-    if duration_sec is None or duration_sec >= 4.0:
+    max_clauses = _max_clauses_for_duration(duration_sec)
+    if max_clauses is None:
         return label
     clauses = split_actions(label)
-    if len(clauses) <= 2:
+    if len(clauses) <= max_clauses:
         return label
     verbs = [_leading_verb(clause) for clause in clauses]
-    if "pass" in verbs:
-        if len(clauses) == 3 and verbs[2] in {"place", "set"}:
-            return label
-        if len(clauses) == 3 and verbs[0] == "hold" and verbs[2] == "hold":
-            return _trim_redundant_pass_stabilizers(label)
-        if len(clauses) == 3 and {"insert", "pull"} & set(verbs):
-            return label
-        if verbs[0] in {"pick up", "hold"} and verbs[1] == "pass":
-            return ", ".join(clauses[:2])
-    work_verbs = [verb for verb in verbs if verb not in {"hold", "pass"}]
-    if len(clauses) == 3 and len(work_verbs) >= 2:
+    if (
+        len(clauses) == 3
+        and {"insert", "pull"} & set(verbs)
+        and _SEWING_OBJECT.search(label)
+        and duration_sec is not None
+        and duration_sec >= 2.5
+    ):
         return label
-    return ", ".join(clauses[:2])
+    if (
+        _SEWING_OBJECT.search(label)
+        and re.search(r"\b(?:sewing needle|needle)\b", label, re.IGNORECASE)
+        and duration_sec is not None
+        and duration_sec < 2.0
+        and len(clauses) == 2
+    ):
+        return label
+    if "pass" in verbs and len(clauses) == 3 and verbs[0] == "hold" and verbs[2] == "hold":
+        label = _trim_redundant_pass_stabilizers(label)
+        clauses = split_actions(label)
+        if len(clauses) <= max_clauses:
+            return label
+    if (
+        "pass" in verbs
+        and verbs[0] in {"pick up", "hold"}
+        and verbs[1] == "pass"
+        and max_clauses == 2
+    ):
+        return ", ".join(clauses[:2])
+    return ", ".join(clauses[:max_clauses])
 
 
 _SEWING_UMBRELLA = re.compile(
@@ -1863,6 +1890,8 @@ OBJECT_CANONICAL = {
     "pliers": "shears",
     "glass": "cup",
     "page": "book",
+    "jar": "cup",
+    "lawn": "ground",
     "towel": "cloth",
     "rag": "cloth",
     "pen": "needle",
@@ -2019,16 +2048,71 @@ def _copied_previous_ignoring_draft(
 
 
 def _prefer_work_draft_over_idle_hold(model: str, draft: str) -> bool:
-    """set/place/mop beat a model that only wrote hold."""
+    """set/place/mop beat a model that only wrote hold — not when Vision is simpler."""
     model_parts = split_actions(model)
     draft_parts = split_actions(draft)
     if not model_parts or not draft_parts:
         return False
+    if len(model_parts) < len(draft_parts):
+        return False
     model_all_hold = all(_leading_verb(part) == "hold" for part in model_parts)
+    if not model_all_hold:
+        return False
+    blob = model.lower()
+    if "both hands" in blob and any(
+        re.search(rf"\b{re.escape(tool)}\b", blob) for tool in TWO_HANDED_TOOLS
+    ):
+        return False
     draft_has_work = any(
         _leading_verb(part) not in {"", "hold"} for part in draft_parts
     )
-    return model_all_hold and draft_has_work
+    return draft_has_work
+
+
+def _prefer_simpler_model_over_compound_draft(
+    model: str,
+    draft: str,
+    draft_raw: str | None,
+    previous_label: str | None = None,
+    duration_seconds: float | None = None,
+) -> bool:
+    """Trust Vision when it reports fewer actions than a compound Atlas draft."""
+    model_parts = split_actions(model)
+    draft_parts = split_actions(draft)
+    if not model_parts or not draft_parts:
+        return False
+    if len(model_parts) >= len(draft_parts):
+        return False
+    if looks_like_leftover_label(draft_raw) or is_generic_placeholder_label(
+        draft_raw or ""
+    ):
+        return False
+    if not model_fits_draft(model, draft):
+        return False
+    if _model_skipped_setup(model, draft, previous_label):
+        return False
+    if _is_case_a_stabilize(draft) and not _is_case_a_stabilize(model):
+        draft_work = {
+            _leading_verb(part)
+            for part in draft_parts
+            if _leading_verb(part) not in {"hold", "pass"}
+        }
+        model_work = {
+            _leading_verb(part)
+            for part in model_parts
+            if _leading_verb(part) not in {"hold", "pass"}
+        }
+        if draft_work == model_work:
+            return False
+    if (
+        duration_seconds is not None
+        and duration_seconds >= 5.0
+        and _has_release(draft)
+        and not _has_release(model)
+        and _same_goal_verb(model, draft)
+    ):
+        return False
+    return True
 
 
 def _prefer_hold_draft_over_pickup(model: str, draft: str) -> bool:
@@ -2209,6 +2293,18 @@ def choose_final_label(
                 f"Keeping Atlas draft: '{draft}'"
             )
             return draft
+        if _prefer_simpler_model_over_compound_draft(
+            model,
+            draft,
+            draft_raw,
+            previous_label,
+            duration_seconds,
+        ):
+            print(
+                "[Pipeline]: Vision found fewer actions than compound Atlas draft. "
+                f"Using the model: '{model}'"
+            )
+            return model
         if _prefer_work_draft_over_idle_hold(model, draft):
             print(
                 "[Pipeline]: Model turned work into a hold. "
@@ -2291,7 +2387,7 @@ def choose_final_label(
         if len(split_actions(model)) > len(split_actions(draft)):
             if (
                 duration_seconds is not None
-                and duration_seconds < 4.0
+                and duration_seconds < 5.0
                 and not looks_like_leftover_label(draft_raw)
             ):
                 print(
@@ -2334,9 +2430,31 @@ def choose_final_label(
             )
             return draft
         if len(split_actions(draft)) > len(split_actions(model)):
+            if _prefer_simpler_model_over_compound_draft(
+                model,
+                draft,
+                draft_raw,
+                previous_label,
+                duration_seconds,
+            ):
+                print(
+                    "[Pipeline]: Compound Atlas draft exceeds short-window model. "
+                    f"Using the model: '{model}'"
+                )
+                return model
             if _is_case_a_stabilize(draft) or (
                 _has_release(draft) and not _has_release(model)
             ):
+                if (
+                    duration_seconds is not None
+                    and duration_seconds < 5.0
+                    and not _is_case_a_stabilize(draft)
+                ):
+                    print(
+                        "[Pipeline]: Short window — trusting simpler model over "
+                        f"extra draft clauses: '{model}'"
+                    )
+                    return model
                 print(
                     "[Pipeline]: Model dropped a required hold/place. "
                     f"Keeping Atlas draft: '{draft}'"
