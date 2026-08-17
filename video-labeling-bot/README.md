@@ -5,7 +5,7 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 ```
 [Atlas portal video player]
     -> Playwright screenshots (1 fps)
-    -> OpenRouter free VLMs (with fallbacks)
+    -> OpenRouter vision models (Gemini Flash, then fallbacks)
     -> Atlas Standard Text Annotation Rules
     -> fill input[aria-label="Segment N label"]
     -> you review, then "Submit practice clip"
@@ -26,20 +26,18 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 ## Models
 
-OpenRouter free vision models, tried in order (old Gemini/Qwen `:free` slugs 404):
+OpenRouter paid vision models, cheapest first, then fallbacks:
 
-1. `nvidia/nemotron-nano-12b-v2-vl:free`
-2. `google/gemma-4-31b-it:free`
-3. `google/gemma-4-26b-a4b-it:free`
-4. `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`
-5. `dots-studio/dots-3-note-preview:free`
-6. `openrouter/free`
+1. `google/gemini-2.5-flash` (default)
+2. `openai/gpt-4o-mini`
+3. `qwen/qwen2.5-vl-72b-instruct`
+4. `anthropic/claude-3.5-sonnet`
 
-If a model returns **No Action** while the Atlas row already has a real draft, the bot tries the next model instead of keeping a bad draft.
+If a model returns **No Action** while the Atlas row already has a real draft, the bot tries the next model.
 
-Optional paid override in `.env`: `VISION_MODEL=google/gemini-2.5-flash`
+Optional override in `.env`: `VISION_MODEL=openai/gpt-4o-mini`
 
-Set `OPENROUTER_API_KEY` in `.env`. Do not commit that file.
+Set `OPENROUTER_API_KEY` in `.env`. Do not commit that file. These models are billed on OpenRouter.
 
 ## Windows (PowerShell)
 

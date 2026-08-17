@@ -283,7 +283,7 @@ NAMED_IMPLEMENTS = (
 
 GENERIC_NOUNS = ("tool", "object", "utensil", "item")
 
-# AI API Configuration — OpenRouter free vision models
+# AI API Configuration — OpenRouter (paid vision models, cheapest first)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_HEADERS = {
     "HTTP-Referer": "https://github.com/Murphy601/ATLAS",
@@ -292,20 +292,18 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Live free VLMs as of Aug 2026. Old :free Gemini/Qwen/Llama-vision slugs 404.
-_DEFAULT_VISION_MODELS = [
-    "nvidia/nemotron-nano-12b-v2-vl:free",
-    "google/gemma-4-31b-it:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "dots-studio/dots-3-note-preview:free",
-    "openrouter/free",
+# Cheapest vision-capable model first, then fallbacks.
+DEFAULT_MODELS = [
+    "google/gemini-2.5-flash",
+    "openai/gpt-4o-mini",
+    "qwen/qwen2.5-vl-72b-instruct",
+    "anthropic/claude-3.5-sonnet",
 ]
 _primary_model = (os.getenv("VISION_MODEL") or "").strip()
 VISION_MODELS = (
-    [_primary_model] + [m for m in _DEFAULT_VISION_MODELS if m != _primary_model]
+    [_primary_model] + [m for m in DEFAULT_MODELS if m != _primary_model]
     if _primary_model
-    else list(_DEFAULT_VISION_MODELS)
+    else list(DEFAULT_MODELS)
 )
 # OpenRouter rejects route fallback lists longer than 3.
 OPENROUTER_MAX_ROUTE_FALLBACKS = 3

@@ -465,7 +465,7 @@ def generate_label_from_frames(
             print(f"[Warning] {model} failed: {e}. Trying next fallback...")
             continue
 
-    print(f"[Error] All free vision models failed. Last error: {last_error}")
+    print(f"[Error] All vision models failed. Last error: {last_error}")
     return "No Action"
 
 

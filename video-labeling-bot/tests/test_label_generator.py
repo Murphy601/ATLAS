@@ -1,7 +1,18 @@
 from types import SimpleNamespace
 
-from config import OPENROUTER_MAX_ROUTE_FALLBACKS, VISION_MODELS
+from config import DEFAULT_MODELS, OPENROUTER_MAX_ROUTE_FALLBACKS, VISION_MODELS
 from label_generator import generate_label_from_frames
+
+
+def test_default_models_are_cheapest_first():
+    assert DEFAULT_MODELS == [
+        "google/gemini-2.5-flash",
+        "openai/gpt-4o-mini",
+        "qwen/qwen2.5-vl-72b-instruct",
+        "anthropic/claude-3.5-sonnet",
+    ]
+    assert VISION_MODELS[0] == "google/gemini-2.5-flash"
+    assert ":free" not in "".join(DEFAULT_MODELS)
 
 
 def test_generate_label_without_api_key(monkeypatch):
