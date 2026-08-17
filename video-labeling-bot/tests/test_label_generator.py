@@ -4,12 +4,16 @@ from config import DEFAULT_MODELS, OPENROUTER_MAX_ROUTE_FALLBACKS, VISION_MODELS
 from label_generator import generate_label_from_frames
 
 
-def test_default_models_prefer_gemini():
-    assert DEFAULT_MODELS[0] == "google/gemini-2.5-flash"
-    assert DEFAULT_MODELS[1] == "anthropic/claude-sonnet-5"
-    assert "openai/gpt-4o-mini" in DEFAULT_MODELS
+def test_default_models_use_live_openrouter_vision_slugs():
+    assert DEFAULT_MODELS == [
+        "anthropic/claude-sonnet-4.6",
+        "google/gemini-2.5-flash",
+        "qwen/qwen2.5-vl-72b-instruct",
+        "google/gemini-2.5-pro",
+    ]
     assert "anthropic/claude-3.5-sonnet" not in DEFAULT_MODELS
-    assert "qwen/qwen2.5-vl-72b-instruct" in DEFAULT_MODELS
+    assert "anthropic/claude-3.7-sonnet" not in DEFAULT_MODELS
+    assert "google/gemini-1.5-pro" not in DEFAULT_MODELS
     assert VISION_MODELS[0] == DEFAULT_MODELS[0]
     assert ":free" not in "".join(DEFAULT_MODELS)
 

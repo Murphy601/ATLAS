@@ -1,7 +1,9 @@
 import base64
+import os
 import re
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -14,6 +16,7 @@ from config import (
 )
 
 MAX_LABEL_LENGTH = 2000
+DEBUG_FRAMES_DIR = Path("debug_frames")
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["continue_practice"]}, '
     f'{SELECTORS["segment_input"]}'
@@ -76,6 +79,8 @@ class VideoBrowserBot:
         self.page = None
         self._warned_blank_frames = False
         self._last_frame_blank = False
+        self._debug_saved = 0
+        self._told_debug_dir = False
 
     def start(self, url: str):
         """Launches the user's real Google Chrome with a persistent login profile.
@@ -655,8 +660,42 @@ class VideoBrowserBot:
         if segment_duration <= 0:
             segment_duration = 0.5
         if not self.headless:
-            return self._capture_realtime(start_seconds, segment_duration, interval_seconds)
-        return self._capture_by_seek(start_seconds, segment_duration, interval_seconds)
+            frames = self._capture_realtime(
+                start_seconds, segment_duration, interval_seconds
+            )
+        else:
+            frames = self._capture_by_seek(
+                start_seconds, segment_duration, interval_seconds
+            )
+        self._save_debug_frames(frames)
+        return frames
+
+    def _save_debug_frames(self, frames: list[tuple[float, str]]):
+        """Write start/end JPEGs so black GPU captures are obvious on disk."""
+        if self.headless or not frames:
+            return
+        DEBUG_FRAMES_DIR.mkdir(exist_ok=True)
+        if not self._told_debug_dir:
+            print(
+                f"[Browser Bot]: Saving capture previews to {DEBUG_FRAMES_DIR.resolve()} "
+                "(open the JPEGs — they must show hands, not a black rectangle)."
+            )
+            self._told_debug_dir = True
+        picks = [frames[0]]
+        if len(frames) > 1:
+            picks.append(frames[-1])
+        for timestamp, payload in picks:
+            try:
+                image_bytes = base64.b64decode(payload)
+            except Exception:
+                continue
+            self._debug_saved += 1
+            path = DEBUG_FRAMES_DIR / (
+                f"seg_{self._debug_saved:03d}_{timestamp:.2f}s.jpg"
+            )
+            path.write_bytes(image_bytes)
+            status = "BLACK/EMPTY" if jpeg_is_blank(image_bytes) else "ok"
+            print(f"[Browser Bot]: Debug frame {path.name} ({status})")
 
     def _capture_realtime(
         self,

@@ -29,18 +29,18 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 ## Models
 
-OpenRouter paid vision models, Gemini first:
+OpenRouter paid vision models currently listed on OpenRouter (Claude first):
 
-1. `google/gemini-2.5-flash` (default)
-2. `anthropic/claude-sonnet-5`
+1. `anthropic/claude-sonnet-4.6` — `anthropic/claude-3.7-sonnet` is not in the catalog
+2. `google/gemini-2.5-flash`
 3. `qwen/qwen2.5-vl-72b-instruct`
-4. `openai/gpt-4o-mini` last (it was pasting stuffed-animal/scissors onto unrelated clips)
+4. `google/gemini-2.5-pro` — `google/gemini-1.5-pro` is not in the catalog
 
 `No Action` in a segment field is ignored. If a model names different objects than a specific Atlas draft (glass plate vs stuffed animal), that output is discarded and the draft is kept.
 
-Frames are copied from the decoded `<video>` onto a canvas after a short wait so the JPEG is not a black GPU bitmap.
+Frames are copied from the decoded `<video>` onto a canvas after a 0.5s decode wait. Headed runs also write start/end JPEGs to `debug_frames/` — if those files are black, the model never saw the hands.
 
-Optional override in `.env`: `VISION_MODEL=openai/gpt-4o-mini`
+Optional override in `.env`: `VISION_MODEL=google/gemini-2.5-flash`
 
 Set `OPENROUTER_API_KEY` in `.env`. Do not commit that file. These models are billed on OpenRouter.
 
