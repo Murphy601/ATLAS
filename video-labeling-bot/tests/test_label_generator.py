@@ -3,9 +3,7 @@ from types import SimpleNamespace
 from config import DEFAULT_MODELS, OPENROUTER_MAX_ROUTE_FALLBACKS, VISION_MODELS
 from label_generator import generate_label_from_frames
 
-DISH_GOLD = (
-    "hold glass plate with left hand, wipe glass plate with cloth in right hand"
-)
+WIPE_ONLY = "wipe glass plate with cloth in right hand"
 
 
 def test_default_models_use_live_openrouter_vision_slugs():
@@ -246,7 +244,7 @@ def test_real_frames_use_action_prompt_that_forbids_no_action(monkeypatch):
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
     assert generate_label_from_frames(
         ["aaa"], frames_have_video=True
-    ) == DISH_GOLD
+    ) == WIPE_ONLY
     prompt = seen[0]
     assert "Never write No Action" in prompt
     assert 'or "No Action"' not in prompt
@@ -380,7 +378,7 @@ def test_uses_model_when_frames_show_a_different_scene(monkeypatch):
         ["aaa"],
         draft_label=leftover,
         frames_have_video=True,
-    ) == DISH_GOLD
+    ) == WIPE_ONLY
 
 
 def test_skips_copied_prompt_example(monkeypatch):
@@ -411,6 +409,6 @@ def test_skips_copied_prompt_example(monkeypatch):
     assert generate_label_from_frames(
         ["aaa"],
         frames_have_video=True,
-    ) == DISH_GOLD
+    ) == WIPE_ONLY
     assert calls[0] == VISION_MODELS[0]
     assert calls[1] == VISION_MODELS[1]

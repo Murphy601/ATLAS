@@ -15,7 +15,9 @@ from config import (
     HAND_PATTERN,
     LOOKING_VERBS,
     MAX_ACTIONS_PER_LABEL,
-    MICRO_VERBS,
+    WORK_MICROS,
+    KEEP_PICKUP_BEFORE,
+    MISSING_IF_DROPPED,
     NAMED_IMPLEMENTS,
     NARRATIVE_WORDS,
     NUMBER_MAP,
@@ -29,7 +31,6 @@ from config import (
     SYSTEM_PROMPT,
     ACTION_SYSTEM_PROMPT,
     TEMPERATURE,
-    TRANSFER_VERBS,
     USE_VERBS,
     VERB_CORRECTIONS,
     VERB_REPLACEMENTS,
@@ -105,48 +106,111 @@ def _use_both_hands(clause: str) -> str:
     return updated
 
 
+IMPLEMENT_IN_HAND = re.compile(
+    r"\bwith (.+?) in (?:left hand|right hand|both hands)\b",
+    re.IGNORECASE,
+)
+BARE_PLACE_PATTERN = re.compile(
+    r"^(place|set|put|move)\s+(?:on|in|into|onto|to)\b",
+    re.IGNORECASE,
+)
+
+
 def _pickup_object(clause: str) -> str:
     text = LEADING_VERB_PATTERN.sub("", clause, count=1).strip()
     text = re.sub(
-        r"\s+with\s+(?:left hand|right hand|both hands)\s*$",
+        r"\s+with\s+(.+?)\s+in\s+(?:left hand|right hand|both hands)\s*$",
         "",
         text,
         flags=re.IGNORECASE,
     )
-    return text.strip()
+    text = re.sub(
+        r"\s+(?:with|in)\s+(?:left hand|right hand|both hands)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.strip(" ,")
+
+
+def _named_tool_in(clause: str) -> str:
+    match = IMPLEMENT_IN_HAND.search(clause or "")
+    return match.group(1).strip().lower() if match else ""
+
+
+def _objects_match(left: str, right: str) -> bool:
+    a = (left or "").strip().lower()
+    b = (right or "").strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
 
 
 def _strip_instrumental_pickup(text: str) -> str:
-    """Drop pick up X when the next clause immediately uses X (not place/pass)."""
+    """Drop pick up X when a later clause immediately uses X (not place/pass)."""
     clauses = split_actions(text)
-    if len(clauses) < 2 or _leading_verb(clauses[0]) != "pick up":
+    if len(clauses) < 2:
         return text
-    next_verb = _leading_verb(clauses[1])
-    if not next_verb or next_verb in TRANSFER_VERBS or next_verb == "pick up":
-        return text
-    if next_verb not in USE_VERBS:
-        return text
-    picked = _pickup_object(clauses[0])
-    if not picked:
-        return text
-    if not re.search(rf"\b{re.escape(picked)}\b", clauses[1], re.IGNORECASE):
-        return text
-    print(f"[Sanitize]: Dropped instrumental pick up '{clauses[0]}'")
-    return ", ".join(clauses[1:])
+    changed = True
+    while changed:
+        changed = False
+        for index, clause in enumerate(clauses):
+            if _leading_verb(clause) != "pick up" or index + 1 >= len(clauses):
+                continue
+            picked = _pickup_object(clause)
+            if not picked:
+                continue
+            use_index = index + 1
+            use_verb = _leading_verb(clauses[use_index])
+            if use_verb == "hold" and index + 2 < len(clauses):
+                use_index = index + 2
+                use_verb = _leading_verb(clauses[use_index])
+            if not use_verb or use_verb in KEEP_PICKUP_BEFORE or use_verb == "pick up":
+                continue
+            if use_verb not in USE_VERBS and use_verb not in CONTINUOUS_VERBS:
+                continue
+            if not re.search(rf"\b{re.escape(picked)}\b", clauses[use_index], re.IGNORECASE):
+                continue
+            print(f"[Sanitize]: Dropped instrumental pick up '{clause}'")
+            del clauses[index]
+            changed = True
+            break
+    return ", ".join(clauses)
 
 
 def _strip_micro_movements(text: str) -> str:
-    """Drop shift/align/slide after a continuous work verb on the same idea."""
+    """Drop shift/align/slide/rotate inside a continuous cut/wipe/dig/water/write."""
     clauses = split_actions(text)
-    if len(clauses) != 2:
+    if len(clauses) < 2:
         return text
-    first_verb = _leading_verb(clauses[0])
-    second_verb = _leading_verb(clauses[1])
-    if first_verb in CONTINUOUS_VERBS and second_verb in MICRO_VERBS:
-        return clauses[0]
-    if second_verb in CONTINUOUS_VERBS and first_verb in MICRO_VERBS:
-        return clauses[1]
-    return text
+    has_work = any(_leading_verb(clause) in CONTINUOUS_VERBS for clause in clauses)
+    if not has_work:
+        return text
+    kept = [
+        clause
+        for clause in clauses
+        if _leading_verb(clause) not in WORK_MICROS
+    ]
+    return ", ".join(kept) if kept else text
+
+
+def _collapse_repeated_work(text: str) -> str:
+    """One coarse clause when the same continuous verb repeats on the same object."""
+    clauses = split_actions(text)
+    if len(clauses) < 2:
+        return text
+    verbs = [_leading_verb(clause) for clause in clauses]
+    if not verbs[0] or any(verb != verbs[0] for verb in verbs):
+        return text
+    if verbs[0] not in CONTINUOUS_VERBS:
+        return text
+    objects = [_clause_object(clause) for clause in clauses]
+    if len({item.lower() for item in objects if item}) > 1:
+        return text
+    blob = " ".join(clauses).lower()
+    if "left" in blob and "right" in blob:
+        return _use_both_hands(clauses[0])
+    return clauses[0]
 
 
 def _cap_actions(text: str, limit: int = MAX_ACTIONS_PER_LABEL) -> str:
@@ -154,24 +218,110 @@ def _cap_actions(text: str, limit: int = MAX_ACTIONS_PER_LABEL) -> str:
     if len(clauses) <= limit:
         return text
     print(f"[Sanitize]: Capping {len(clauses)} actions to {limit}")
-    return ", ".join(clauses[:limit])
+
+    def drop_score(clause: str) -> int:
+        verb = _leading_verb(clause)
+        if verb in WORK_MICROS:
+            return 0
+        if verb == "hold":
+            return 1
+        if verb in CONTINUOUS_VERBS:
+            return 2
+        if verb in MISSING_IF_DROPPED or verb == "pick up":
+            return 9
+        return 3
+
+    indexed = list(enumerate(clauses))
+    while len(indexed) > limit:
+        victim = min(indexed, key=lambda item: (drop_score(item[1]), -item[0]))
+        indexed.remove(victim)
+    indexed.sort()
+    return ", ".join(clause for _, clause in indexed)
 
 
 def _collapse_redundant_hold(text: str) -> str:
-    """Only merge a trailing hold when both hands are on the same two-handed tool.
+    """Merge hold of the SAME tool already named in the work clause.
 
-    Off-hand stabilize + work (hold paper, cut with scissors) must stay two clauses.
+    Off-hand stabilize of a workpiece while the other hand uses a different
+    tool (hold paper, cut with scissors) must stay two clauses.
     """
     clauses = split_actions(text)
-    if len(clauses) != 2 or not HOLD_CLAUSE_PATTERN.search(clauses[1]):
+    if len(clauses) < 2:
         return text
-    first = clauses[0].lower()
-    if not any(re.search(rf"\b{re.escape(tool)}\b", first) for tool in TWO_HANDED_TOOLS):
+    if (
+        len(clauses) == 2
+        and HOLD_CLAUSE_PATTERN.search(clauses[1])
+        and any(
+            re.search(rf"\b{re.escape(tool)}\b", clauses[0], re.IGNORECASE)
+            for tool in TWO_HANDED_TOOLS
+        )
+        and _leading_verb(clauses[0]) not in KEEP_PICKUP_BEFORE
+    ):
+        return _use_both_hands(clauses[0])
+    work_indexes = [
+        index
+        for index, clause in enumerate(clauses)
+        if _leading_verb(clause) != "hold"
+    ]
+    hold_indexes = [
+        index
+        for index, clause in enumerate(clauses)
+        if _leading_verb(clause) == "hold"
+    ]
+    if not work_indexes or not hold_indexes:
         return text
-    first_verb = _leading_verb(clauses[0])
-    if not first_verb or first_verb in TRANSFER_VERBS:
+    drop: set[int] = set()
+    updated = list(clauses)
+    for hold_index in hold_indexes:
+        held = _clause_object(updated[hold_index])
+        if not held:
+            continue
+        for work_index in work_indexes:
+            work = updated[work_index]
+            if _leading_verb(work) in KEEP_PICKUP_BEFORE:
+                continue
+            tool = _named_tool_in(work)
+            work_obj = _clause_object(work)
+            same_tool = bool(tool) and _objects_match(held, tool)
+            same_object_no_tool = (
+                not tool
+                and _objects_match(held, work_obj)
+                and _leading_verb(work) in USE_VERBS | CONTINUOUS_VERBS
+            )
+            if same_tool or same_object_no_tool:
+                updated[work_index] = _use_both_hands(work)
+                drop.add(hold_index)
+                break
+    if not drop:
         return text
-    return _use_both_hands(clauses[0])
+    return ", ".join(
+        clause for index, clause in enumerate(updated) if index not in drop
+    )
+
+
+def _fill_missing_clause_objects(text: str) -> str:
+    """pick up cup, place on table -> pick up cup, place cup on table."""
+    clauses = split_actions(text)
+    last_obj = ""
+    filled = []
+    for clause in clauses:
+        verb = _leading_verb(clause)
+        if verb and last_obj and BARE_PLACE_PATTERN.search(clause):
+            clause = re.sub(
+                rf"^{re.escape(verb)}\b",
+                f"{verb} {last_obj}",
+                clause,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        obj = _clause_object(clause)
+        obj = re.sub(
+            r"^(?:on|in|into|onto|to|from)\s+", "", obj, flags=re.IGNORECASE
+        ).strip()
+        if obj:
+            last_obj = obj
+        filled.append(clause)
+    return ", ".join(filled)
 
 
 def _finish_incomplete_hands(text: str) -> str:
@@ -272,28 +422,6 @@ def _name_wipe_cloth(text: str) -> str:
     return ", ".join(named)
 
 
-def _ensure_offhand_hold_for_dish_wipe(text: str) -> str:
-    """Name the stabilizing hand when one hand wipes a dish the other is holding."""
-    clauses = split_actions(text)
-    if len(clauses) != 1:
-        return text
-    clause = clauses[0]
-    if _leading_verb(clause) not in WIPE_VERBS or not _is_dish_clause(clause):
-        return text
-    if "both hands" in clause.lower() or HOLD_CLAUSE_PATTERN.search(clause):
-        return text
-    obj = _clause_object(clause)
-    if not obj:
-        return text
-    uses_right = re.search(r"\b(?:in|with) right hand\b", clause, re.IGNORECASE)
-    uses_left = re.search(r"\b(?:in|with) left hand\b", clause, re.IGNORECASE)
-    if uses_right and not uses_left:
-        return f"hold {obj} with left hand, {clause}"
-    if uses_left and not uses_right:
-        return f"hold {obj} with right hand, {clause}"
-    return text
-
-
 def _hid_distinct_hands(label: str | None) -> bool:
     """True when a draft used both hands to hide hold + a different wipe."""
     clauses = split_actions(_finish_incomplete_hands(label or ""))
@@ -318,6 +446,13 @@ def _hid_distinct_hands(label: str | None) -> bool:
 def _has_distinct_hands(label: str) -> bool:
     blob = (label or "").lower()
     return "left hand" in blob and "right hand" in blob and "both hands" not in blob
+
+
+def _has_release(label: str) -> bool:
+    """True when a label includes a real put-down (place/set)."""
+    return any(
+        _leading_verb(clause) in {"place", "set"} for clause in split_actions(label)
+    )
 
 
 def _restore_stabilize_wipe(label: str, previous_label: str | None) -> str:
@@ -549,7 +684,7 @@ def reconcile_with_draft(model_label: str, draft_label: str | None) -> str:
         extra_hold = HOLD_CLAUSE_PATTERN.search(model_parts[-1]) and not any(
             HOLD_CLAUSE_PATTERN.search(part) for part in draft_parts
         )
-        extra_micro = _leading_verb(model_parts[-1]) in MICRO_VERBS
+        extra_micro = _leading_verb(model_parts[-1]) in WORK_MICROS
         if extra_pickup or extra_micro:
             return draft
         if extra_hold and "both hands" in draft.lower():
@@ -611,6 +746,12 @@ def choose_final_label(
             if _hid_distinct_hands(draft_raw) and _has_distinct_hands(model):
                 print(
                     "[Pipeline]: Draft hid distinct hands as both hands. "
+                    f"Using the model: '{model}'"
+                )
+                return model
+            if _has_release(model) and not _has_release(draft):
+                print(
+                    "[Pipeline]: Draft missed a place/set. "
                     f"Using the model: '{model}'"
                 )
                 return model
@@ -797,13 +938,14 @@ def sanitize_label(text: str) -> str:
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
     cleaned = _fill_with_visible_substance(cleaned)
-    cleaned = _collapse_redundant_hold(cleaned)
-    cleaned = _strip_instrumental_pickup(cleaned)
-    cleaned = _strip_micro_movements(cleaned)
     cleaned = _finish_incomplete_hands(cleaned)
+    cleaned = _fill_missing_clause_objects(cleaned)
     cleaned = _split_false_both_hands(cleaned)
     cleaned = _name_wipe_cloth(cleaned)
-    cleaned = _ensure_offhand_hold_for_dish_wipe(cleaned)
+    cleaned = _strip_instrumental_pickup(cleaned)
+    cleaned = _strip_micro_movements(cleaned)
+    cleaned = _collapse_repeated_work(cleaned)
+    cleaned = _collapse_redundant_hold(cleaned)
     cleaned = _cap_actions(cleaned)
     cleaned = " ".join(cleaned.split())
     cleaned = cleaned.strip(" ,")
@@ -900,8 +1042,10 @@ def _vision_user_content(
         "If they grab a tool only to use it immediately, omit pick up. "
         "Do not add hold for an empty hand or for the same tool already named. "
         "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
-        "Do not split cut/wipe/dig/water/write/trim into micro shift/align clauses. "
-        "Max 3 clauses. Never write tool/then/next/other. Never write bare animal. "
+        "Do not split cut/wipe/dig/water/write/trim into micro shift/align/rotate clauses. "
+        "Max 3 clauses. Prefer one coarse verb. Never write tool/then/next/other. "
+        "Never write bare animal. "
+        "If the object is released, write place/set. If it changes hands, write pass. "
         "Name the object you see in THESE frames (plate, cloth, hose, toy, plant, etc.). "
         "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
@@ -918,6 +1062,9 @@ def _vision_user_content(
         intro = (
             "These frames show first-person HAND WORK. Do not output No Action. "
             "Name the object you actually see in the pictures. "
+            "Do not write pick up if the tool is used immediately. "
+            "Do not write shift/align/slide inside a continuous action. "
+            "Do write place/set/pass if the object is released or changes hands. "
             "If one hand holds a plate and the other wipes with a cloth, write two clauses "
             "with left hand and right hand. Do not write both hands for that. "
             "A clear dish is glass plate, not bowl. "

@@ -158,8 +158,19 @@ If the hands have different jobs, write TWO clauses. Never hide that as both han
   WRONG: hold bowl with both hands
 A clear dish is glass plate, not bowl. Name the wiping cloth if you see it.
 
+#1 EXTRA ACTION: do not invent pick up, hold, or micro-shifts.
+If they grab a tool only to use it immediately, omit pick up.
+  RIGHT: water plant with hose in right hand
+  WRONG: pick up hose with right hand, water plant with hose in right hand
+Do not write shift/align/slide/tilt/tap/rotate inside cut/wipe/dig/water/write/scrub.
+Do not write hold of the SAME tool already named in the work clause.
+Max 3 clauses. Prefer one coarse verb for continuous motion.
+
+#2 MISSING ACTION: do write place/set/pass if the object is released or changes hands.
+Do write hold only when the other hand does different work with a different tool
+(hold paper, cut with scissors). Empty hand → do not mention it.
+
 If the object is already in the hand in the first frame, do not write pick up.
-If one hand stabilizes while the other works: hold [object] with [hand], [work clause]
 Name the object you see. Do not copy gold-style examples unless they are visible.
 """
 
@@ -377,9 +388,22 @@ USE_VERBS = {
     "drill",
     "trim",
     "unfold",
+    "open",
+    "close",
 }
 
 MICRO_VERBS = {"shift", "align", "slide", "tilt", "tap", "pat"}
+WORK_MICROS = MICRO_VERBS | {"rotate", "turn"}
+KEEP_PICKUP_BEFORE = {
+    "place",
+    "set",
+    "pass",
+    "put",
+    "put down",
+    "drop",
+    "move",
+}
+MISSING_IF_DROPPED = {"place", "set", "pass", "gather"}
 CONTINUOUS_VERBS = {
     "cut",
     "chop",
