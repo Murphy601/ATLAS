@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass, replace
@@ -16,6 +18,9 @@ from config import (
 
 MAX_LABEL_LENGTH = 2000
 DEBUG_FRAMES_DIR = Path("debug_frames")
+ORIGINAL_DRAFTS_DIR = Path("original_drafts")
+# Center-crop std/mean below this is a black GPU hole (player chrome can still look "ok").
+VIDEO_CONTENT_SCORE_MIN = 22.0
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["continue_practice"]}, '
     f'{SELECTORS["segment_input"]}'
@@ -78,6 +83,7 @@ class VideoBrowserBot:
         self.page = None
         self._warned_blank_frames = False
         self._last_frame_blank = False
+        self._last_frames_have_video = False
         self._debug_saved = 0
         self._told_debug_dir = False
 
@@ -109,9 +115,16 @@ class VideoBrowserBot:
                 "--enable-automation",
                 "--no-sandbox",
             ]
+            # Hardware video overlays paint on a separate plane. Playwright then
+            # screenshots player chrome around a black rectangle, every VLM says
+            # No Action, and draft-first freezes leftover row text.
             launch_args["args"] = [
                 "--disable-blink-features=AutomationControlled",
                 "--start-maximized",
+                "--disable-accelerated-video-decode",
+                "--disable-accelerated-video-encode",
+                "--disable-direct-composition-video-overlays",
+                "--disable-features=AcceleratedVideoDecode,AcceleratedVideoEncoder,HardwareMediaKeyHandling",
             ]
 
         try:
@@ -473,6 +486,7 @@ class VideoBrowserBot:
         except Exception:
             pass
 
+        self._force_video_into_compositor()
         self.page.evaluate(
             """() => {
                 const video = document.querySelector('video');
@@ -493,6 +507,85 @@ class VideoBrowserBot:
             }"""
         )
         print("[Browser Bot]: In-page video is ready for frame capture.")
+
+    def _force_video_into_compositor(self):
+        """Pull the video off a hardware overlay so screenshots include pixels."""
+        try:
+            self.page.evaluate(
+                """() => {
+                    const video = document.querySelector('video');
+                    if (!video) return;
+                    video.style.opacity = '0.999';
+                    video.style.transform = 'translateZ(1px)';
+                    video.style.willChange = 'opacity, transform';
+                    video.disablePictureInPicture = true;
+                }"""
+            )
+        except Exception:
+            pass
+
+    @property
+    def last_frames_have_video(self) -> bool:
+        """True when the last capture's center crop had real texture, not a black hole."""
+        return self._last_frames_have_video
+
+    def remember_original_drafts(self, segments: list[SegmentRow]) -> list[SegmentRow]:
+        """Keep the first Atlas row texts for this clip so leftover bot labels are not reused."""
+        fingerprint = self.episode_fingerprint()
+        if not fingerprint or not segments:
+            return segments
+        ORIGINAL_DRAFTS_DIR.mkdir(exist_ok=True)
+        path = ORIGINAL_DRAFTS_DIR / f"{hashlib.sha256(fingerprint.encode()).hexdigest()[:20]}.json"
+        payload = {
+            "fingerprint": fingerprint,
+            "drafts": [
+                {
+                    "number": segment.number,
+                    "start_seconds": segment.start_seconds,
+                    "draft_label": segment.draft_label,
+                }
+                for segment in segments
+            ],
+        }
+        if not path.exists():
+            if _repeated_copy_drafts(segments):
+                print(
+                    "[Browser Bot]: Segment rows look like leftover bot text "
+                    "(same sentence on every row). Ignoring them so the model "
+                    "can label from the video."
+                )
+                return [replace(segment, draft_label="") for segment in segments]
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            print(
+                f"[Browser Bot]: Saved original Atlas drafts for this clip in {path.name}."
+            )
+            return segments
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return segments
+        by_start = {
+            round(float(item.get("start_seconds")), 3): str(item.get("draft_label") or "")
+            for item in (saved.get("drafts") or [])
+        }
+        if len(by_start) != len(segments):
+            path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return segments
+        restored: list[SegmentRow] = []
+        changed = False
+        for segment in segments:
+            original = by_start.get(round(segment.start_seconds, 3), segment.draft_label)
+            if original != segment.draft_label:
+                changed = True
+                restored.append(replace(segment, draft_label=original))
+            else:
+                restored.append(segment)
+        if changed:
+            print(
+                "[Browser Bot]: Row text was leftover from a previous run. "
+                "Using the original Atlas drafts saved on first visit."
+            )
+        return restored
 
     def _seek_video(self, seconds: float):
         self.page.evaluate(
@@ -548,19 +641,37 @@ class VideoBrowserBot:
         return False
 
     def _canvas_frame_jpeg(self) -> bytes | None:
-        """Copy the decoded HTML5 video frame. Avoids black GPU element screenshots."""
+        """Copy the decoded HTML5 video frame after the GPU presents it."""
         data = self.page.evaluate(
-            """() => {
+            """async () => {
                 const video = document.querySelector('video');
                 if (!video || video.readyState < 2 || video.videoWidth < 8) return null;
+                const waitFrame = () => new Promise((resolve) => {
+                    if (typeof video.requestVideoFrameCallback === 'function') {
+                        const timeout = setTimeout(resolve, 400);
+                        video.requestVideoFrameCallback(() => {
+                            clearTimeout(timeout);
+                            resolve();
+                        });
+                    } else {
+                        setTimeout(resolve, 50);
+                    }
+                });
+                await waitFrame();
                 const canvas = document.createElement('canvas');
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 const ctx = canvas.getContext('2d', { willReadFrequently: true });
                 if (!ctx) return null;
                 try {
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const url = canvas.toDataURL('image/jpeg', 0.8);
+                    try {
+                        const bitmap = await createImageBitmap(video);
+                        ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+                        if (typeof bitmap.close === 'function') bitmap.close();
+                    } catch (error) {
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    }
+                    const url = canvas.toDataURL('image/jpeg', 0.9);
                     const comma = url.indexOf(',');
                     return comma >= 0 ? url.slice(comma + 1) : null;
                 } catch (error) {
@@ -574,27 +685,27 @@ class VideoBrowserBot:
             image_bytes = base64.b64decode(data)
         except Exception:
             return None
-        if jpeg_is_blank(image_bytes):
+        if not jpeg_has_video_content(image_bytes):
             return None
         return image_bytes
 
     def _player_clip(self) -> dict | None:
-        """CSS-pixel box of the painted player, not the GPU video bitmap."""
+        """CSS-pixel box of the VIDEO, inset so timeline chrome is not sent to the model."""
         box = self.page.evaluate(
             """() => {
                 const video = document.querySelector('video');
                 if (!video) return null;
-                const host =
-                    video.closest(
-                        '[class*="player" i], [class*="Player"], [data-player], figure, [class*="media"]'
-                    ) || video.parentElement || video;
-                const target =
-                    host && host.getBoundingClientRect && host.clientWidth >= Math.min(video.clientWidth || 0, 8)
-                        ? host
-                        : video;
-                const rect = target.getBoundingClientRect();
+                const rect = video.getBoundingClientRect();
                 if (rect.width < 16 || rect.height < 16) return null;
-                return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+                const padX = Math.max(2, rect.width * 0.04);
+                const padTop = Math.max(2, rect.height * 0.06);
+                const padBottom = Math.max(8, rect.height * 0.16);
+                return {
+                    x: rect.x + padX,
+                    y: rect.y + padTop,
+                    width: rect.width - padX * 2,
+                    height: rect.height - padTop - padBottom,
+                };
             }"""
         )
         if not box:
@@ -612,7 +723,8 @@ class VideoBrowserBot:
         return {"x": x, "y": y, "width": width, "height": height}
 
     def _screenshot_video_base64(self) -> str:
-        """Prefer a decoded canvas copy of the video; fall back to painted player pixels."""
+        """Prefer a decoded canvas copy; fall back to an inset compositor screenshot."""
+        self._force_video_into_compositor()
         candidates: list[bytes] = []
         canvas = self._canvas_frame_jpeg()
         if canvas:
@@ -621,27 +733,24 @@ class VideoBrowserBot:
         if clip:
             try:
                 candidates.append(
-                    self.page.screenshot(type="jpeg", quality=80, clip=clip)
+                    self.page.screenshot(type="jpeg", quality=90, clip=clip)
                 )
             except Exception:
                 pass
         try:
             video = self.page.locator(SELECTORS["video"]).first
-            candidates.append(video.screenshot(type="jpeg", quality=80))
+            candidates.append(video.screenshot(type="jpeg", quality=90))
         except Exception:
             pass
         if not candidates:
             raise RuntimeError("Could not screenshot the video player")
-        image_bytes = next(
-            (item for item in candidates if not jpeg_is_blank(item)),
-            candidates[0],
-        )
-        self._last_frame_blank = jpeg_is_blank(image_bytes)
+        image_bytes = max(candidates, key=jpeg_video_score)
+        self._last_frame_blank = not jpeg_has_video_content(image_bytes)
         if self._last_frame_blank and not self._warned_blank_frames:
             print(
-                "[Browser Bot]: Captured frames look black/empty. "
-                "The model cannot see the hands. Keep the Chrome window visible "
-                "and the video playing."
+                "[Browser Bot]: Captured frames look like a black video hole or player UI. "
+                "Open debug_frames — JPEGs must show hands, not a timeline. "
+                "Keep the Chrome window visible and the video playing."
             )
             self._warned_blank_frames = True
         return base64.b64encode(image_bytes).decode("utf-8")
@@ -666,7 +775,20 @@ class VideoBrowserBot:
             frames = self._capture_by_seek(
                 start_seconds, segment_duration, interval_seconds
             )
+        self._last_frames_have_video = False
+        for _timestamp, payload in frames:
+            try:
+                if jpeg_has_video_content(base64.b64decode(payload)):
+                    self._last_frames_have_video = True
+                    break
+            except Exception:
+                continue
         self._save_debug_frames(frames)
+        if frames and not self._last_frames_have_video:
+            print(
+                "[Browser Bot]: WARNING: debug_frames do not show video texture "
+                "(black hole or player chrome). Models will say No Action."
+            )
         return frames
 
     def _save_debug_frames(self, frames: list[tuple[float, str]]):
@@ -693,7 +815,7 @@ class VideoBrowserBot:
                 f"seg_{self._debug_saved:03d}_{timestamp:.2f}s.jpg"
             )
             path.write_bytes(image_bytes)
-            status = "BLACK/EMPTY" if jpeg_is_blank(image_bytes) else "ok"
+            status = _debug_frame_status(image_bytes)
             print(f"[Browser Bot]: Debug frame {path.name} ({status})")
 
     def _capture_realtime(
@@ -747,7 +869,7 @@ class VideoBrowserBot:
         print(f"[Browser Bot]: Captured {len(frames)} realtime frame(s).")
         if self._last_frame_blank:
             print(
-                "[Browser Bot]: WARNING: those frames look black. "
+                "[Browser Bot]: WARNING: those frames look black or like player UI. "
                 "Labels will be No Action unless a real draft is kept."
             )
         return frames[:MAX_FRAMES_PER_SEGMENT]
@@ -919,18 +1041,53 @@ def _parse_seconds(value, fallback: float | None = None) -> float | None:
     return minutes * 60 + seconds + float(f"0.{fraction}")
 
 
-def jpeg_is_blank(image_bytes: bytes) -> bool:
-    """True when a JPEG is missing, tiny, or almost uniformly black (GPU video bitmap)."""
+def _center_gray(image: np.ndarray) -> np.ndarray:
+    """Inner video area. Drops the bottom control bar that made black captures look 'ok'."""
+    height, width = image.shape[:2]
+    x0, x1 = int(width * 0.08), int(width * 0.92)
+    y0, y1 = int(height * 0.08), int(height * 0.78)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        crop = image
+    else:
+        crop = image[y0:y1, x0:x1]
+    if crop.ndim == 3:
+        return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    return crop
+
+
+def jpeg_video_score(image_bytes: bytes) -> float:
+    """Higher = more likely real video pixels, not a black GPU hole with UI chrome."""
     if not image_bytes or len(image_bytes) < 80:
-        return True
-    arr = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        return 0.0
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
-        return True
+        return 0.0
     if min(image.shape[0], image.shape[1]) < 16:
-        return True
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    return float(gray.mean()) < 18 and float(gray.std()) < 12
+        return 0.0
+    gray = _center_gray(image)
+    mean = float(gray.mean())
+    std = float(gray.std())
+    if mean < 18 and std < 12:
+        return 0.0
+    return std + min(mean, 80.0) * 0.15
+
+
+def jpeg_has_video_content(image_bytes: bytes) -> bool:
+    """True when the center crop has texture (hands/objects), not a flat black rectangle."""
+    return jpeg_video_score(image_bytes) >= VIDEO_CONTENT_SCORE_MIN
+
+
+def jpeg_is_blank(image_bytes: bytes) -> bool:
+    """True when a JPEG is missing, tiny, or the video area is a black GPU bitmap."""
+    return jpeg_video_score(image_bytes) < 8.0
+
+
+def _debug_frame_status(image_bytes: bytes) -> str:
+    if jpeg_is_blank(image_bytes):
+        return "BLACK/EMPTY — model cannot see hands"
+    if not jpeg_has_video_content(image_bytes):
+        return "PLAYER UI — center is empty; model will say No Action"
+    return "ok"
 
 
 def _timestamp_to_seconds(value: str) -> float:
@@ -945,3 +1102,20 @@ def _timestamp_to_seconds(value: str) -> float:
         hours, minutes, seconds = parts
         return hours * 3600 + minutes * 60 + seconds
     return 0.0
+
+
+def _repeated_copy_drafts(segments: list[SegmentRow]) -> bool:
+    """True when 3+ rows share the same sentence (leftover bot text, not Atlas)."""
+    bases: list[str] = []
+    for segment in segments:
+        text = (segment.draft_label or "").strip().lower()
+        if not text or text == "no action":
+            continue
+        text = re.sub(r",\s*pass\b.*$", "", text)
+        bases.append(text)
+    if len(bases) < 3:
+        return False
+    counts: dict[str, int] = {}
+    for base in bases:
+        counts[base] = counts.get(base, 0) + 1
+    return max(counts.values()) >= 3

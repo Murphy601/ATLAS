@@ -298,10 +298,11 @@ def test_retries_no_action_with_hand_work_prompt(monkeypatch):
     assert generate_label_from_frames(
         ["aaa"],
         draft_label="hold animal with left hand, trim animal with scissors in right hand",
+        frames_have_video=True,
     ) == (
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
-    assert len(calls) == len(VISION_MODELS)
+    assert len(calls) == len(VISION_MODELS) + 1
 
 
 def test_keeps_glass_plate_draft_when_model_repeats_stuffed_animal(monkeypatch):
@@ -324,3 +325,28 @@ def test_keeps_glass_plate_draft_when_model_repeats_stuffed_animal(monkeypatch):
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
     assert generate_label_from_frames(["aaa"], draft_label=draft) == draft
+
+
+def test_uses_model_when_frames_show_a_different_scene(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    leftover = (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
+
+    def fake_create(**kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="wipe glass plate with cloth in right hand"
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        draft_label=leftover,
+        frames_have_video=True,
+    ) == "wipe glass plate with cloth in right hand"

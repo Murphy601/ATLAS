@@ -18,7 +18,9 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 - After login: sidebar **Tasks** → **Continue Assessment Practice** (or **Review** on a listed live task)
 - Segments already exist with AI drafts. The bot **replaces the text**, it does not delete rows or retimestamp.
 - Atlas drafts are **untrusted** and are not sent to the vision model. If every model still says No Action, the bot keeps the draft and rewrites bare `animal` to `stuffed animal` instead of filling No Action.
-- Frames are the **painted player** (page screenshot). A raw `<video>` screenshot is often a black GPU frame, which made every model say No Action.
+- Frames are an inset screenshot of the `<video>` element plus a canvas copy of the decoded frame. A raw player-chrome screenshot is often a **black GPU hole with a timeline**, which made every model say No Action while debug JPEGs still printed `(ok)`.
+- If `debug_frames/` JPEGs show hands, the model is trusted even when leftover row text says something else (for example stuffed animal on a dish clip).
+- First-visit Atlas drafts are saved in `original_drafts/` so a later re-run does not treat leftover bot text as Atlas gold.
 - Label fields: `input[aria-label="Segment 1 label"]`
 - Submit: `button:has-text("Submit practice clip")`, fallback Complete / Submit assessment
 - After submit the bot **stays in the Chrome session** and starts the next clip when **Next task** / **Next video** appears
@@ -36,9 +38,9 @@ OpenRouter paid vision models currently listed on OpenRouter (Claude first):
 3. `qwen/qwen2.5-vl-72b-instruct`
 4. `google/gemini-2.5-pro` — `google/gemini-1.5-pro` is not in the catalog
 
-`No Action` in a segment field is ignored. **Draft-first:** a specific Atlas draft is kept unless the model names the same objects and does not add extra clauses. That is the 62.5% engine plus Extra Action protection.
+`No Action` in a segment field is ignored. **Draft-first when frames are empty:** a specific Atlas draft is kept unless the model names the same objects and does not add extra clauses. **When debug frames actually show hands**, the model wins if it names different objects — leftover stuffed-animal text must not freeze a dish clip.
 
-Frames are copied from the decoded `<video>` onto a canvas after a 0.5s decode wait. Headed runs also write start/end JPEGs to `debug_frames/` — if those files are black, the model never saw the hands.
+Frames are copied from the decoded `<video>` onto a canvas after a decode wait, then an inset compositor screenshot. Headed Chrome is launched with hardware video overlays disabled. Headed runs also write start/end JPEGs to `debug_frames/` — those files must show **hands**, not a black rectangle or a timeline. Status `PLAYER UI` means the model never saw the work.
 
 Optional override in `.env`: `VISION_MODEL=google/gemini-2.5-flash`
 

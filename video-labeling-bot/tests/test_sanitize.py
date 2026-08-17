@@ -240,6 +240,20 @@ def test_choose_final_label_is_draft_first():
     ) == (
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
+    leftover = (
+        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+    )
+    assert (
+        choose_final_label(
+            "wipe glass plate with cloth in right hand",
+            leftover,
+            frames_have_video=True,
+        )
+        == "wipe glass plate with cloth in right hand"
+    )
+    assert choose_final_label(
+        "wipe glass plate with cloth in right hand", leftover
+    ) == leftover
 
 
 def test_reconcile_does_not_keep_generic_animal_draft():

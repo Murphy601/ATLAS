@@ -10,5 +10,5 @@ __pycache__/
 .ruff_cache/
 *.mp4
 !tests/fixtures/**
-debug_frames/
+original_drafts/
 .DS_Store

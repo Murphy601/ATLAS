@@ -364,8 +364,9 @@ def choose_final_label(
     model_label: str,
     draft_label: str | None,
     previous_label: str | None = None,
+    frames_have_video: bool = False,
 ) -> str:
-    """Draft-first: keep a specific Atlas row unless the model same-scene and does not add clauses."""
+    """Keep a specific Atlas row unless the frames show a different scene or extra clauses."""
     draft_raw = usable_draft(draft_label)
     model = apply_context_fixes(
         sanitize_label(model_label or ""), draft_raw, previous_label
@@ -383,6 +384,12 @@ def choose_final_label(
             print(f"[Pipeline]: Using Atlas draft (model empty): '{draft}'")
             return draft
         if not model_fits_draft(model, draft):
+            if frames_have_video:
+                print(
+                    "[Pipeline]: Frames show different objects than the row text. "
+                    f"Using the model: '{model}'"
+                )
+                return model
             print(
                 f"[Pipeline]: Model named different objects. Keeping Atlas draft: '{draft}'"
             )
@@ -656,6 +663,7 @@ def _vision_user_content(
     duration_seconds: float | None = None,
     frame_timestamps: list[float] | None = None,
     insist_action: bool = False,
+    frames_have_video: bool = False,
 ) -> list[dict]:
     """Build the vision prompt. Atlas drafts are never included — models copy them."""
     total = len(base64_frames)
@@ -675,6 +683,8 @@ def _vision_user_content(
         "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
         "Do NOT output No Action if either hand holds an object or a tool. "
+        "If the pictures are a black rectangle, a timeline, or a video-player UI, "
+        "output No Action — do not guess stuffed animal or scissors. "
         "Output only the raw label or No Action."
     )
     if insist_action:
@@ -689,7 +699,7 @@ def _vision_user_content(
     user_content: list[dict] = [{"type": "text", "text": intro}]
     if duration_seconds is not None:
         user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
-    if previous_label and previous_label != "No Action":
+    if previous_label and previous_label != "No Action" and not frames_have_video:
         keep_previous = (
             not is_generic_placeholder_label(previous_label)
             and (not draft_label or model_fits_draft(previous_label, draft_label))
@@ -737,6 +747,7 @@ def _query_vision_models(
     draft_label: str | None,
     previous_label: str | None,
     models: list[str],
+    frames_have_video: bool = False,
 ) -> str:
     last_error = None
     last_generic = None
@@ -782,6 +793,12 @@ def _query_vision_models(
                     )
                     continue
             if draft_label and not model_fits_draft(cleaned, draft_label):
+                if frames_have_video:
+                    print(
+                        f"[OpenRouter]: {model} named different objects than the row text "
+                        f"({cleaned!r} vs {draft_label!r}). Frames look real, using the model."
+                    )
+                    return cleaned
                 saw_wrong_scene = True
                 print(
                     f"[OpenRouter]: {model} named different objects than the Atlas draft "
@@ -826,6 +843,7 @@ def generate_label_from_frames(
     draft_label: str | None = None,
     duration_seconds: float | None = None,
     frame_timestamps: list[float] | None = None,
+    frames_have_video: bool = False,
 ) -> str:
     """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
@@ -844,19 +862,47 @@ def generate_label_from_frames(
         draft_label=draft_label,
         duration_seconds=duration_seconds,
         frame_timestamps=frame_timestamps,
+        frames_have_video=frames_have_video,
     )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
     label = _query_vision_models(
-        messages, draft_label, previous_label, list(VISION_MODELS)
+        messages,
+        draft_label,
+        previous_label,
+        list(VISION_MODELS),
+        frames_have_video=frames_have_video,
     )
+    if label == "No Action" and frames_have_video:
+        print("[Pipeline]: All models said No Action. Retrying with a hand-work prompt...")
+        retry_content = _vision_user_content(
+            base64_frames,
+            previous_label=previous_label,
+            draft_label=draft_label,
+            duration_seconds=duration_seconds,
+            frame_timestamps=frame_timestamps,
+            insist_action=True,
+            frames_have_video=frames_have_video,
+        )
+        label = _query_vision_models(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": retry_content},
+            ],
+            draft_label,
+            previous_label,
+            list(VISION_MODELS),
+            frames_have_video=frames_have_video,
+        )
     if label == "No Action" and not draft_label:
         print(
             "[Pipeline]: All models said No Action and there is no usable Atlas draft."
         )
-    return choose_final_label(label, draft_label, previous_label)
+    return choose_final_label(
+        label, draft_label, previous_label, frames_have_video=frames_have_video
+    )
 
 
 if __name__ == "__main__":

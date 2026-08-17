@@ -53,6 +53,10 @@ def process_live_task(
         print("[Pipeline]: No Atlas segment rows found. Open a labeling task and retry.")
         return False
 
+    remember = getattr(bot, "remember_original_drafts", None)
+    if callable(remember):
+        segments = remember(segments)
+
     print(f"\n[Pipeline]: Correcting {len(segments)} existing AI-labeled segments...")
     processed_any = False
 
@@ -89,6 +93,7 @@ def process_live_task(
             draft_label=draft,
             duration_seconds=duration,
             frame_timestamps=[frame[0] for frame in chunk],
+            frames_have_video=getattr(bot, "last_frames_have_video", False),
         )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
