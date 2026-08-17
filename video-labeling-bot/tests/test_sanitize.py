@@ -106,6 +106,8 @@ def test_unknown_work_verbs_with_hands_are_kept():
     )
     gold = "hold mushrooms on board with left hand, chop mushrooms on board with knife in right hand"
     assert sanitize_label(gold) == gold
+    trim = "hold animal with left hand, trim animal with scissors in right hand"
+    assert sanitize_label(trim) == trim
     assert (
         sanitize_label("pick up nail polish bottle with left hand")
         == "pick up nail polish bottle with left hand"

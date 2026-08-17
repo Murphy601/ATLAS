@@ -572,7 +572,7 @@ class VideoBrowserBot:
                     last_bucket = bucket
                 except Exception as exc:
                     print(f"[Browser Bot]: Screenshot skipped ({exc})")
-            if len(frames) >= MAX_FRAMES_PER_SEGMENT and current >= end_seconds - 0.2:
+            if len(frames) >= MAX_FRAMES_PER_SEGMENT - 1:
                 break
             time.sleep(min(0.15, max(interval_seconds / 2, 0.08)))
         self.page.evaluate(
@@ -703,6 +703,7 @@ class VideoBrowserBot:
                 submit_btn = self.page.locator(selector).first
                 if submit_btn.count() == 0:
                     continue
+                submit_btn.scroll_into_view_if_needed()
                 if not submit_btn.is_visible():
                     continue
                 submit_btn.click()

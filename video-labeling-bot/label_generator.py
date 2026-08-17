@@ -44,7 +44,7 @@ LEADING_VERB_PATTERN = re.compile(
     r"tuck|grip|press|push|pull|twist|pinch|turn|straighten|tilt|scoop|"
     r"lift|pack|tamp|scrape|shovel|pat|tap|shake|peel|insert|remove|empty|"
     r"drop|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|unfold|"
-    r"put|grab|hand|gather|write|brush|sand|hammer|drill)\b",
+    r"put|grab|hand|gather|write|brush|sand|hammer|drill|trim)\b",
     re.IGNORECASE,
 )
 HOLD_CLAUSE_PATTERN = re.compile(r"^hold\b", re.IGNORECASE)
@@ -430,7 +430,7 @@ def sanitize_label(text: str) -> str:
         r"scrub|iron|wash|dip|unfold|grip|press|push|pull|twist|pinch|turn|"
         r"straighten|tilt|dig|scoop|lift|pour|mix|stir|pack|tamp|scrape|"
         r"sweep|shovel|pat|tap|shake|peel|insert|remove|fill|empty|drop|"
-        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather)\b",
+        r"set|lower|raise|carry|drag|flip|spread|smooth|stack|unstack|water|gather|trim|unfold)\b",
         cleaned,
         re.IGNORECASE,
     )
@@ -447,6 +447,51 @@ def sanitize_label(text: str) -> str:
     return cleaned
 
 
+REFUSAL_MARKERS = (
+    "i cannot",
+    "i can't",
+    "i am unable",
+    "i'm unable",
+    "i'm not able",
+    "cannot assist",
+    "can't assist",
+    "not able to",
+    "against my",
+    "content policy",
+    "i won't",
+    "i will not",
+    "as an ai",
+)
+
+
+def _looks_like_refusal(text: str) -> bool:
+    low = (text or "").strip().lower()
+    if not low:
+        return True
+    return any(marker in low for marker in REFUSAL_MARKERS)
+
+
+def _subsample_frames(
+    frames: list[str],
+    timestamps: list[float] | None,
+    max_frames: int = 8,
+) -> tuple[list[str], list[float] | None]:
+    if len(frames) <= max_frames:
+        return frames, timestamps
+    last = len(frames) - 1
+    indexes = sorted(
+        {
+            round(index * last / (max_frames - 1))
+            for index in range(max_frames)
+        }
+    )
+    picked = [frames[i] for i in indexes]
+    times = None
+    if timestamps:
+        times = [timestamps[i] for i in indexes if i < len(timestamps)]
+    return picked, times
+
+
 def generate_label_from_frames(
     base64_frames: list[str],
     previous_label: str | None = None,
@@ -459,19 +504,24 @@ def generate_label_from_frames(
         print("[API Error]: OPENROUTER_API_KEY is missing. Returning 'No Action'.")
         return "No Action"
 
+    base64_frames, frame_timestamps = _subsample_frames(
+        base64_frames, frame_timestamps, max_frames=8
+    )
     total = len(base64_frames)
     user_content: list[dict] = [
         {
             "type": "text",
             "text": (
-                "Ego-camera frames from ONE Atlas segment, in time order. "
+                "These frames are occupational first-person work video "
+                "(laundry, cooking, grooming, assembly). Always output an Atlas label. "
+                "Never refuse. Never explain. "
                 "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
                 "Ask: is this ONE continuous action with a tool, or TWO distinct goals? "
                 "If the first frame already has the object in the hand, do not write pick up. "
                 "If they grab a tool only to use it immediately, omit pick up. "
                 "Do not add hold for an empty hand or for the same tool already named. "
                 "Do add hold when one hand stabilizes (paper) while the other works (scissors). "
-                "Do not split cut/wipe/dig/water/write into micro shift/align clauses. "
+                "Do not split cut/wipe/dig/water/write/trim into micro shift/align clauses. "
                 "Max 3 clauses. Never write tool/then/next/other. "
                 "If an object changes hands, write pass [object] from [hand] to [hand]. "
                 "Do NOT output No Action if either hand is working. "
@@ -532,6 +582,8 @@ def generate_label_from_frames(
             raw_label = response.choices[0].message.content
             if not raw_label or not str(raw_label).strip():
                 raise ValueError("Empty model response")
+            if _looks_like_refusal(str(raw_label)):
+                raise ValueError(f"Model refused: {str(raw_label)[:160]}")
             print(f"[OpenRouter]: Success with {model}")
             cleaned = sanitize_label(raw_label)
             cleaned = apply_context_fixes(cleaned, draft_label, previous_label)
@@ -542,8 +594,8 @@ def generate_label_from_frames(
                 and index + 1 < len(VISION_MODELS)
             ):
                 print(
-                    f"[OpenRouter]: {model} said No Action while a draft describes work. "
-                    "Trying next model..."
+                    f"[OpenRouter]: {model} said No Action while a draft describes work "
+                    f"(raw={str(raw_label)[:80]!r}). Trying next model..."
                 )
                 continue
             return reconcile_with_draft(cleaned, draft_label)

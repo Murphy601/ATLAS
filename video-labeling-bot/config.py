@@ -339,6 +339,8 @@ USE_VERBS = {
     "sand",
     "hammer",
     "drill",
+    "trim",
+    "unfold",
 }
 
 MICRO_VERBS = {"shift", "align", "slide", "tilt", "tap", "pat"}
@@ -358,6 +360,8 @@ CONTINUOUS_VERBS = {
     "smooth",
     "gather",
     "sweep",
+    "trim",
+    "unfold",
 }
 
 # AI API Configuration — OpenRouter (paid vision models, cheapest first)
@@ -369,10 +373,9 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Fewer extra-action hallucinations first (Claude 3.5 is not on OpenRouter; Sonnet 4 is).
-# Then cheaper Flash / mini / Qwen fallbacks.
+# Newest Claude Sonnet (vision). Sonnet 4 often returned No Action / refusals.
 DEFAULT_MODELS = [
-    "anthropic/claude-sonnet-4",
+    "anthropic/claude-sonnet-5",
     "google/gemini-2.5-flash",
     "openai/gpt-4o-mini",
     "qwen/qwen2.5-vl-72b-instruct",
@@ -400,8 +403,8 @@ SELECTORS = {
     "start_task": 'button:has-text("Start"), a:has-text("Start"), button:has-text("Open")',
     "next_task": 'button:has-text("Next task"), button:has-text("Next clip"), button:has-text("Next episode"), a:has-text("Next task")',
     "next_generic": 'button:has-text("Next"), a:has-text("Next")',
-    "submit_button": 'button:has-text("Submit practice clip")',
-    "submit_button_generic": 'button[data-slot="button"]:has-text("Submit")',
+    "submit_button": 'button:has-text("Submit practice clip"), button:has-text("Submit clip"), button:has-text("Submit episode")',
+    "submit_button_generic": 'button[data-slot="button"]:has-text("Submit"), button:has-text("Complete")',
     "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button[type="submit"]',
 }
 

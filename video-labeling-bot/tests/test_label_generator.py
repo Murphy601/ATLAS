@@ -5,7 +5,7 @@ from label_generator import generate_label_from_frames
 
 
 def test_default_models_are_cheapest_first():
-    assert DEFAULT_MODELS[0] == "anthropic/claude-sonnet-4"
+    assert DEFAULT_MODELS[0] == "anthropic/claude-sonnet-5"
     assert "google/gemini-2.5-flash" in DEFAULT_MODELS
     assert "openai/gpt-4o-mini" in DEFAULT_MODELS
     assert "qwen/qwen2.5-vl-72b-instruct" in DEFAULT_MODELS

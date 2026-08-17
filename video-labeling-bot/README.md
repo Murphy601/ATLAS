@@ -28,7 +28,7 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 OpenRouter paid vision models, cheapest first, then fallbacks:
 
-1. `anthropic/claude-sonnet-4` (default; fewer extra-action hallucinations)
+1. `anthropic/claude-sonnet-5` (default)
 2. `google/gemini-2.5-flash`
 3. `openai/gpt-4o-mini`
 4. `qwen/qwen2.5-vl-72b-instruct`
