@@ -658,3 +658,66 @@ def test_practice_golds_hose_scissors_stir_and_fridge():
     assert sanitize_label(
         "pick up red bottle with right hand, close refrigerator door with left hand"
     ) == "pick up red bottle with right hand, pass red bottle from right hand to left hand"
+
+
+def test_fills_missing_object_noun_and_rejects_bare_verb():
+    from label_generator import validate_clause_syntax
+
+    assert not validate_clause_syntax("pick up with right hand")
+    assert validate_clause_syntax("pick up wrench with right hand")
+    assert sanitize_label(
+        "pick up with right hand, place wrench on table with right hand"
+    ) == "pick up wrench with right hand, place wrench on table with right hand"
+
+
+def test_inserts_pass_when_object_changes_hands():
+    assert sanitize_label(
+        "pick up wrench with left hand, place wrench on table with right hand"
+    ) == (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
+    assert sanitize_label(
+        "pick up wrench with right hand, place wrench on table with right hand"
+    ) == "pick up wrench with right hand, place wrench on table with right hand"
+
+
+def test_keeps_hold_scissors_instead_of_pick_up_or_copied_align():
+    from label_generator import choose_final_label
+
+    hold = "hold papers with left hand, hold scissors with right hand"
+    assert choose_final_label(
+        "hold papers with left hand, pick up scissors with right hand",
+        hold,
+        frames_have_video=True,
+    ) == hold
+    assert choose_final_label(
+        "hold scissors with right hand, align papers with both hands",
+        hold,
+        previous_label="hold scissors with right hand, align papers with both hands",
+        frames_have_video=True,
+    ) == hold
+
+
+def test_completes_bucket_hoe_and_keeps_draft_tools():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    assert apply_context_fixes(
+        "place bucket on ground with left hand"
+    ) == "place bucket on floor with left hand, pick up hoe with right hand"
+    assert apply_context_fixes(
+        "dig soil on ground with both hands",
+        previous_label="dig soil with hoe in right hand",
+    ) == "place hoe on ground with right hand, gather soil with both hands"
+    assert sanitize_label(
+        "dig soil on ground with right hand, pick up soil with left hand"
+    ) == "dig soil with hoe in right hand"
+    assert apply_context_fixes(
+        "dig soil with bucket in right hand",
+        previous_label="place bucket on floor with left hand, pick up hoe with right hand",
+    ) == "dig soil with hoe in right hand"
+    assert choose_final_label(
+        "pick up wrench from toolbox with right hand, place wrench on table with right hand",
+        "pick up metal pin and place metal pin on table with right hand",
+        frames_have_video=True,
+    ) == "pick up metal pin with right hand, place metal pin on table with right hand"

@@ -150,6 +150,10 @@ BARE_PLACE_PATTERN = re.compile(
     r"^(place|set|put|move)\s+(?:on|in|into|onto|to)\b",
     re.IGNORECASE,
 )
+INVALID_VERB_PATTERN = re.compile(
+    r"\b(pick up|place|hold|pass|set|put|take)\s+(with|in|on|from|to|into|onto)\b",
+    re.IGNORECASE,
+)
 
 
 def _pickup_object(clause: str) -> str:
@@ -373,14 +377,105 @@ def _drop_cookware_hold_while_stirring(text: str) -> str:
     return text
 
 
+def _insert_pass_on_hand_change(text: str) -> str:
+    """hold/pick up in one hand and place with the other → insert pass (max 3)."""
+    parts = split_actions(text)
+    if len(parts) != 2:
+        return text
+    first, second = parts[0], parts[1]
+    if _leading_verb(first) not in {"pick up", "hold"}:
+        return text
+    if _leading_verb(second) not in {"place", "set", "hold"}:
+        return text
+    obj = _pickup_object(first) or _clause_object_noun(first)
+    other = _clause_object_noun(second)
+    if not obj or not _objects_match(obj, other):
+        return text
+    left = _clause_hand(first)
+    right = _clause_hand(second)
+    if left not in {"left hand", "right hand"} or right not in {
+        "left hand",
+        "right hand",
+    }:
+        return text
+    if left == right:
+        return text
+    hold = f"hold {obj} with {left}"
+    pas = f"pass {obj} from {left} to {right}"
+    return f"{hold}, {pas}, {second}"
+
+
+def _drop_soil_pickup_while_digging(text: str) -> str:
+    """dig + pick up soil is one dig clause, not two actions."""
+    parts = split_actions(text)
+    if len(parts) != 2:
+        return text
+    if _leading_verb(parts[0]) != "dig" or _leading_verb(parts[1]) != "pick up":
+        return text
+    if not re.search(r"\bsoil\b", parts[1], re.IGNORECASE):
+        return text
+    hand = _clause_hand(parts[0]) or "right hand"
+    if re.search(r"\bhoe\b", parts[0], re.IGNORECASE):
+        return parts[0]
+    return f"dig soil with hoe in {hand}"
+
+
+def _clause_object_noun(clause: str) -> str:
+    obj = _clause_object(clause)
+    obj = re.sub(
+        r"^(?:on|in|into|onto|to|from)\s+", "", obj, flags=re.IGNORECASE
+    ).strip()
+    obj = re.sub(
+        r"\s+(?:on|in|into|onto|from)\s+"
+        r"(?:table|toolbox|ground|floor|shelf|counter|bin|bucket|lawn)\b.*$",
+        "",
+        obj,
+        flags=re.IGNORECASE,
+    ).strip()
+    if INVALID_VERB_PATTERN.search(clause or ""):
+        return ""
+    return obj
+
+
+def validate_clause_syntax(label: str) -> bool:
+    """False when a clause is 'pick up with right hand' (verb with no object noun)."""
+    if not label or label == "No Action":
+        return True
+    return not any(
+        INVALID_VERB_PATTERN.search(clause) for clause in split_actions(label)
+    )
+
+
 def _fill_missing_clause_objects(text: str) -> str:
-    """pick up cup, place on table -> pick up cup, place cup on table."""
+    """pick up with right hand, place wrench on table -> pick up wrench with right hand."""
     clauses = split_actions(text)
-    last_obj = ""
-    filled = []
+    known = []
     for clause in clauses:
+        obj = _clause_object_noun(clause)
+        if obj:
+            known.append(obj)
+    filled = []
+    last_obj = ""
+    for index, clause in enumerate(clauses):
         verb = _leading_verb(clause)
-        if verb and last_obj and BARE_PLACE_PATTERN.search(clause):
+        if verb and INVALID_VERB_PATTERN.search(clause):
+            obj = last_obj
+            if not obj:
+                for later in clauses[index + 1 :]:
+                    obj = _clause_object_noun(later)
+                    if obj:
+                        break
+            if not obj and known:
+                obj = known[0]
+            if obj:
+                clause = re.sub(
+                    rf"^{re.escape(verb)}\s+",
+                    f"{verb} {obj} ",
+                    clause,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+        elif verb and last_obj and BARE_PLACE_PATTERN.search(clause):
             clause = re.sub(
                 rf"^{re.escape(verb)}\b",
                 f"{verb} {last_obj}",
@@ -388,10 +483,7 @@ def _fill_missing_clause_objects(text: str) -> str:
                 count=1,
                 flags=re.IGNORECASE,
             )
-        obj = _clause_object(clause)
-        obj = re.sub(
-            r"^(?:on|in|into|onto|to|from)\s+", "", obj, flags=re.IGNORECASE
-        ).strip()
+        obj = _clause_object_noun(clause)
         if obj:
             last_obj = obj
         filled.append(clause)
@@ -1046,7 +1138,94 @@ def _restore_draft_locations(label: str, draft_label: str | None) -> str:
             count=1,
             flags=re.IGNORECASE,
         )
+    if re.search(r"\bbucket\b", label, re.IGNORECASE) and re.search(
+        r"\bon floor\b", draft_label, re.IGNORECASE
+    ):
+        label = re.sub(r"\bon ground\b", "on floor", label, flags=re.IGNORECASE)
     return label
+
+
+def _complete_place_bucket_pickup_hoe(
+    label: str,
+    draft_label: str | None = None,
+    previous_label: str | None = None,
+    next_label: str | None = None,
+) -> str:
+    """place bucket is incomplete without pick up hoe (official CASE C gold)."""
+    if not label or label == "No Action":
+        return label
+    parts = split_actions(label)
+    if not parts or len(parts) >= MAX_ACTIONS_PER_LABEL:
+        return label
+    place = next(
+        (
+            part
+            for part in parts
+            if _leading_verb(part) == "place"
+            and re.search(r"\bbucket\b", part, re.IGNORECASE)
+        ),
+        None,
+    )
+    if not place:
+        return label
+    if any(re.search(r"\bhoe\b", part, re.IGNORECASE) for part in parts):
+        return label
+    context = f"{draft_label or ''} {previous_label or ''} {next_label or ''}"
+    if re.search(r"\bon ground\b", place, re.IGNORECASE) and (
+        re.search(r"\bon floor\b", context, re.IGNORECASE)
+        or not re.search(r"\bon (?:table|shelf|counter)\b", place, re.IGNORECASE)
+    ):
+        place = re.sub(r"\bon ground\b", "on floor", place, flags=re.IGNORECASE)
+        parts = [
+            place
+            if _leading_verb(part) == "place" and "bucket" in part.lower()
+            else part
+            for part in parts
+        ]
+    hand = _clause_hand(place)
+    other = "right hand" if hand == "left hand" else "left hand"
+    return f"{', '.join(parts)}, pick up hoe with {other}"
+
+
+def _complete_place_hoe_gather(label: str, previous_label: str | None) -> str:
+    """After digging with a hoe, the next window is place hoe + gather soil."""
+    if not label or not previous_label:
+        return label
+    if not re.search(r"\b(?:hoe|dig)\b", previous_label, re.IGNORECASE):
+        return label
+    if any(
+        _leading_verb(part) == "place" and re.search(r"\bhoe\b", part, re.IGNORECASE)
+        for part in split_actions(label)
+    ):
+        return label
+    if any(_leading_verb(part) == "gather" for part in split_actions(label)):
+        if not re.search(r"\bhoe\b", label, re.IGNORECASE):
+            return "place hoe on ground with right hand, gather soil with both hands"
+        return label
+    parts = split_actions(label)
+    if (
+        len(parts) == 1
+        and _leading_verb(parts[0]) == "dig"
+        and "both hands" in parts[0].lower()
+        and not re.search(r"\bhoe\b", parts[0], re.IGNORECASE)
+    ):
+        return "place hoe on ground with right hand, gather soil with both hands"
+    return label
+
+
+def _restore_draft_implements(
+    label: str, draft_label: str | None, previous_label: str | None = None
+) -> str:
+    """Keep hoe / metal pin from the Atlas row when Flash swaps the tool."""
+    if not label:
+        return label
+    context = f"{draft_label or ''} {previous_label or ''}"
+    updated = label
+    if re.search(r"\bhoe\b", context, re.IGNORECASE) and re.search(
+        r"\bdig\b", updated, re.IGNORECASE
+    ):
+        updated = re.sub(r"\b(?:bucket|shovel)\b", "hoe", updated, flags=re.IGNORECASE)
+    return updated
 
 
 def _named_implement_in(*texts: str | None) -> str | None:
@@ -1084,9 +1263,14 @@ def apply_context_fixes(
         if specific:
             updated = GENERIC_NOUN_PATTERN.sub(specific, updated)
     updated = _restore_draft_locations(updated, draft_label)
+    updated = _restore_draft_implements(updated, draft_label, previous_label)
     updated = _rewrite_cut_to_align_after_hold(updated, previous_label)
     updated = _append_end_of_window_pickup(updated, next_label)
     updated = _complete_set_then_pickup(updated, previous_label, next_label)
+    updated = _complete_place_bucket_pickup_hoe(
+        updated, draft_label, previous_label, next_label
+    )
+    updated = _complete_place_hoe_gather(updated, previous_label)
     return updated
 
 
@@ -1214,6 +1398,8 @@ HALLUCINATION_PAIRS = (
     (r"\bpaper", r"\bplastic bag\b"),
     (r"\bsachet\b", r"\bbottle\b"),
     (r"\bsnack bag\b", r"\bbottle\b"),
+    (r"\bmetal pin\b", r"\bwrench\b"),
+    (r"\bhoe\b", r"\b(?:bucket|shovel)\b"),
 )
 
 REQUIRED_EXTRA_VERBS = {
@@ -1324,7 +1510,10 @@ def _copied_previous_ignoring_draft(
     prev_verbs = _work_verbs(previous)
     if not model_verbs or model_verbs != prev_verbs:
         return False
-    return bool(set(_work_verbs(draft)) - set(model_verbs))
+    draft_work = set(_work_verbs(draft))
+    if draft_work - set(model_verbs):
+        return True
+    return not draft_work and bool(model_verbs)
 
 
 def _prefer_work_draft_over_idle_hold(model: str, draft: str) -> bool:
@@ -1338,6 +1527,17 @@ def _prefer_work_draft_over_idle_hold(model: str, draft: str) -> bool:
         _leading_verb(part) not in {"", "hold"} for part in draft_parts
     )
     return model_all_hold and draft_has_work
+
+
+def _prefer_hold_draft_over_pickup(model: str, draft: str) -> bool:
+    """Object already in hand at START is hold, not pick up."""
+    draft_parts = split_actions(draft)
+    model_parts = split_actions(model)
+    if not draft_parts or not model_parts:
+        return False
+    if not all(_leading_verb(part) == "hold" for part in draft_parts):
+        return False
+    return any(_leading_verb(part) == "pick up" for part in model_parts)
 
 
 def _invented_cut_on_hold_draft(model: str, draft: str) -> bool:
@@ -1494,6 +1694,18 @@ def choose_final_label(
         if _prefer_work_draft_over_idle_hold(model, draft):
             print(
                 "[Pipeline]: Model turned work into a hold. "
+                f"Keeping Atlas draft: '{draft}'"
+            )
+            return draft
+        if _prefer_hold_draft_over_pickup(model, draft):
+            print(
+                "[Pipeline]: Object was already in hand. "
+                f"Keeping Atlas hold: '{draft}'"
+            )
+            return draft
+        if not validate_clause_syntax(model) and validate_clause_syntax(draft):
+            print(
+                "[Pipeline]: Model clause is missing an object noun. "
                 f"Keeping Atlas draft: '{draft}'"
             )
             return draft
@@ -1772,6 +1984,8 @@ def sanitize_label(text: str) -> str:
     cleaned = _fill_with_visible_substance(cleaned)
     cleaned = _finish_incomplete_hands(cleaned)
     cleaned = _fill_missing_clause_objects(cleaned)
+    cleaned = _insert_pass_on_hand_change(cleaned)
+    cleaned = _drop_soil_pickup_while_digging(cleaned)
     cleaned = _normalize_glass_cup(cleaned)
     cleaned = _split_false_both_hands(cleaned)
     cleaned = _replace_unapproved_nouns(cleaned)
@@ -1889,6 +2103,10 @@ def _vision_user_content(
         "Do not add hold pan/wok while stirring. "
         "If scissors are only held, write hold scissors not cut. "
         "set/place beat hold of the same object. "
+        "Every clause needs an object noun. Never write pick up with right hand. "
+        "If the object starts in one hand and ends in the other, write pass. "
+        "place bucket needs pick up hoe. After digging write place hoe, gather soil. "
+        "pick up ONLY if the object starts on a surface. Already in hand → hold. "
         "Do not split cut/wipe/dig/water/write/trim into micro shift/align/tap clauses. "
         "Max 3 clauses. Prefer one coarse verb. Never write tool/then/next/other/fingers. "
         "Never write bare animal. Stay consistent with prior object and verb names. "

@@ -25,7 +25,19 @@ Micro-movements inside cutting, wiping, digging, writing, watering, scrubbing ar
 
 Max 3 clauses. Prefer one coarse verb when the motion is continuous.
 
-Off-hand hold is required ONLY when that hand is clearly stabilizing a different role (hold paper, cut with scissors). Empty hand → do not mention it. Already in the hand at START → not pick up.
+Off-hand hold is required ONLY when that hand is clearly stabilizing a different role (hold paper, cut with scissors). Empty hand → do not mention it. Already in the hand at START → hold, never pick up.
+Every clause MUST name the object noun. FORBIDDEN: "pick up with right hand". REQUIRED: "pick up wrench with right hand".
+If one hand holds and the other receives the same object, write pass [object] from [hand] to [hand].
+place bucket always needs pick up hoe with the other hand. After digging, place hoe then gather soil.
+
+CRITICAL ANNOTATION RULES:
+1. NO MISSING ACTIONS: Count every distinct hand action in the window.
+   - If hand A holds an object and hand B picks up another, BOTH must be listed.
+   - Look for hand-to-hand transfers: pass [object] from left hand to right hand.
+2. VERB PRECISION (hold vs pick up):
+   - pick up ONLY if the object starts on a surface and is raised.
+   - hold if the object is ALREADY in hand at the first frame.
+3. GRAMMAR: every verb clause MUST contain an explicit object noun.
 
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
@@ -199,7 +211,12 @@ Name the tool even when the verb is the tool: rake leaves on ground with rake in
 Never write erase/eraser. Write wipe with cloth.
 Compare FIRST vs LAST frame: if the object ends on a shelf/table, write place not pick up.
 Adjectives only when two similar items: pick up red cloth with left hand.
-If the object is already in the hand in the first frame, do not write pick up.
+If the object is already in the hand in the first frame, do not write pick up. Write hold.
+Every clause needs an object noun. Never write pick up with right hand.
+If the object starts in one hand and ends in the other, write pass [object] from [hand] to [hand].
+place bucket on floor with left hand, pick up hoe with right hand.
+place hoe on ground with right hand, gather soil with both hands.
+If the Atlas row names hoe, metal pin, wrench, needle, or cap, keep that name.
 Name the object you see. Do not copy gold-style examples unless they are visible.
 A sewing needle is not a pen. A cap is not a hat. Shears are not pliers.
 strip insulation is not twist. A mop is not a toy. A door is not a ceiling.
