@@ -23,6 +23,7 @@ from config import (
     OPENROUTER_HEADERS,
     OPENROUTER_MAX_ROUTE_FALLBACKS,
     PLURAL_ONLY_TOOLS,
+    PROMPT_EXAMPLE_LABELS,
     SEMICOLON_PATTERN,
     SLASH_PATTERN,
     SYSTEM_PROMPT,
@@ -214,6 +215,12 @@ def usable_draft(label: str | None) -> str | None:
     if not text or text.casefold() == "no action":
         return None
     return text
+
+
+def _is_prompt_example(label: str | None) -> bool:
+    """True when the model regurgitated a GOLD EXAMPLE instead of the video."""
+    text = (label or "").strip().casefold()
+    return bool(text) and text in {item.casefold() for item in PROMPT_EXAMPLE_LABELS}
 
 
 def is_generic_placeholder_label(label: str | None) -> bool:
@@ -683,15 +690,14 @@ def _vision_user_content(
         "Do not reuse an example from the instructions if it is not in the pictures. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
         "Do NOT output No Action if either hand holds an object or a tool. "
-        "If the pictures are a black rectangle, a timeline, or a video-player UI, "
-        "output No Action — do not guess stuffed animal or scissors. "
+        "Never copy a gold example (dough, hose, wrench, scissors) unless it is in the pictures. "
         "Output only the raw label or No Action."
     )
     if insist_action:
         intro = (
             "These frames show first-person HAND WORK. Do not output No Action. "
             "Name the object you actually see in the pictures. "
-            "Do not write stuffed animal, scissors, or any example unless it is visible. "
+            "Do not write stuffed animal, scissors, dough, hose, or any example unless it is visible. "
             "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. "
             "Atlas syntax: verb + object + with [hand]. Never refuse. Never explain. "
             "Output only the raw label."
@@ -724,7 +730,10 @@ def _vision_user_content(
         user_content.append(
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{frame}"},
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{frame}",
+                    "detail": "high",
+                },
             }
         )
 
@@ -783,6 +792,12 @@ def _query_vision_models(
                     print(
                         f"[OpenRouter]: {model} said No Action. Trying next model..."
                     )
+                continue
+            if _is_prompt_example(cleaned):
+                print(
+                    f"[OpenRouter]: {model} copied a prompt example "
+                    f"({cleaned!r}). Trying next model..."
+                )
                 continue
             if is_generic_placeholder_label(cleaned):
                 last_generic = cleaned
@@ -854,7 +869,7 @@ def generate_label_from_frames(
     previous_label = usable_draft(previous_label)
 
     base64_frames, frame_timestamps = _subsample_frames(
-        base64_frames, frame_timestamps, max_frames=8
+        base64_frames, frame_timestamps, max_frames=5
     )
     user_content = _vision_user_content(
         base64_frames,

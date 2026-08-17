@@ -21,10 +21,24 @@ DEBUG_FRAMES_DIR = Path("debug_frames")
 ORIGINAL_DRAFTS_DIR = Path("original_drafts")
 # Center-crop std/mean below this is a black GPU hole (player chrome can still look "ok").
 VIDEO_CONTENT_SCORE_MIN = 22.0
+VISION_JPEG_MAX_SIDE = 768
+SEEK_SETTLE_HEADED = 0.8
+SEEK_SETTLE_HEADLESS = 0.05
+WINDOW_SLACK_SECONDS = 0.6
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["continue_practice"]}, '
     f'{SELECTORS["segment_input"]}'
 )
+
+
+def frame_in_segment_window(
+    timestamp: float,
+    start_seconds: float,
+    duration: float,
+    slack: float = WINDOW_SLACK_SECONDS,
+) -> bool:
+    """False when a captured currentTime is from a different segment (e.g. 45s in a 54–59s window)."""
+    return start_seconds - slack <= float(timestamp) <= start_seconds + duration + slack
 
 
 def sample_segment_timestamps(
@@ -358,18 +372,40 @@ class VideoBrowserBot:
         return "manual"
 
     def play_segment_clip(self, segment_number: int):
-        """Clicks 'Play segment N' and lets the clip run at normal speed."""
-        exact = self.page.locator(
-            f'button:has-text("Play segment {segment_number}")'
+        """Clicks 'Play segment N' (scrolls the row into view) then we seek/pause to capture."""
+        row_input = self.page.locator(
+            f'input[aria-label="Segment {segment_number} label"]'
         ).first
         try:
-            if exact.count() > 0 and exact.is_visible():
-                exact.scroll_into_view_if_needed()
-                exact.click(timeout=2000)
-                print(f"[Browser Bot]: Playing segment {segment_number} at 1x.")
-                return True
+            if row_input.count() > 0:
+                row_input.scroll_into_view_if_needed()
         except Exception:
             pass
+
+        candidates = [
+            self.page.locator(
+                f'button:has-text("Play segment {segment_number}")'
+            ).first
+        ]
+        numbered = self.page.locator(SELECTORS["play_segment"])
+        if numbered.count() >= segment_number:
+            candidates.append(numbered.nth(segment_number - 1))
+
+        for target in candidates:
+            try:
+                if target.count() == 0:
+                    continue
+                target.scroll_into_view_if_needed()
+                target.click(timeout=2000, force=True)
+                print(f"[Browser Bot]: Playing segment {segment_number} at 1x.")
+                time.sleep(0.25)
+                return True
+            except Exception:
+                continue
+        print(
+            f"[Browser Bot]: Play segment {segment_number} was not clicked. "
+            "Seeking the video element instead."
+        )
         return False
 
     def _play_from(self, start_seconds: float):
@@ -587,11 +623,32 @@ class VideoBrowserBot:
             )
         return restored
 
+    def _video_duration(self) -> float:
+        try:
+            value = self.page.evaluate(
+                """() => {
+                    const videos = Array.from(document.querySelectorAll('video'));
+                    const video = videos[0];
+                    return video && Number.isFinite(video.duration) ? video.duration : 0;
+                }"""
+            )
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
     def _seek_video(self, seconds: float):
+        """Pause, seek, wait for seeked, then wait for the HTML5 frame to decode."""
         self.page.evaluate(
-            """async (seconds) => {
-                const video = document.querySelector('video');
+            """async ({ seconds, retries, waitMs }) => {
+                const videos = Array.from(document.querySelectorAll('video'));
+                const video = videos.reduce((best, el) => {
+                    if (!best) return el;
+                    const a = best.getBoundingClientRect();
+                    const b = el.getBoundingClientRect();
+                    return (b.width * b.height) > (a.width * a.height) ? el : best;
+                }, null);
                 if (!video) throw new Error('No video element on page');
+                video.scrollIntoView({ block: 'center', inline: 'nearest' });
                 if (video.readyState < 1) {
                     await new Promise((resolve) => {
                         video.addEventListener('loadedmetadata', resolve, { once: true });
@@ -605,24 +662,35 @@ class VideoBrowserBot:
                 const target = Number.isFinite(duration)
                     ? Math.min(Math.max(0, seconds), Math.max(0, duration - 0.05))
                     : Math.max(0, seconds);
-                try {
-                    video.currentTime = target;
-                } catch (error) {
-                    return;
+                const maxTries = Math.max(1, retries);
+                for (let attempt = 0; attempt < maxTries; attempt += 1) {
+                    try {
+                        video.currentTime = target;
+                    } catch (error) {
+                        return;
+                    }
+                    await new Promise((resolve) => {
+                        const timeout = setTimeout(resolve, waitMs);
+                        video.addEventListener('seeked', () => {
+                            clearTimeout(timeout);
+                            resolve();
+                        }, { once: true });
+                    });
+                    if (Math.abs((video.currentTime || 0) - target) <= 0.35) {
+                        break;
+                    }
                 }
-                await new Promise((resolve) => {
-                    const timeout = setTimeout(resolve, 1200);
-                    const done = () => {
-                        clearTimeout(timeout);
-                        resolve();
-                    };
-                    video.addEventListener('seeked', done, { once: true });
-                });
+                try {
+                    video.pause();
+                } catch (error) {}
             }""",
-            seconds,
+            {
+                "seconds": seconds,
+                "retries": 1 if self.headless else 6,
+                "waitMs": 200 if self.headless else 400,
+            },
         )
-        if not self.headless:
-            time.sleep(0.5)
+        time.sleep(SEEK_SETTLE_HEADLESS if self.headless else SEEK_SETTLE_HEADED)
 
     def _wait_for_decoded_frame(self, timeout: float = 1.2) -> bool:
         deadline = time.time() + timeout
@@ -725,6 +793,15 @@ class VideoBrowserBot:
     def _screenshot_video_base64(self) -> str:
         """Prefer a decoded canvas copy; fall back to an inset compositor screenshot."""
         self._force_video_into_compositor()
+        try:
+            self.page.evaluate(
+                """() => {
+                    const video = document.querySelector('video');
+                    if (video) video.scrollIntoView({ block: 'center', inline: 'nearest' });
+                }"""
+            )
+        except Exception:
+            pass
         candidates: list[bytes] = []
         canvas = self._canvas_frame_jpeg()
         if canvas:
@@ -744,7 +821,9 @@ class VideoBrowserBot:
             pass
         if not candidates:
             raise RuntimeError("Could not screenshot the video player")
-        image_bytes = max(candidates, key=jpeg_video_score)
+        image_bytes = jpeg_downscale(
+            max(candidates, key=jpeg_video_score), VISION_JPEG_MAX_SIDE
+        )
         self._last_frame_blank = not jpeg_has_video_content(image_bytes)
         if self._last_frame_blank and not self._warned_blank_frames:
             print(
@@ -761,20 +840,24 @@ class VideoBrowserBot:
         segment_duration: float = 3.0,
         interval_seconds: float = 1.0,
     ) -> list[tuple[float, str]]:
-        """Watch the clip at 1x in headed Chrome; seek only in headless tests.
-
-        Always includes the START and END of the window, targeting 5–10 frames.
-        """
+        """Seek, pause, and screenshot. Do not grab frames from a different segment."""
         if segment_duration <= 0:
             segment_duration = 0.5
-        if not self.headless:
-            frames = self._capture_realtime(
-                start_seconds, segment_duration, interval_seconds
+        frames = self._capture_by_seek(
+            start_seconds, segment_duration, interval_seconds
+        )
+        in_window = [
+            item
+            for item in frames
+            if frame_in_segment_window(item[0], start_seconds, segment_duration)
+        ]
+        dropped = len(frames) - len(in_window)
+        if dropped:
+            print(
+                f"[Browser Bot]: Dropped {dropped} out-of-sync frame(s) "
+                f"outside {start_seconds:.2f}s–{start_seconds + segment_duration:.2f}s."
             )
-        else:
-            frames = self._capture_by_seek(
-                start_seconds, segment_duration, interval_seconds
-            )
+        frames = in_window or frames
         self._last_frames_have_video = False
         for _timestamp, payload in frames:
             try:
@@ -880,6 +963,13 @@ class VideoBrowserBot:
         segment_duration: float,
         interval_seconds: float,
     ) -> list[tuple[float, str]]:
+        end_seconds = start_seconds + segment_duration
+        print(
+            f"[Browser Bot]: Seeking {start_seconds:.2f}s → {end_seconds:.2f}s, "
+            "pausing for decode..."
+        )
+        duration = self._video_duration()
+        can_verify = duration > 1.0
         frames: list[tuple[float, str]] = []
         for timestamp in sample_segment_timestamps(
             start_seconds,
@@ -887,11 +977,46 @@ class VideoBrowserBot:
             interval_seconds,
         ):
             self._seek_video(timestamp)
-            frames.append((timestamp, self._screenshot_video_base64()))
+            actual = self._video_time()
+            if can_verify and abs(actual - timestamp) > 0.75:
+                print(
+                    f"[Browser Bot]: Player at {actual:.2f}s after seek to "
+                    f"{timestamp:.2f}s. Retrying..."
+                )
+                self._seek_video(timestamp)
+                actual = self._video_time()
+            if can_verify and abs(actual - timestamp) > 1.25:
+                print(
+                    f"[Browser Bot]: Dropping out-of-sync frame "
+                    f"(wanted {timestamp:.2f}s, got {actual:.2f}s)."
+                )
+                continue
+            stamp = actual if can_verify else timestamp
+            if not frame_in_segment_window(stamp, start_seconds, segment_duration):
+                print(
+                    f"[Browser Bot]: Dropping frame at {stamp:.2f}s; "
+                    "not in this segment window."
+                )
+                continue
+            payload = self._screenshot_video_base64()
+            if not frames:
+                width, height = jpeg_dimensions(base64.b64decode(payload))
+                print(
+                    f"[Browser Bot]: First frame {width}x{height} at {stamp:.2f}s "
+                    f"(wanted {timestamp:.2f}s)."
+                )
+            frames.append((stamp, payload))
         if not frames:
             self._seek_video(start_seconds)
-            frames.append((start_seconds, self._screenshot_video_base64()))
-        return frames
+            stamp = self._video_time() if can_verify else start_seconds
+            frames.append((stamp, self._screenshot_video_base64()))
+        print(f"[Browser Bot]: Captured {len(frames)} seek-paused frame(s).")
+        if self._last_frame_blank:
+            print(
+                "[Browser Bot]: WARNING: those frames look black or like player UI. "
+                "Labels will be No Action unless a real draft is kept."
+            )
+        return frames[:MAX_FRAMES_PER_SEGMENT]
 
     def capture_live_frames(
         self,
@@ -1053,6 +1178,35 @@ def _center_gray(image: np.ndarray) -> np.ndarray:
     if crop.ndim == 3:
         return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     return crop
+
+
+def jpeg_downscale(image_bytes: bytes, max_side: int = VISION_JPEG_MAX_SIDE) -> bytes:
+    """Shrink large player screenshots so OpenRouter actually receives the pixels."""
+    if not image_bytes:
+        return image_bytes
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None or image.size == 0:
+        return image_bytes
+    height, width = image.shape[:2]
+    longest = max(height, width)
+    if longest <= max_side:
+        return image_bytes
+    scale = max_side / float(longest)
+    resized = cv2.resize(
+        image,
+        (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    ok, buf = cv2.imencode(".jpg", resized, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+    return buf.tobytes() if ok else image_bytes
+
+
+def jpeg_dimensions(image_bytes: bytes) -> tuple[int, int]:
+    image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None or image.size == 0:
+        return (0, 0)
+    height, width = image.shape[:2]
+    return (int(width), int(height))
 
 
 def jpeg_video_score(image_bytes: bytes) -> float:

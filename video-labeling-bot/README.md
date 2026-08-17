@@ -31,12 +31,12 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 
 ## Models
 
-OpenRouter paid vision models currently listed on OpenRouter (Claude first):
+OpenRouter paid vision models currently listed on OpenRouter (multimodal first):
 
-1. `anthropic/claude-sonnet-4.6` — `anthropic/claude-3.7-sonnet` is not in the catalog
-2. `google/gemini-2.5-flash`
+1. `google/gemini-2.5-flash`
+2. `openai/gpt-4o`
 3. `qwen/qwen2.5-vl-72b-instruct`
-4. `google/gemini-2.5-pro` — `google/gemini-1.5-pro` is not in the catalog
+4. `google/gemini-2.5-pro` — `google/gemini-1.5-pro` and `anthropic/claude-3.7-sonnet` 404 on OpenRouter. `anthropic/claude-sonnet-4.6` is a live slug (logs show Success) but it kept answering No Action, so it is not first.
 
 `No Action` in a segment field is ignored. **Draft-first when frames are empty:** a specific Atlas draft is kept unless the model names the same objects and does not add extra clauses. **When debug frames actually show hands**, the model wins if it names different objects — leftover stuffed-animal text must not freeze a dish clip.
 

@@ -6,8 +6,8 @@ from label_generator import generate_label_from_frames
 
 def test_default_models_use_live_openrouter_vision_slugs():
     assert DEFAULT_MODELS == [
-        "anthropic/claude-sonnet-4.6",
         "google/gemini-2.5-flash",
+        "openai/gpt-4o",
         "qwen/qwen2.5-vl-72b-instruct",
         "google/gemini-2.5-pro",
     ]
@@ -350,3 +350,36 @@ def test_uses_model_when_frames_show_a_different_scene(monkeypatch):
         draft_label=leftover,
         frames_have_video=True,
     ) == "wipe glass plate with cloth in right hand"
+
+
+def test_skips_copied_prompt_example(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    calls = []
+
+    def fake_create(**kwargs):
+        calls.append(kwargs["model"])
+        if kwargs["model"] == VISION_MODELS[0]:
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content="work dough with both hands")
+                    )
+                ]
+            )
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="wipe glass plate with cloth in right hand"
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"],
+        frames_have_video=True,
+    ) == "wipe glass plate with cloth in right hand"
+    assert calls[0] == VISION_MODELS[0]
+    assert calls[1] == VISION_MODELS[1]

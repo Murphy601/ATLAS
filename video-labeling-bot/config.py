@@ -115,6 +115,7 @@ CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
 * Attach every verb to an object: not "pick up, place on table" — "pick up cup, place cup on table".
 
 ### GOLD EXAMPLES
+* GOLD EXAMPLES are FORMAT ONLY. Never output one of them unless those exact objects are in the frames.
 * pick up nail polish bottle with left hand
 * place nail polish bottle in box with left hand
 * hold paper with left hand, cut paper with scissors in right hand
@@ -303,6 +304,15 @@ NAMED_IMPLEMENTS = (
 
 GENERIC_NOUNS = ("tool", "object", "utensil", "item")
 
+# Coarse FORMAT examples models copy when they cannot see the video (see Segment 3 log).
+PROMPT_EXAMPLE_LABELS = frozenset(
+    {
+        "work dough with both hands",
+        "scrub pan with brush",
+        "iron shirt",
+    }
+)
+
 MAX_ACTIONS_PER_LABEL = 3
 
 # Goal-use verbs: pick up of the same tool right before these is instrumental (extra action).
@@ -374,11 +384,12 @@ OPENROUTER_HEADERS = {
 LABEL_PROVIDER = os.getenv("LABEL_PROVIDER", "openrouter")
 TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 
-# Claude 3.7 Sonnet and Gemini 1.5 Pro are not in the current OpenRouter catalog
-# (same class of miss as anthropic/claude-3.5-sonnet). Use live vision slugs.
+# Claude 3.7 Sonnet and Gemini 1.5 Pro 404 on OpenRouter. Logs already show
+# Success with anthropic/claude-sonnet-4.6; it is a live vision slug.
+# Put Flash/GPT-4o first so a No Action habit from Claude does not burn four calls.
 DEFAULT_MODELS = [
-    "anthropic/claude-sonnet-4.6",
     "google/gemini-2.5-flash",
+    "openai/gpt-4o",
     "qwen/qwen2.5-vl-72b-instruct",
     "google/gemini-2.5-pro",
 ]

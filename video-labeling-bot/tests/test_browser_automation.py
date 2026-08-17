@@ -2,7 +2,7 @@ from pathlib import Path
 
 import cv2
 
-from browser_automation import VideoBrowserBot, sample_segment_timestamps
+from browser_automation import VideoBrowserBot, frame_in_segment_window, sample_segment_timestamps
 
 FIXTURE = Path(__file__).parent / "fixtures" / "annotation_portal.html"
 
@@ -251,6 +251,12 @@ def test_repeated_copy_drafts_ignores_leftover_stuffed_animal_rows():
         ),
     ]
     assert not _repeated_copy_drafts(laundry)
+
+
+def test_frame_in_segment_window_rejects_previous_segment_timestamp():
+    assert not frame_in_segment_window(45.40, 54.28, 4.99)
+    assert frame_in_segment_window(54.76, 54.28, 4.99)
+    assert frame_in_segment_window(59.27, 54.28, 4.99)
 
 
 def test_sample_segment_timestamps_includes_start_and_end():
