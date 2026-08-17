@@ -31,13 +31,18 @@ class VideoBrowserBot:
         self.page = None
 
     def start(self, url: str):
-        """Launches Chromium browser using persistent browser session state."""
+        """Launches the user's real Google Chrome with a persistent login profile.
+
+        Playwright's bundled Chromium is flagged by Cloudflare Turnstile and shows
+        a captcha that normal Chrome does not. Headed runs therefore use channel
+        "chrome". Tests stay on bundled Chromium (headless).
+        """
         self.playwright = sync_playwright().start()
         launch_args = {
             "user_data_dir": self.user_data_dir,
             "headless": self.headless,
-            "args": ["--start-maximized"],
             "viewport": None,
+            "args": ["--start-maximized"],
         }
         if self.headless:
             launch_args["args"] = [
@@ -45,21 +50,45 @@ class VideoBrowserBot:
                 "--no-sandbox",
             ]
             launch_args["viewport"] = {"width": 1280, "height": 720}
+        else:
+            launch_args["channel"] = "chrome"
+            launch_args["ignore_default_args"] = ["--enable-automation"]
+            launch_args["args"] = [
+                "--disable-blink-features=AutomationControlled",
+                "--start-maximized",
+            ]
 
-        self.browser_context = self.playwright.chromium.launch_persistent_context(
-            **launch_args
-        )
+        try:
+            self.browser_context = self.playwright.chromium.launch_persistent_context(
+                **launch_args
+            )
+        except Exception as exc:
+            if launch_args.get("channel") == "chrome":
+                print(
+                    "[Browser Bot]: Google Chrome was not found. "
+                    "Install Chrome from https://www.google.com/chrome/ then retry. "
+                    f"Details: {exc}"
+                )
+                launch_args.pop("channel", None)
+                self.browser_context = (
+                    self.playwright.chromium.launch_persistent_context(**launch_args)
+                )
+            else:
+                raise
+
+        if not self.headless:
+            self.browser_context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
+
         self.page = (
             self.browser_context.pages[0]
             if self.browser_context.pages
             else self.browser_context.new_page()
         )
         print(f"[Browser Bot]: Navigating to {url}...")
+        # Do not wait for networkidle: Cloudflare challenges keep the network busy.
         self.page.goto(url, wait_until="domcontentloaded")
-        try:
-            self.page.wait_for_load_state("networkidle", timeout=15000)
-        except PlaywrightTimeoutError:
-            pass
 
     def wait_for_manual_login(
         self, check_selector: str = TASK_READY_SELECTOR, timeout: int = 300

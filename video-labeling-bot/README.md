@@ -47,7 +47,18 @@ cd ATLAS\video-labeling-bot
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
-That script creates `venv`, installs packages, installs Chromium, and starts `main.py`.
+That script creates `venv`, installs packages, and starts `main.py` in **your installed Google Chrome**.
+
+Playwright's test Chromium is what triggers Cloudflare Turnstile (`Verification failed`). If you already saw that, delete the old session and pull this fix:
+
+```powershell
+cd $env:USERPROFILE\ATLAS\video-labeling-bot
+Remove-Item -Recurse -Force .\browser_session -ErrorAction SilentlyContinue
+git pull
+powershell -ExecutionPolicy Bypass -File .\run.ps1
+```
+
+Log in in the Chrome window that opens. After one successful login, cookies stay in `browser_session`.
 
 Manual equivalent:
 
