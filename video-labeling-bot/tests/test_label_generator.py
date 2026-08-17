@@ -223,6 +223,31 @@ def test_prompt_does_not_include_atlas_draft(monkeypatch):
     assert "If you see scissors, write trim" not in prompt
 
 
+def test_real_frames_use_action_prompt_that_forbids_no_action(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
+    seen = []
+
+    def fake_create(**kwargs):
+        seen.append(_prompt_text(kwargs["messages"]))
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="wipe glass plate with cloth in right hand"
+                    )
+                )
+            ]
+        )
+
+    monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    assert generate_label_from_frames(
+        ["aaa"], frames_have_video=True
+    ) == "wipe glass plate with cloth in right hand"
+    prompt = seen[0]
+    assert "Never write No Action" in prompt
+    assert 'or "No Action"' not in prompt
+
+
 def test_generic_animal_output_tries_next_model(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
     calls = []
@@ -302,7 +327,7 @@ def test_retries_no_action_with_hand_work_prompt(monkeypatch):
     ) == (
         "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
     )
-    assert len(calls) == len(VISION_MODELS) + 1
+    assert len(calls) == 1
 
 
 def test_keeps_glass_plate_draft_when_model_repeats_stuffed_animal(monkeypatch):

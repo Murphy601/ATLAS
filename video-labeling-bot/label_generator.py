@@ -27,6 +27,7 @@ from config import (
     SEMICOLON_PATTERN,
     SLASH_PATTERN,
     SYSTEM_PROMPT,
+    ACTION_SYSTEM_PROMPT,
     TEMPERATURE,
     TRANSFER_VERBS,
     USE_VERBS,
@@ -692,7 +693,7 @@ def _vision_user_content(
         "Hands holding or using an object is an action even if the stills look similar. "
         "Do NOT output No Action if either hand holds an object or a tool. "
         "Never copy a gold example (dough, hose, wrench, scissors) unless it is in the pictures. "
-        "Output only the raw label or No Action."
+        "Output only the raw label."
     )
     if insist_action:
         intro = (
@@ -872,16 +873,19 @@ def generate_label_from_frames(
     base64_frames, frame_timestamps = _subsample_frames(
         base64_frames, frame_timestamps, max_frames=5
     )
+    insist = bool(frames_have_video)
     user_content = _vision_user_content(
         base64_frames,
         previous_label=previous_label,
         draft_label=draft_label,
         duration_seconds=duration_seconds,
         frame_timestamps=frame_timestamps,
+        insist_action=insist,
         frames_have_video=frames_have_video,
     )
+    system = ACTION_SYSTEM_PROMPT if frames_have_video else SYSTEM_PROMPT
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user_content},
     ]
     label = _query_vision_models(
@@ -891,27 +895,6 @@ def generate_label_from_frames(
         list(VISION_MODELS),
         frames_have_video=frames_have_video,
     )
-    if label == "No Action" and frames_have_video:
-        print("[Pipeline]: All models said No Action. Retrying with a hand-work prompt...")
-        retry_content = _vision_user_content(
-            base64_frames,
-            previous_label=previous_label,
-            draft_label=draft_label,
-            duration_seconds=duration_seconds,
-            frame_timestamps=frame_timestamps,
-            insist_action=True,
-            frames_have_video=frames_have_video,
-        )
-        label = _query_vision_models(
-            [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": retry_content},
-            ],
-            draft_label,
-            previous_label,
-            list(VISION_MODELS),
-            frames_have_video=frames_have_video,
-        )
     if label == "No Action" and not draft_label:
         print(
             "[Pipeline]: All models said No Action and there is no usable Atlas draft."

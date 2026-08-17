@@ -18,7 +18,7 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 - After login: sidebar **Tasks** → **Continue Assessment Practice** (or **Review** on a listed live task)
 - Segments already exist with AI drafts. The bot **replaces the text**, it does not delete rows or retimestamp.
 - Atlas drafts are **untrusted** and are not sent to the vision model. If every model still says No Action, the bot keeps the draft and rewrites bare `animal` to `stuffed animal` instead of filling No Action.
-- Frames are captured while the clip **plays at 1x**. Forced seek-pause made the player blink and froze one keyframe, so every model said No Action.
+- Frames are captured while the clip **plays at 1x**, covering start through end. The bottom of the frame is kept (ego hands). When those stills have texture, the model is told not to answer No Action.
 - If `debug_frames/` JPEGs show hands, the model is trusted even when leftover row text says something else (for example stuffed animal on a dish clip).
 - First-visit Atlas drafts are saved in `original_drafts/` so a later re-run does not treat leftover bot text as Atlas gold.
 - Label fields: `input[aria-label="Segment 1 label"]`

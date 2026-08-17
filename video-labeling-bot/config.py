@@ -140,6 +140,22 @@ CASE C — real transfers (do not drop place/pass; do not add pickup-to-use):
 Output ONLY the raw label string or "No Action". No explanation, no intro text, no conversational filler, and no markdown wrapping.
 """
 
+# Used when captured frames have video texture. The long prompt's "or No Action"
+# override made every model dump No Action even on insist retries.
+ACTION_SYSTEM_PROMPT = """
+You label first-person occupational hand-work stills for Atlas Capture.
+Output ONLY one Atlas label. Never write No Action. Never explain. Never refuse.
+
+TEMPLATE: verb + object + with [left hand|right hand|both hands]
+No articles (a/an/the). No digits. No trailing period.
+No inspect, check, adjust, reach, manipulate, then, next, other, or generic tool/animal.
+Max 3 comma-separated clauses. LEFT side of each image is the LEFT hand.
+If the object is already in the hand in the first frame, do not write pick up.
+If one hand stabilizes while the other works: hold [object] with [hand], [work clause]
+Name the object you see (plate, cloth, shirt, hose, toy, plant, etc.).
+Do not copy gold-style examples (dough, scissors, wrench) unless they are visible.
+"""
+
 # Banned terminology for automated sanitization
 FORBIDDEN_WORDS = [
     "inspect",

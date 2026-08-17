@@ -130,6 +130,13 @@ def test_system_prompt_bans_adjust_and_requires_hands():
     assert '"tool" FAILS audit' in SYSTEM_PROMPT
 
 
+def test_action_system_prompt_forbids_no_action():
+    from config import ACTION_SYSTEM_PROMPT
+
+    assert "Never write No Action" in ACTION_SYSTEM_PROMPT
+    assert 'or "No Action"' not in ACTION_SYSTEM_PROMPT
+
+
 def test_collapses_cooperating_hands_into_one_both_hands_action():
     assert sanitize_label(
         "water plant in bucket with hose in left hand, hold watering can with right hand"

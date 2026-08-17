@@ -763,21 +763,34 @@ class VideoBrowserBot:
         return image_bytes
 
     def _player_clip(self) -> dict | None:
-        """CSS-pixel box of the VIDEO, inset so timeline chrome is not sent to the model."""
+        """CSS box of the largest video/canvas. Keep the bottom — ego hands live there."""
         box = self.page.evaluate(
             """() => {
-                const video = document.querySelector('video');
-                if (!video) return null;
-                const rect = video.getBoundingClientRect();
+                const media = Array.from(document.querySelectorAll('video, canvas')).filter((el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return (
+                        rect.width >= 80 &&
+                        rect.height >= 80 &&
+                        style.visibility !== 'hidden' &&
+                        style.display !== 'none'
+                    );
+                });
+                media.sort((left, right) => {
+                    const a = left.getBoundingClientRect();
+                    const b = right.getBoundingClientRect();
+                    return b.width * b.height - a.width * a.height;
+                });
+                const target = media[0] || document.querySelector('video');
+                if (!target) return null;
+                const rect = target.getBoundingClientRect();
                 if (rect.width < 16 || rect.height < 16) return null;
-                const padX = Math.max(2, rect.width * 0.04);
-                const padTop = Math.max(2, rect.height * 0.06);
-                const padBottom = Math.max(8, rect.height * 0.16);
+                const pad = 2;
                 return {
-                    x: rect.x + padX,
-                    y: rect.y + padTop,
-                    width: rect.width - padX * 2,
-                    height: rect.height - padTop - padBottom,
+                    x: rect.x + pad,
+                    y: rect.y + pad,
+                    width: rect.width - pad * 2,
+                    height: rect.height - pad * 2,
                 };
             }"""
         )
@@ -912,6 +925,10 @@ class VideoBrowserBot:
         print(
             f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at 1x..."
         )
+        interval = max(
+            float(interval_seconds),
+            float(segment_duration) / max(MAX_FRAMES_PER_SEGMENT - 1, 1),
+        )
         self._play_from(start_seconds)
         time.sleep(0.5)
         enter_deadline = time.time() + 2.0
@@ -929,9 +946,7 @@ class VideoBrowserBot:
         while time.time() < deadline:
             current = self._video_time()
             if frame_in_segment_window(current, start_seconds, segment_duration):
-                bucket = int(
-                    max(0.0, current - start_seconds) / max(interval_seconds, 0.2)
-                )
+                bucket = int(max(0.0, current - start_seconds) / max(interval, 0.2))
                 if bucket != last_bucket:
                     try:
                         frames.append((current, self._screenshot_video_base64()))
@@ -939,6 +954,11 @@ class VideoBrowserBot:
                     except Exception as exc:
                         print(f"[Browser Bot]: Screenshot skipped ({exc})")
             if frames and current >= end_seconds - 0.05:
+                if frames[-1][0] < end_seconds - 0.25:
+                    try:
+                        frames.append((current, self._screenshot_video_base64()))
+                    except Exception:
+                        pass
                 break
             if frames and abs(current - last_time) < 0.02:
                 stalled += 1
