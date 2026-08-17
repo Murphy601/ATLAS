@@ -1239,7 +1239,10 @@ def _named_implement_in(*texts: str | None) -> str | None:
 
 
 def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
-    """Short windows rarely contain more than two distinct actions."""
+    """Short windows rarely contain more than two distinct actions.
+
+    Never drop a real hand-off: hold/pick up + pass + place must stay three clauses.
+    """
     if not label or label == "No Action":
         return label
     if duration_sec is None or duration_sec >= 3.0:
@@ -1247,7 +1250,30 @@ def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
     clauses = split_actions(label)
     if len(clauses) <= 2:
         return label
+    verbs = {_leading_verb(clause) for clause in clauses}
+    if "pass" in verbs:
+        return label
     return ", ".join(clauses[:2])
+
+
+_SEWING_UMBRELLA = re.compile(
+    r"\b(?:sew|stitch|draw|write|press)\b",
+    re.IGNORECASE,
+)
+_SEWING_OBJECT = re.compile(r"\b(?:cap|hat|patch)\b", re.IGNORECASE)
+_SEWING_NEEDLE = re.compile(
+    r"\b(?:insert sewing needle|pull sewing needle|insert needle)\b",
+    re.IGNORECASE,
+)
+
+_SEW_FIRST = (
+    "hold cap with both hands, insert sewing needle into cap with right hand"
+)
+_SEW_MIDDLE = (
+    "hold cap with left hand, pull sewing needle with right hand, "
+    "insert sewing needle into cap with right hand"
+)
+_SEW_LAST = "hold cap with left hand, pull sewing needle with right hand"
 
 
 def _expand_sew_draw_to_needle(
@@ -1255,37 +1281,57 @@ def _expand_sew_draw_to_needle(
     previous_label: str | None = None,
     duration_seconds: float | None = None,
 ) -> str:
-    """Replace umbrella sew/draw with insert/pull sewing-needle mechanics."""
+    """Replace umbrella sew/draw/write/press with insert/pull sewing-needle mechanics."""
     if not label or label == "No Action":
         return label
-    if re.search(r"sewing needle", label, re.IGNORECASE):
-        return label
-    if not re.search(r"\b(?:sew|stitch|draw)\b", label, re.IGNORECASE):
-        return label
-    if not re.search(r"\b(?:cap|hat)\b", label, re.IGNORECASE):
-        return label
-    if re.search(r"\bneedle\b", label, re.IGNORECASE) and re.search(
-        r"\b(?:insert|pull)\b", label, re.IGNORECASE
-    ):
+    sewing_scene = bool(
+        _SEWING_OBJECT.search(label)
+        and (
+            _SEWING_UMBRELLA.search(label)
+            or re.search(r"\bneedle\b", label, re.IGNORECASE)
+        )
+    )
+    if not sewing_scene:
         return label
     duration = 4.0 if duration_seconds is None else duration_seconds
     previous_sew = bool(
         previous_label
-        and re.search(
-            r"\b(?:sew|stitch|draw|insert sewing needle|pull sewing needle)\b",
-            previous_label,
-            re.IGNORECASE,
+        and (
+            _SEWING_NEEDLE.search(previous_label)
+            or (
+                _SEWING_UMBRELLA.search(previous_label)
+                and _SEWING_OBJECT.search(previous_label)
+            )
         )
     )
     if duration < 2.5:
-        return "hold cap with left hand, pull sewing needle with right hand"
+        return _SEW_LAST
     if not previous_sew:
-        return (
-            "hold cap with both hands, insert sewing needle into cap with right hand"
-        )
+        return _SEW_FIRST
+    return _SEW_MIDDLE
+
+
+def _restore_glass_cup_when_cloth_took_over(
+    label: str,
+    previous_label: str | None,
+) -> str:
+    """Wiping a glass cup: cloth is the implement, not the primary object."""
+    if not label or not previous_label:
+        return label
+    if not re.search(r"\bglass cup\b", previous_label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:wipe|rotate)\b", previous_label, re.IGNORECASE):
+        return label
+    if re.search(r"\bglass cup\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:cloth|rag|towel)\b", label, re.IGNORECASE):
+        return label
+    if re.search(r"\b(?:plate|book|door|shirt|garment)\b", label, re.IGNORECASE):
+        return label
+    if any(_leading_verb(part) in {"place", "pick up", "set"} for part in split_actions(label)):
+        return label
     return (
-        "hold cap with left hand, pull sewing needle with right hand, "
-        "insert sewing needle into cap with right hand"
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
     )
 
 
@@ -1353,24 +1399,55 @@ def _expand_copied_wire_fold(
 def _rewrite_hold_open_bottle_to_pickup_pass(
     label: str,
     next_label: str | None,
+    previous_label: str | None = None,
 ) -> str:
-    """hold+open is usually pick up then pass when the next row places the bottle."""
-    clauses = split_actions(label)
-    if len(clauses) != 2:
+    """First bottle window is pick up then pass, not hold/open or a missing transfer."""
+    if re.search(r"\b(?:bag|sachet)\b", label, re.IGNORECASE):
         return label
-    if _leading_verb(clauses[0]) != "hold" or _leading_verb(clauses[1]) != "open":
+    if not re.search(r"\bbottle\b", label, re.IGNORECASE):
         return label
-    if not re.search(r"\bbottle\b", clauses[0], re.IGNORECASE):
+    if re.search(r"\bpass\b", label, re.IGNORECASE):
         return label
-    if not re.search(r"\bbottle\b", clauses[1], re.IGNORECASE):
+    if any(_leading_verb(part) in {"place", "set"} for part in split_actions(label)):
+        return label
+    if previous_label and re.search(r"\bbottle\b", previous_label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:pick up|hold|open)\b", label, re.IGNORECASE):
         return label
     nxt = next_label or ""
-    if not re.search(r"\bbottle\b", nxt, re.IGNORECASE):
-        return label
-    if not re.search(r"\b(?:place|pass)\b", nxt, re.IGNORECASE):
+    if not (
+        re.search(r"\bbottle\b", nxt, re.IGNORECASE)
+        or re.search(r"\b(?:place|counter|refrigerator)\b", nxt, re.IGNORECASE)
+    ):
         return label
     return (
         "pick up bottle with right hand, pass bottle from right hand to left hand"
+    )
+
+
+def _align_place_hand_after_pass(label: str, previous_label: str | None) -> str:
+    """After pass from A to B, place uses the receiving hand."""
+    if not label or not previous_label:
+        return label
+    match = re.search(
+        r"pass \S+(?:\s+\S+)? from (left hand|right hand) to (left hand|right hand)",
+        previous_label,
+        re.IGNORECASE,
+    )
+    if not match:
+        return label
+    dest = match.group(2).lower()
+    clauses = split_actions(label)
+    if len(clauses) != 1 or _leading_verb(clauses[0]) not in {"place", "set"}:
+        return label
+    if not re.search(r"\b(?:bottle|bag|sachet)\b", clauses[0], re.IGNORECASE):
+        return label
+    return re.sub(
+        r"\b(?:with|in) (?:left|right) hand\b",
+        f"with {dest}",
+        clauses[0],
+        count=1,
+        flags=re.IGNORECASE,
     )
 
 
@@ -1412,7 +1489,9 @@ def apply_context_fixes(
         updated, previous_label, duration_seconds
     )
     updated = _expand_copied_wire_fold(updated, previous_label, draft_label)
-    updated = _rewrite_hold_open_bottle_to_pickup_pass(updated, next_label)
+    updated = _rewrite_hold_open_bottle_to_pickup_pass(
+        updated, next_label, previous_label
+    )
     updated = _align_object_names(updated, previous_label)
     updated = _align_object_names(updated, draft_label)
     updated = _align_work_verbs(updated, previous_label)
@@ -1423,7 +1502,9 @@ def apply_context_fixes(
         updated = restored
     else:
         updated = _restore_stabilize_wipe(updated, draft_label)
+    updated = _restore_glass_cup_when_cloth_took_over(updated, previous_label)
     updated = _upgrade_glass_hold_to_rotate(updated, previous_label, next_label)
+    updated = _align_place_hand_after_pass(updated, previous_label)
     if GENERIC_NOUN_PATTERN.search(updated):
         specific = _named_implement_in(draft_label, previous_label)
         if specific:
@@ -1561,7 +1642,9 @@ HALLUCINATION_PAIRS = (
     (r"\bshears\b", r"\bpliers\b"),
     (r"\bmop\b", r"\btoy\b"),
     (r"\b(?:glass\s+)?door\b", r"\b(?:ceiling|plant|table)\b"),
-    (r"\binsert\b", r"\b(?:write|peel)\b"),
+    (r"\binsert\b", r"\b(?:write|peel|press)\b"),
+    (r"sewing needle", r"\b(?:write|press|sew|draw)\b"),
+    (r"\bglass cup\b", r"\bhold cloth\b"),
     (r"\bbowl\b", r"\brub\b"),
     (r"\bpatch\b", r"\b(?:pen|sticker)\b"),
     (r"\bhold scissors\b", r"\bcut\b"),
@@ -1615,7 +1698,14 @@ def scene_tokens(label: str | None) -> set[str]:
 
 
 def _canonical_scene_tokens(label: str | None) -> set[str]:
-    return {OBJECT_CANONICAL.get(token, token) for token in scene_tokens(label)}
+    raw = label or ""
+    mapped = set()
+    for token in scene_tokens(raw):
+        if token == "pin" and re.search(r"\bmetal pin\b", raw, re.IGNORECASE):
+            mapped.add("pin")
+        else:
+            mapped.add(OBJECT_CANONICAL.get(token, token))
+    return mapped
 
 
 def looks_like_leftover_label(label: str | None) -> bool:
@@ -2303,10 +2393,12 @@ def _vision_user_content(
         "both hands ONLY if both hands do the same job. "
         "If one hand holds a cloth and the other rubs it, write hold cloth in left hand, smoothen cloth with right hand. Not fold with both hands. "
         "If one hand holds a glass cup and the other wipes it, write hold glass cup with left hand, wipe glass cup with cloth in right hand. Not both hands. "
+        "Never write sew, draw, write, or press on a cap. Write insert sewing needle into cap and pull sewing needle. "
         "If the hand turns the cup while wiping, write rotate glass cup with left hand, not hold. "
-        "Never write sew or draw. Write insert sewing needle into cap and pull sewing needle. "
+        "When wiping a glass cup, the cup is the target; cloth is only the implement. "
         "A window under 3 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains. "
-        "Do not copy the previous segment if this window shows fold, strip, place, or insert. "
+        "KEEP pass when the object changes hands. Do not copy the previous segment if this window shows fold, strip, place, or insert. "
+        "A metal pin is not a wrench. "
         "rake leaves needs on ground and with rake in [hand]. Never erase — write wipe with cloth. "
         "A sewing needle is not a pen. A cap is not a hat. Shears are not pliers. strip is not twist. "
         "If the LAST frame shows the object on a shelf or table, write place not pick up. "

@@ -41,7 +41,7 @@ CRITICAL ANNOTATION RULES:
 
 CRITICAL ACTION RULES:
 1. DO NOT USE GENERIC VERBS:
-   - NEVER use "sew", "draw", or "use tool". Break sewing into: "insert sewing needle into [object] with [hand]", "pull sewing needle with [hand]".
+   - NEVER use "sew", "draw", "write", "press", or "use tool" for sewing. Break sewing into: "insert sewing needle into [object] with [hand]", "pull sewing needle with [hand]".
 2. ACTIVE vs. STATIC GRIP ("rotate" vs "hold"):
    - If a hand turns or twists an object while working on it, use "rotate [object] with [hand]", NOT "hold".
    - hold glass cup + wipe is only for a stationary grip. Turning the cup while wiping is rotate, not hold.
@@ -50,8 +50,10 @@ CRITICAL ACTION RULES:
    - Do not write hold/open when the first motion is pick up then pass.
 4. SHORT WINDOWS:
    - A window under 3 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains.
+   - KEEP a real hand-off: hold/pick up + pass + place is three clauses and must not be truncated.
 5. OBJECT NAMES:
    - If the exact subtype is unclear, prefer bag, needle, cable, shears, or cap over a guessed brand or color name.
+   - A metal pin is not a wrench. A wiping cloth is the implement, not the target: wipe the glass cup, not the cloth.
 6. DO NOT COPY THE PREVIOUS SEGMENT:
    - If this window shows a new motion (fold, strip, place, insert), write that motion. Never paste the previous label.
 
@@ -239,11 +241,13 @@ strip insulation is not twist. A mop is not a toy. A door is not a ceiling.
 If the Atlas row already names needle/cap/shears/strip/mop/door, keep those names.
 
 CRITICAL ACTION RULES:
-NEVER use sew, draw, or use tool. Sewing is insert sewing needle into [object] with [hand] and pull sewing needle with [hand].
+NEVER use sew, draw, write, press, or use tool for sewing. Sewing is insert sewing needle into [object] with [hand] and pull sewing needle with [hand].
 If a hand turns a glass cup while wiping, write rotate [object] with [hand], not hold.
 If an object moves from one hand to the other, write pass [object] from [hand A] to [hand B].
 A window under 3 seconds usually has 1 or 2 actions. Do not invent extra hold/pass/place chains.
+KEEP pass when the object changes hands (hold, pass, place). Do not drop it.
 When the exact object subtype is unclear, use bag, needle, cable, shears, or cap.
+A metal pin is not a wrench. When wiping a glass cup, the cup is the target and cloth is the implement.
 Do not copy the previous segment's label if this window shows a new motion (fold, strip, place, insert).
 """
 

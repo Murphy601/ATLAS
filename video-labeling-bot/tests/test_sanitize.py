@@ -565,9 +565,8 @@ def test_keeps_cap_needle_draft_over_hat_pen_hallucination():
 
     draft = "hold cap with left hand, insert needle into patch with right hand"
     hallucinated = "hold hat with left hand, write on hat with pen in right hand"
-    assert (
-        choose_final_label(hallucinated, draft, frames_have_video=True) == draft
-    )
+    gold = "hold cap with both hands, insert sewing needle into cap with right hand"
+    assert choose_final_label(hallucinated, draft, frames_have_video=True) == gold
 
 
 def test_keeps_trailing_pickup_and_strip_draft():
@@ -739,8 +738,13 @@ def test_expands_sew_and_draw_into_needle_mechanics():
     )
     last = "hold cap with left hand, pull sewing needle with right hand"
     assert apply_context_fixes(
-        "draw on cap with right hand", duration_seconds=6.0
+        "write on cap with right hand", duration_seconds=6.0
     ) == first
+    assert apply_context_fixes(
+        "press patch with right hand",
+        previous_label=first,
+        duration_seconds=4.3,
+    ) == middle
     assert apply_context_fixes(
         "hold cap with left hand, sew cap with needle in right hand",
         previous_label=first,
@@ -832,9 +836,7 @@ def test_short_window_keeps_place_draft_and_rewrites_bag_pass():
         "place bottle in refrigerator with right hand"
     )
     place = "place bottle on counter with left hand"
-    assert enforce_segment_action_limit(bloated, 2.0) == (
-        "hold bottle with left hand, pass bottle from left hand to right hand"
-    )
+    assert enforce_segment_action_limit(bloated, 2.0) == bloated
     assert choose_final_label(
         bloated,
         place,
@@ -860,3 +862,56 @@ def test_short_window_keeps_place_draft_and_rewrites_bag_pass():
     ) == (
         "pick up sachet with right hand, place sachet on counter with right hand"
     )
+
+
+def test_glass_cup_not_cloth_and_bottle_pass_hand():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    rotate_wipe = (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    hold_wipe = (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    assert apply_context_fixes(
+        "hold cloth in left hand, wipe cloth with right hand",
+        previous_label=rotate_wipe,
+        next_label="",
+    ) == hold_wipe
+    assert apply_context_fixes(
+        "wipe cloth with both hands",
+        previous_label=hold_wipe,
+        next_label=hold_wipe,
+    ) == rotate_wipe
+    assert sanitize_label("iron shirt with right hand") == "iron shirt with right hand"
+
+    pickup_pass = (
+        "pick up bottle with right hand, pass bottle from right hand to left hand"
+    )
+    assert apply_context_fixes(
+        "pick up bottle with left hand",
+        next_label="place bottle on counter with left hand",
+    ) == pickup_pass
+    assert apply_context_fixes(
+        "place bottle on counter with right hand",
+        previous_label=pickup_pass,
+    ) == "place bottle on counter with left hand"
+
+
+def test_keeps_pass_chain_and_metal_pin_draft():
+    from label_generator import apply_context_fixes, choose_final_label
+
+    transfer = (
+        "pick up wrench with left hand, place wrench on table with right hand"
+    )
+    three = (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
+    assert sanitize_label(transfer) == three
+    assert apply_context_fixes(three, duration_seconds=2.5) == three
+    assert choose_final_label(
+        "pick up wrench from toolbox with right hand, place wrench on table with right hand",
+        "pick up metal pin and place metal pin on table with right hand",
+        frames_have_video=True,
+    ) == "pick up metal pin with right hand, place metal pin on table with right hand"

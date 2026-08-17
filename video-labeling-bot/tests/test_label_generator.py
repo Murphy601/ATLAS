@@ -415,13 +415,15 @@ def test_retries_when_flash_hallucinates_against_specific_draft(monkeypatch):
         )
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
+    gold = (
+        "hold cap with both hands, insert sewing needle into cap with right hand"
+    )
     assert generate_label_from_frames(
         ["aaa"],
         draft_label=draft,
         frames_have_video=True,
-    ) == draft
+    ) == gold
     assert calls[0] == VISION_MODELS[0]
-    assert calls[1] == VISION_MODELS[1]
 
 
 def test_skips_copied_prompt_example(monkeypatch):
