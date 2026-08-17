@@ -142,6 +142,10 @@ class VideoBrowserBot:
                 continue
         return False
 
+    def has_open_episode(self) -> bool:
+        """True when a practice clip or live episode editor is on screen."""
+        return self._has_visible_segments()
+
     def _click_first_visible(self, selector: str, timeout_ms: int = 2500) -> bool:
         locator = self.page.locator(selector).first
         try:
@@ -149,10 +153,117 @@ class VideoBrowserBot:
                 return False
             if not locator.is_visible():
                 return False
+            try:
+                if not locator.is_enabled():
+                    return False
+            except Exception:
+                pass
             locator.click(timeout=timeout_ms)
             return True
         except Exception:
             return False
+
+    def episode_fingerprint(self) -> str:
+        """Identity of the open clip, ignoring labels we may have typed."""
+        try:
+            data = self.page.evaluate(
+                """() => {
+                    const headingEl = document.getElementById('clip-heading');
+                    let heading = headingEl ? headingEl.innerText.trim() : '';
+                    if (!heading) {
+                        const body = document.body ? document.body.innerText : '';
+                        const match = body.match(/Practice clip\\s+\\d+\\s+of\\s+\\d+/i);
+                        heading = match ? match[0] : '';
+                    }
+                    const video = document.querySelector('video');
+                    const src = video
+                        ? (video.currentSrc || video.getAttribute('src') || '')
+                        : '';
+                    const inputs = Array.from(
+                        document.querySelectorAll(
+                            'input[data-segment-start-seconds], input[aria-label^="Segment"][aria-label*="label"]'
+                        )
+                    );
+                    const visible = inputs.filter((el) => {
+                        if (!(el instanceof HTMLElement)) return false;
+                        const style = window.getComputedStyle(el);
+                        return style.display !== 'none' && style.visibility !== 'hidden';
+                    });
+                    const starts = visible.map(
+                        (el) => el.getAttribute('data-segment-start-seconds') || ''
+                    );
+                    return {
+                        heading,
+                        src,
+                        count: visible.length,
+                        starts: starts.join(','),
+                        url: (location.href || '').split('#')[0],
+                    };
+                }"""
+            )
+        except Exception:
+            return ""
+        return "|".join(
+            [
+                str((data or {}).get("heading") or ""),
+                str((data or {}).get("count") or 0),
+                str((data or {}).get("starts") or ""),
+                str((data or {}).get("src") or "")[:160],
+                str((data or {}).get("url") or ""),
+            ]
+        )
+
+    def click_next_task(self) -> bool:
+        """Clicks Next task / Next clip. Generic Next only if the editor is gone."""
+        if self._click_first_visible(SELECTORS["next_task"]):
+            print("[Browser Bot]: Clicked Next task.")
+            time.sleep(1.2)
+            return True
+        if self._has_visible_segments():
+            return False
+        if self._click_first_visible(SELECTORS["next_generic"]):
+            print("[Browser Bot]: Clicked Next.")
+            time.sleep(1.2)
+            return True
+        return False
+
+    def wait_for_new_episode(
+        self, previous: str, timeout: float | None = 180
+    ) -> bool:
+        """Waits until a different clip is open. Clicks Next task if it appears."""
+        print(
+            "[Browser Bot]: Waiting for the next clip. "
+            "Click Next task if you see it — I will also click it."
+        )
+        deadline = None if timeout is None else time.time() + timeout
+        started = time.time()
+        last_log = started
+        queue_tried = False
+        while True:
+            if deadline is not None and time.time() >= deadline:
+                print("[Browser Bot]: Timed out waiting for the next clip.")
+                return False
+            now = time.time()
+            if now - last_log >= 12:
+                print(
+                    "[Browser Bot]: Still waiting for Next task / a new practice clip..."
+                )
+                last_log = now
+            has_segments = self._has_visible_segments()
+            current = self.episode_fingerprint()
+            if has_segments and (not previous or current != previous):
+                print("[Browser Bot]: Next clip is ready.")
+                return True
+            self.click_next_task()
+            if (
+                not has_segments
+                and not queue_tried
+                and now - started > 8
+            ):
+                print("[Browser Bot]: No clip yet. Checking the Tasks queue...")
+                self.open_work_queue()
+                queue_tried = True
+            time.sleep(0.5)
 
     def go_to_tasks(self):
         """Clicks the sidebar Tasks item, or opens /tasks."""

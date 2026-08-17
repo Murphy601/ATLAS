@@ -46,9 +46,10 @@ def process_live_task(
     segments = bot.discover_segments()
     if not segments:
         print("[Pipeline]: No Atlas segment rows found. Open a labeling task and retry.")
-        return
+        return False
 
     print(f"\n[Pipeline]: Correcting {len(segments)} existing AI-labeled segments...")
+    processed_any = False
 
     previous_label = None
     for segment in segments:
@@ -83,6 +84,7 @@ def process_live_task(
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
         print(f"Generated Label: '{label}'")
 
+        processed_any = True
         if (
             label == "No Action"
             and segment.draft_label
@@ -102,6 +104,7 @@ def process_live_task(
         )
         previous_label = label
         time.sleep(0.4)
+    return processed_any
 
 
 def process_video_task(
@@ -162,24 +165,104 @@ def process_video_task(
         previous_label = label
 
 
-def _pause_for_review_then_submit(bot: VideoBrowserBot, auto_submit: bool):
+def _pause_for_review_then_submit(
+    bot: VideoBrowserBot,
+    auto_submit: bool,
+    fingerprint: str = "",
+) -> str:
+    """Returns submitted, skipped, or relabel if the clip changed during review."""
     if auto_submit:
         print("[Pipeline]: AUTO_SUBMIT is enabled. Submitting without review.")
         bot.submit_final_task()
-        return
+        return "submitted"
 
     try:
         input(
             "\n[Review Mode]: Inspect the filled Atlas labels in the browser, "
-            "then press ENTER to click Submit practice clip (or Ctrl+C to quit without submitting)..."
+            "then press ENTER to click Submit practice clip. "
+            "After that I stay on the next clip (Ctrl+C to stop)..."
         )
     except EOFError:
         print(
             "\n[Review Mode]: No interactive stdin. Skipping submit. "
             "Re-run with --auto-submit only after you have verified labels."
         )
-    else:
-        bot.submit_final_task()
+        return "skipped"
+
+    current = bot.episode_fingerprint()
+    if fingerprint and current and current != fingerprint and bot.has_open_episode():
+        print(
+            "[Pipeline]: The open clip changed before submit "
+            "(Next task was already clicked). Labeling this new clip instead."
+        )
+        return "relabel"
+    bot.submit_final_task()
+    return "submitted"
+
+
+def run_live_queue(
+    bot: VideoBrowserBot,
+    segment_duration: float = 3.0,
+    interval_seconds: float = 1.0,
+    auto_submit: bool = False,
+    max_episodes: int | None = None,
+    next_timeout: float | None = None,
+):
+    """Label, review/submit, then keep going when Next task opens the next clip."""
+    episode = 0
+    print(
+        "[Pipeline]: Live queue mode. I will keep labeling after each submit. "
+        "Click Next task when it appears, or I will click it. Ctrl+C to stop."
+    )
+    while max_episodes is None or episode < max_episodes:
+        if not bot.has_open_episode():
+            bot.open_work_queue()
+        if not bot.has_open_episode():
+            if not bot.wait_for_new_episode("", timeout=next_timeout):
+                print("[Pipeline]: No clip opened. Stopping the queue.")
+                return
+        fingerprint = bot.episode_fingerprint()
+        episode += 1
+        print(f"\n[Pipeline]: Labeling clip {episode}...")
+        try:
+            processed = process_live_task(
+                bot,
+                segment_duration=segment_duration,
+                interval_seconds=interval_seconds,
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            print(f"[Pipeline]: Clip {episode} failed: {exc}")
+            processed = False
+        if not processed:
+            print("[Pipeline]: Nothing to label on this page. Waiting for the next clip...")
+            if not bot.wait_for_new_episode(fingerprint, timeout=next_timeout):
+                return
+            episode -= 1
+            continue
+
+        result = _pause_for_review_then_submit(bot, auto_submit, fingerprint)
+        if result == "relabel":
+            episode -= 1
+            continue
+        if result == "skipped":
+            print("[Pipeline]: Submit skipped. Waiting in case you open the next clip.")
+        else:
+            print(
+                "[Pipeline]: Submitted. Click Next task if it is on screen. "
+                "I will start labeling as soon as the next clip loads — I am not exiting."
+            )
+        if max_episodes is not None and episode >= max_episodes:
+            return
+        advanced = bot.wait_for_new_episode(fingerprint, timeout=next_timeout)
+        if not advanced:
+            print("[Pipeline]: Next clip did not load. Checking Tasks...")
+            bot.open_work_queue()
+            if bot.has_open_episode() and bot.episode_fingerprint() != fingerprint:
+                continue
+            print("[Pipeline]: Queue looks idle. Stopping.")
+            return
 
 
 def parse_args():
@@ -271,15 +354,17 @@ def main():
                 segment_duration=args.segment_duration,
                 interval_seconds=args.frame_interval,
             )
+            _pause_for_review_then_submit(bot, auto_submit)
         else:
-            process_live_task(
+            run_live_queue(
                 bot,
                 segment_duration=args.segment_duration,
                 interval_seconds=args.frame_interval,
+                auto_submit=auto_submit,
             )
 
-        _pause_for_review_then_submit(bot, auto_submit)
-
+    except KeyboardInterrupt:
+        print("\n[Pipeline]: Stopped by Ctrl+C. Closing the browser.")
     except Exception as e:
         print(f"[Execution Error]: {e}")
     finally:

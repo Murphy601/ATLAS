@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from browser_automation import SegmentRow
-from main import process_live_task, process_video_task
+from main import process_live_task, process_video_task, run_live_queue
 
 
 def test_process_live_task_fills_every_segment_including_no_action():
@@ -113,3 +113,46 @@ def test_process_video_task_maps_chunks_onto_atlas_rows(tmp_path):
         )
 
     assert recorded == [(1, "pick up fork"), (2, "No Action")]
+
+
+def test_run_live_queue_labels_the_clip_after_submit():
+    labeled = []
+
+    class FakeBot:
+        def __init__(self):
+            self.index = 0
+
+        def has_open_episode(self):
+            return True
+
+        def episode_fingerprint(self):
+            return f"clip-{self.index}"
+
+        def open_work_queue(self):
+            return "practice"
+
+        def wait_for_new_episode(self, previous, timeout=None):
+            if self.index >= 1:
+                return False
+            self.index += 1
+            return previous != self.episode_fingerprint()
+
+        def submit_final_task(self):
+            return None
+
+    def fake_process(bot, segment_duration=3.0, interval_seconds=1.0):
+        labeled.append(bot.episode_fingerprint())
+        return True
+
+    with (
+        patch("main.process_live_task", side_effect=fake_process),
+        patch("main._pause_for_review_then_submit", return_value="submitted"),
+    ):
+        run_live_queue(
+            FakeBot(),
+            auto_submit=True,
+            max_episodes=2,
+            next_timeout=1,
+        )
+
+    assert labeled == ["clip-0", "clip-1"]

@@ -188,9 +188,11 @@ SELECTORS = {
     "continue_practice": 'button:has-text("Continue Assessment Practice"), a:has-text("Continue Assessment Practice")',
     "review_task": 'button:has-text("Review"), a:has-text("Review")',
     "start_task": 'button:has-text("Start"), a:has-text("Start"), button:has-text("Open")',
+    "next_task": 'button:has-text("Next task"), button:has-text("Next clip"), button:has-text("Next episode"), a:has-text("Next task")',
+    "next_generic": 'button:has-text("Next"), a:has-text("Next")',
     "submit_button": 'button:has-text("Submit practice clip")',
     "submit_button_generic": 'button[data-slot="button"]:has-text("Submit")',
-    "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button:has-text("Next"), button[type="submit"]',
+    "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button[type="submit"]',
 }
 
 # Pipeline defaults (overridable via environment variables)

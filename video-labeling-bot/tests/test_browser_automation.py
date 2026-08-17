@@ -63,6 +63,43 @@ def test_fill_replaces_ai_draft_without_deleting_row(tmp_path):
         bot.stop()
 
 
+def test_episode_fingerprint_ignores_typed_labels(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    try:
+        bot.start(FIXTURE.resolve().as_uri())
+        bot.open_work_queue()
+        before = bot.episode_fingerprint()
+        bot.fill_segment_label(
+            1,
+            "pick up bucket with left hand, pick up tool with right hand",
+            start_seconds=0,
+        )
+        after = bot.episode_fingerprint()
+        assert before
+        assert before == after
+    finally:
+        bot.stop()
+
+
+def test_wait_for_new_episode_after_submit_clicks_next_task(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    try:
+        bot.start(FIXTURE.resolve().as_uri())
+        bot.open_work_queue()
+        first = bot.episode_fingerprint()
+        bot.submit_final_task()
+        assert bot.page.locator("#next-task").is_visible()
+        assert bot.wait_for_new_episode(first, timeout=8)
+        assert "2 of 3" in bot.page.locator("#clip-heading").inner_text()
+        second = bot.episode_fingerprint()
+        assert second != first
+        segments = bot.discover_segments()
+        assert "stir" in segments[0].draft_label
+        assert bot.has_open_episode()
+    finally:
+        bot.stop()
+
+
 def test_capture_live_segment_frames(tmp_path):
     bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
     try:

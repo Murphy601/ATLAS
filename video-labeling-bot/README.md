@@ -9,6 +9,7 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
     -> Atlas Standard Text Annotation Rules
     -> fill input[aria-label="Segment N label"]
     -> you review, then "Submit practice clip"
+    -> Next task (you click it, or the bot does) -> next clip, repeat
 ```
 
 ## Atlas wiring
@@ -18,9 +19,10 @@ Automated video timestamping and action-labeling pipeline for the [Atlas Capture
 - Segments already exist with AI drafts. The bot **replaces the text**, it does not delete rows or retimestamp.
 - Label fields: `input[aria-label="Segment 1 label"]`
 - Submit: `button:has-text("Submit practice clip")`, fallback `button[data-slot="button"]:has-text("Submit")`
+- After submit the bot **stays in the Chrome session** and starts the next clip when **Next task** appears (it will click that button if you do not)
 - Frames come from the in-page `<video>` element. No `input_video.mp4` required
 - Login is manual on the first headed run; cookies persist in `./browser_session`
-- Submit mode is review-then-submit (`AUTO_SUBMIT=false`)
+- Submit mode is review-then-submit (`AUTO_SUBMIT=false`). Press Ctrl+C when you want to stop the queue
 
 ## Models
 
@@ -104,6 +106,7 @@ python main.py
 2. Log in and open a labeling task until Segment 1 is visible.
 3. The bot screenshots 1s frames per 3s segment and fills each label input.
 4. Inspect the filled labels, then press ENTER to click **Submit practice clip**.
+5. Click **Next task** (or wait — the bot clicks it). It labels the next clip instead of exiting. Ctrl+C to stop.
 
 ## Tests
 
