@@ -95,6 +95,7 @@ def process_live_task(
             start_seconds=segment.start_seconds,
             segment_duration=duration,
             interval_seconds=interval_seconds,
+            trust_play_segment=True,
         )
         if not chunk:
             print(

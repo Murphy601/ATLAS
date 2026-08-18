@@ -2311,11 +2311,46 @@ def enforce_atlas_template(label: str) -> str:
     return ", ".join(fixed) if fixed else label
 
 
+def _lock_draft_work_verbs(label: str, draft: str | None) -> str:
+    """Prefer Atlas draft work verbs when Vision swaps synonyms (scrub vs wash)."""
+    if not label or not draft or label == "No Action":
+        return label
+    draft_parts = split_actions(draft)
+    label_parts = split_actions(label)
+    if not draft_parts or not label_parts:
+        return label
+    updated: list[str] = []
+    for index, clause in enumerate(label_parts):
+        draft_clause = draft_parts[min(index, len(draft_parts) - 1)]
+        draft_verb = _leading_verb(draft_clause)
+        model_verb = _leading_verb(clause)
+        if (
+            draft_verb
+            and model_verb
+            and draft_verb != model_verb
+            and draft_verb in CONTINUOUS_WORK_VERBS
+            and model_verb in CONTINUOUS_WORK_VERBS
+        ):
+            model_obj = _object_phrase_tokens(_clause_object_noun(clause) or "")
+            draft_obj = _object_phrase_tokens(_clause_object_noun(draft_clause) or "")
+            if model_obj & draft_obj:
+                clause = re.sub(
+                    rf"^{re.escape(model_verb)}\b",
+                    draft_verb,
+                    clause,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+        updated.append(clause)
+    return ", ".join(updated)
+
+
 def perform_draft_surgery(atlas_draft: str | None, vision_label: str) -> str:
     """Keep Atlas object nouns; let Vision update verbs and hands."""
     if not atlas_draft or not vision_label or vision_label == "No Action":
         return vision_label
     updated = _lock_atlas_draft_objects(vision_label, atlas_draft)
+    updated = _lock_draft_work_verbs(updated, atlas_draft)
     draft_phrases = draft_object_phrases(atlas_draft)
     if draft_phrases:
         primary = draft_phrases[0]

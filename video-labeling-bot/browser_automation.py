@@ -409,6 +409,27 @@ class VideoBrowserBot:
         )
         return False
 
+    def _ensure_video_playing(self) -> None:
+        """Resume playback when Atlas or the browser pauses the player mid-segment."""
+        try:
+            self.page.evaluate(
+                """() => {
+                    const video = document.querySelector('video');
+                    if (!video) return;
+                    video.muted = true;
+                    video.playsInline = true;
+                    video.playbackRate = 1;
+                    if (video.paused) {
+                        const play = video.play();
+                        if (play && typeof play.catch === 'function') {
+                            play.catch(() => {});
+                        }
+                    }
+                }"""
+            )
+        except Exception:
+            pass
+
     def _play_from(self, start_seconds: float):
         """Start 1x playback. Seek once only if Play segment did not already land in-window."""
         current = self._video_time()
@@ -906,6 +927,7 @@ class VideoBrowserBot:
         start_seconds: float,
         segment_duration: float = 3.0,
         interval_seconds: float = 1.0,
+        trust_play_segment: bool = False,
     ) -> list[tuple[float, str]]:
         """Headed: watch the segment at 1x. Headless tests: seek."""
         if segment_duration <= 0:
@@ -917,7 +939,10 @@ class VideoBrowserBot:
         else:
             self._enter_player_fullscreen()
             frames = self._capture_realtime(
-                start_seconds, segment_duration, interval_seconds
+                start_seconds,
+                segment_duration,
+                interval_seconds,
+                trust_play_segment=trust_play_segment,
             )
         in_window = [
             item
@@ -979,8 +1004,9 @@ class VideoBrowserBot:
         start_seconds: float,
         segment_duration: float,
         interval_seconds: float,
+        trust_play_segment: bool = False,
     ) -> list[tuple[float, str]]:
-        """Play the segment at 1x and screenshot while it runs. Do not seek-pause."""
+        """Play the segment at 1x and screenshot while it runs. Seek-fallback if playback stalls."""
         end_seconds = start_seconds + segment_duration
         print(
             f"[Browser Bot]: Watching {start_seconds:.2f}s → {end_seconds:.2f}s at 1x..."
@@ -989,20 +1015,36 @@ class VideoBrowserBot:
             float(interval_seconds),
             float(segment_duration) / max(MAX_FRAMES_PER_SEGMENT - 1, 1),
         )
-        self._play_from(start_seconds)
-        time.sleep(0.5)
-        enter_deadline = time.time() + 2.0
+        if trust_play_segment:
+            self._ensure_video_playing()
+            time.sleep(0.35)
+        else:
+            self._play_from(start_seconds)
+            time.sleep(0.5)
+        enter_deadline = time.time() + 2.5
+        entered = False
         while time.time() < enter_deadline:
             if frame_in_segment_window(
                 self._video_time(), start_seconds, segment_duration, slack=0.8
             ):
+                entered = True
                 break
+            if trust_play_segment:
+                self._ensure_video_playing()
             time.sleep(0.05)
+        if not entered:
+            print(
+                "[Browser Bot]: Segment playback did not enter the window; "
+                "seeking to segment start."
+            )
+            self._play_from(start_seconds)
+            time.sleep(0.45)
         frames: list[tuple[float, str]] = []
         last_bucket = -1
         last_time = -1.0
         stalled = 0
-        deadline = time.time() + segment_duration + 3.0
+        max_stall = max(12, int(segment_duration / 0.12) + 4)
+        deadline = time.time() + segment_duration + 4.0
         while time.time() < deadline:
             current = self._video_time()
             if frame_in_segment_window(current, start_seconds, segment_duration):
@@ -1020,9 +1062,14 @@ class VideoBrowserBot:
                     except Exception:
                         pass
                 break
-            if frames and abs(current - last_time) < 0.02:
+            if abs(current - last_time) < 0.02:
                 stalled += 1
-                if stalled >= 6:
+                if stalled % 4 == 0:
+                    self._ensure_video_playing()
+                if stalled >= max_stall:
+                    print(
+                        "[Browser Bot]: Playback stalled; switching to seek-based capture."
+                    )
                     break
             else:
                 stalled = 0
@@ -1030,6 +1077,16 @@ class VideoBrowserBot:
             if len(frames) >= MAX_FRAMES_PER_SEGMENT:
                 break
             time.sleep(min(0.15, max(interval_seconds / 2, 0.08)))
+        if len(frames) < MIN_FRAMES_PER_SEGMENT:
+            print(
+                f"[Browser Bot]: Realtime capture got {len(frames)} frame(s); "
+                f"using seek fallback for {segment_duration:.1f}s segment."
+            )
+            seek_frames = self._capture_by_seek(
+                start_seconds, segment_duration, interval_seconds
+            )
+            if len(seek_frames) > len(frames):
+                frames = seek_frames
         try:
             self.page.evaluate(
                 """() => {
@@ -1091,6 +1148,10 @@ class VideoBrowserBot:
             frames.append((timestamp, self._screenshot_video_base64()))
             timestamp += interval_seconds
         print(f"[Browser Bot]: Captured {len(frames)} live keyframes from the player.")
+        try:
+            self._seek_video(0.0)
+        except Exception:
+            pass
         return frames
 
     def fill_segment_label(

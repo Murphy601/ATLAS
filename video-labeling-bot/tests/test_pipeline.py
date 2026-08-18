@@ -20,7 +20,7 @@ def test_process_live_task_fills_every_segment_including_no_action():
                 SegmentRow(number=2, start_seconds=3.0, locator_index=1),
             ]
 
-        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds):
+        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds, **kwargs):
             count = int(segment_duration / interval_seconds)
             return [
                 (start_seconds + index, f"frame-{start_seconds}-{index}")
@@ -63,7 +63,7 @@ def test_process_live_task_keeps_ai_draft_when_model_says_no_action():
                 )
             ]
 
-        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds):
+        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds, **kwargs):
             return [(0.0, "frame-a")]
 
         def fill_segment_label(self, segment_number, label, start_seconds=None):
@@ -100,7 +100,7 @@ def test_process_live_task_rewrites_generic_animal_draft_when_model_says_no_acti
                 )
             ]
 
-        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds):
+        def capture_segment_frames(self, start_seconds, segment_duration, interval_seconds, **kwargs):
             return [(0.0, "frame-a")]
 
         def fill_segment_label(self, segment_number, label, start_seconds=None):

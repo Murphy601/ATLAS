@@ -48,6 +48,12 @@ def test_perform_draft_surgery_locks_pouch_noun():
     )
 
 
+def test_perform_draft_surgery_locks_scrub_over_wash():
+    draft = "scrub grey shirt with both hands in black basin"
+    vision = "wash grey shirt with both hands in black basin"
+    assert perform_draft_surgery(draft, vision) == draft
+
+
 def test_lint_label_final_splits_scrub_and_squeeze():
     raw = "scrub and squeeze grey shirt with both hands"
     assert lint_label_final(raw) == (
