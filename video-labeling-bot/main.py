@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from browser_automation import SegmentRow, VideoBrowserBot
 from config import (
+    ATLAS_LABEL_MODE,
     DEFAULT_FRAME_INTERVAL,
     DEFAULT_PORTAL_URL,
     DEFAULT_SEGMENT_DURATION,
@@ -274,7 +275,7 @@ def run_live_queue(
     )
     while max_episodes is None or episode < max_episodes:
         if not bot.has_open_episode():
-            bot.open_work_queue()
+            bot.ensure_labeling_ready(timeout=90.0)
         if not bot.has_open_episode():
             if not bot.wait_for_new_episode("", timeout=next_timeout):
                 print("[Pipeline]: No clip opened. Stopping the queue.")
@@ -371,6 +372,12 @@ def parse_args():
         help="Submit without the interactive review pause. Default is review-then-submit.",
     )
     parser.add_argument(
+        "--mode",
+        choices=("practice", "assessment", "auto"),
+        default=os.getenv("ATLAS_LABEL_MODE", ATLAS_LABEL_MODE),
+        help="practice = training Practice assessment; assessment = graded 70%% test; auto = practice then graded.",
+    )
+    parser.add_argument(
         "--headless",
         action="store_true",
         default=_env_flag("HEADLESS", False),
@@ -387,6 +394,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    os.environ["ATLAS_LABEL_MODE"] = args.mode
     portal_url = args.url
     sample_video = (args.video or "").strip()
     auto_submit = args.auto_submit

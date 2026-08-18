@@ -680,7 +680,24 @@ SELECTORS = {
     "play_button": 'button[aria-label*="Play" i], button:has-text("Play")',
     "play_segment": 'button:has-text("Play segment")',
     "tasks_nav": 'a:has-text("Tasks"), button:has-text("Tasks"), [href*="/tasks"]',
-    "continue_practice": 'button:has-text("Continue Assessment Practice"), a:has-text("Continue Assessment Practice")',
+    "training_home": 'a:has-text("Training"), button:has-text("Training"), [href*="/training"], [href*="/onboarding"]',
+    "practice_assessment": (
+        'a:has-text("Practice assessment"), button:has-text("Practice assessment"), '
+        '[role="link"]:has-text("Practice assessment"), [role="button"]:has-text("Practice assessment")'
+    ),
+    "graded_assessment": (
+        'a:has-text("Assessment"), button:has-text("Assessment"), '
+        '[role="link"]:has-text("Assessment"), [role="button"]:has-text("Assessment")'
+    ),
+    "continue_assessment": (
+        'button:has-text("Continue Assessment"), a:has-text("Continue Assessment"), '
+        'button:has-text("Continue assessment")'
+    ),
+    "continue_practice": (
+        'button:has-text("Continue Assessment Practice"), a:has-text("Continue Assessment Practice"), '
+        'button:has-text("Continue practice"), a:has-text("Continue practice"), '
+        'button:has-text("Start practice"), button:has-text("Begin practice")'
+    ),
     "review_task": 'button:has-text("Review"), a:has-text("Review")',
     "start_task": 'button:has-text("Start"), a:has-text("Start"), button:has-text("Open")',
     "next_task": 'button:has-text("Next task"), button:has-text("Next clip"), button:has-text("Next episode"), button:has-text("Next video"), a:has-text("Next task")',
@@ -692,6 +709,8 @@ SELECTORS = {
 
 # Pipeline defaults (overridable via environment variables)
 DEFAULT_PORTAL_URL = os.getenv("PORTAL_URL", "https://audit.atlascapture.io/")
+# practice = training sidebar Practice assessment; assessment = graded 70% test; auto = practice first
+ATLAS_LABEL_MODE = os.getenv("ATLAS_LABEL_MODE", "practice").strip().lower()
 DEFAULT_SEGMENT_DURATION = float(os.getenv("SEGMENT_DURATION", "3.0"))
 DEFAULT_FRAME_INTERVAL = float(os.getenv("FRAME_INTERVAL", "0.5"))
 MIN_FRAMES_PER_SEGMENT = int(os.getenv("MIN_FRAMES_PER_SEGMENT", "5"))

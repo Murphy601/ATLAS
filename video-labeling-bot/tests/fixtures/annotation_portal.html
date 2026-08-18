@@ -8,7 +8,16 @@
     <nav>
       <a href="#tasks" id="nav-tasks">Tasks</a>
     </nav>
-    <section id="tasks-page">
+    <aside id="training-sidebar">
+      <p>PROGRESS</p>
+      <button type="button" id="nav-practice-assessment">Practice assessment</button>
+      <button type="button" id="nav-assessment">Assessment</button>
+    </aside>
+    <section id="assessment-landing">
+      <h1>Assessment</h1>
+      <p>3 attempts, 70% to pass</p>
+    </section>
+    <section id="tasks-page" hidden>
       <h1>Tasks</h1>
       <p>Complete your next onboarding requirement</p>
       <button type="button" id="continue-practice">
@@ -70,18 +79,27 @@
       <button type="button" id="next-task" hidden>Next task</button>
     </section>
     <script>
-      document.getElementById("continue-practice").addEventListener("click", () => {
-        document.getElementById("tasks-page").hidden = true;
-        document.getElementById("clip-page").hidden = false;
-      });
-      document.getElementById("review-task").addEventListener("click", () => {
-        document.getElementById("tasks-page").hidden = true;
-        document.getElementById("clip-page").hidden = false;
-      });
-      document.getElementById("nav-tasks").addEventListener("click", (event) => {
-        event.preventDefault();
+      function showPracticeQueue() {
+        document.getElementById("assessment-landing").hidden = true;
         document.getElementById("tasks-page").hidden = false;
         document.getElementById("clip-page").hidden = true;
+      }
+      function showClipEditor() {
+        document.getElementById("assessment-landing").hidden = true;
+        document.getElementById("tasks-page").hidden = true;
+        document.getElementById("clip-page").hidden = false;
+      }
+      document.getElementById("nav-practice-assessment").addEventListener("click", showPracticeQueue);
+      document.getElementById("nav-assessment").addEventListener("click", () => {
+        document.getElementById("assessment-landing").hidden = false;
+        document.getElementById("tasks-page").hidden = true;
+        document.getElementById("clip-page").hidden = true;
+      });
+      document.getElementById("continue-practice").addEventListener("click", showClipEditor);
+      document.getElementById("review-task").addEventListener("click", showClipEditor);
+      document.getElementById("nav-tasks").addEventListener("click", (event) => {
+        event.preventDefault();
+        showPracticeQueue();
       });
       document.getElementById("annotation-form").addEventListener("submit", (event) => {
         event.preventDefault();

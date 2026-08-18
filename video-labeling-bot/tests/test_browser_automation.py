@@ -7,6 +7,19 @@ from browser_automation import VideoBrowserBot, frame_in_segment_window, sample_
 FIXTURE = Path(__file__).parent / "fixtures" / "annotation_portal.html"
 
 
+def test_open_work_queue_from_assessment_landing_clicks_practice(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    try:
+        bot.start(FIXTURE.resolve().as_uri())
+        assert bot.segment_count() == 0
+        mode = bot.open_work_queue()
+        assert mode == "practice"
+        assert bot.segment_count() >= 2
+        assert bot.page.locator("#clip-page").is_visible()
+    finally:
+        bot.stop()
+
+
 def test_open_work_queue_clicks_assessment_practice(tmp_path):
     bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
     try:

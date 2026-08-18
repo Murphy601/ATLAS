@@ -11,6 +11,7 @@ import numpy as np
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 from config import (
+    ATLAS_LABEL_MODE,
     MAX_FRAMES_PER_SEGMENT,
     MIN_FRAMES_PER_SEGMENT,
     SELECTORS,
@@ -26,7 +27,8 @@ SEEK_SETTLE_HEADED = 0.8
 SEEK_SETTLE_HEADLESS = 0.05
 WINDOW_SLACK_SECONDS = 0.6
 APP_READY_SELECTOR = (
-    f'{SELECTORS["tasks_nav"]}, {SELECTORS["continue_practice"]}, '
+    f'{SELECTORS["tasks_nav"]}, {SELECTORS["training_home"]}, '
+    f'{SELECTORS["continue_practice"]}, {SELECTORS["practice_assessment"]}, '
     f'{SELECTORS["segment_input"]}'
 )
 
@@ -176,41 +178,172 @@ class VideoBrowserBot:
     def wait_for_manual_login(
         self, check_selector: str = APP_READY_SELECTOR, timeout: int = 300
     ):
-        """Waits for login, then opens Tasks → practice or a listed episode."""
+        """Waits for login, then opens Practice assessment or a listed episode."""
         print(
-            "[Browser Bot]: Log in if needed. After login I will open Tasks "
-            "and either Continue Assessment Practice or a listed task."
+            "[Browser Bot]: Log in if needed. After login I will open "
+            "Practice assessment (training sidebar) or a listed task."
         )
         try:
             self.page.wait_for_selector(check_selector, timeout=timeout * 1000)
             print("[Browser Bot]: Atlas app is ready.")
         except PlaywrightTimeoutError:
             print("[Browser Bot]: Still on login or unknown page. Continuing...")
-        self.open_work_queue()
-        try:
-            self.page.wait_for_selector(
-                SELECTORS["segment_input"], timeout=timeout * 1000
-            )
-            print("[Browser Bot]: Segment editor is open.")
-        except PlaywrightTimeoutError:
+        if not self.ensure_labeling_ready(timeout=float(timeout)):
             print(
-                "[Browser Bot]: Segment inputs not found yet. "
-                "Open a practice clip or episode if it is not already visible."
+                "[Browser Bot]: Labeling editor not ready yet. "
+                "Open Practice assessment from the training sidebar, then retry."
             )
 
+    def segment_count(self) -> int:
+        """Count visible Atlas segment label inputs (0 on Assessment landing pages)."""
+        try:
+            count = self.page.evaluate(
+                """() => {
+                    const inputs = Array.from(document.querySelectorAll(
+                        'input[data-segment-start-seconds], '
+                        + 'input[aria-label*="Segment"][aria-label*="label" i]'
+                    ));
+                    return inputs.filter((el) => {
+                        if (!(el instanceof HTMLElement)) return false;
+                        let node = el;
+                        while (node) {
+                            if (node.hidden) return false;
+                            const style = window.getComputedStyle(node);
+                            if (style.display === 'none' || style.visibility === 'hidden') {
+                                return false;
+                            }
+                            node = node.parentElement;
+                        }
+                        const aria = el.getAttribute('aria-label') || '';
+                        const hasStart = el.hasAttribute('data-segment-start-seconds');
+                        const segmentLabel = /Segment\\s+\\d+\\s+label/i.test(aria);
+                        return hasStart || segmentLabel;
+                    }).length;
+                }"""
+            )
+            return int(count or 0)
+        except Exception:
+            return 0
+
     def _has_visible_segments(self) -> bool:
-        locator = self.page.locator(SELECTORS["segment_input"])
-        for index in range(locator.count()):
+        return self.segment_count() > 0
+
+    def has_open_episode(self) -> bool:
+        """True when a practice clip or live episode editor has segment rows."""
+        return self._has_visible_segments()
+
+    def _wait_for_segment_rows(self, timeout: float = 20.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.segment_count() > 0:
+                return True
+            time.sleep(0.4)
+        return False
+
+    def _click_training_step(self, title: str, *, exclude_practice: bool = False) -> bool:
+        """Click a training sidebar row (e.g. Practice assessment vs Assessment)."""
+        locator = self.page.locator(
+            f'a:has-text("{title}"), button:has-text("{title}"), '
+            f'[role="link"]:has-text("{title}"), [role="button"]:has-text("{title}"), '
+            f'li:has-text("{title}"), div:has-text("{title}")'
+        )
+        try:
+            total = locator.count()
+        except Exception:
+            total = 0
+        for index in range(total):
+            target = locator.nth(index)
             try:
-                if locator.nth(index).is_visible():
-                    return True
+                if not target.is_visible():
+                    continue
+                text = (target.inner_text() or "").strip()
+                if title.lower() not in text.lower():
+                    continue
+                if exclude_practice and "practice" in text.lower():
+                    continue
+                if title.lower() == "assessment" and "practice" in text.lower():
+                    continue
+                target.scroll_into_view_if_needed()
+                target.click(timeout=3000)
+                return True
             except Exception:
                 continue
         return False
 
-    def has_open_episode(self) -> bool:
-        """True when a practice clip or live episode editor is on screen."""
-        return self._has_visible_segments()
+    def _click_labeled_buttons(self, *labels: str) -> bool:
+        for label in labels:
+            if self._click_first_visible(
+                f'button:has-text("{label}"), a:has-text("{label}")'
+            ):
+                print(f"[Browser Bot]: Clicked {label}.")
+                time.sleep(1.0)
+                return True
+        return False
+
+    def _open_practice_assessment_flow(self) -> bool:
+        """Training UI: sidebar Practice assessment → Continue → segment editor."""
+        if self._click_first_visible(SELECTORS["practice_assessment"]):
+            print("[Browser Bot]: Opened Practice assessment.")
+            time.sleep(1.0)
+        elif self._click_training_step("Practice assessment"):
+            print("[Browser Bot]: Opened Practice assessment from training progress.")
+            time.sleep(1.0)
+
+        for label in (
+            "Continue Assessment Practice",
+            "Continue practice",
+            "Start practice",
+            "Begin practice",
+            "Continue Assessment",
+            "Continue",
+        ):
+            if self._click_labeled_buttons(label):
+                break
+
+        if self._wait_for_segment_rows(timeout=18.0):
+            print("[Browser Bot]: Practice clip editor is ready.")
+            return True
+        return False
+
+    def _open_graded_assessment_flow(self) -> bool:
+        """Training UI: sidebar Assessment (graded) → Continue → segment editor."""
+        if self._click_training_step("Assessment", exclude_practice=True):
+            print("[Browser Bot]: Opened graded Assessment.")
+            time.sleep(1.0)
+        elif self._click_first_visible(SELECTORS["graded_assessment"]):
+            print("[Browser Bot]: Opened graded Assessment.")
+            time.sleep(1.0)
+
+        for label in (
+            "Continue Assessment",
+            "Start Assessment",
+            "Begin Assessment",
+            "Continue",
+        ):
+            if self._click_labeled_buttons(label):
+                break
+
+        if self._wait_for_segment_rows(timeout=18.0):
+            print("[Browser Bot]: Graded assessment editor is ready.")
+            return True
+        return False
+
+    def ensure_labeling_ready(self, timeout: float = 120.0) -> bool:
+        """Navigate until segment rows exist and the in-page video is primed."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.segment_count() > 0:
+                try:
+                    self.prepare_video_playback()
+                except Exception as exc:
+                    print(f"[Browser Bot]: Video prep warning: {exc}")
+                print(
+                    f"[Browser Bot]: Segment editor is open ({self.segment_count()} rows)."
+                )
+                return True
+            self.open_work_queue()
+            time.sleep(0.8)
+        return False
 
     def _click_first_visible(self, selector: str, timeout_ms: int = 2500) -> bool:
         locator = self.page.locator(selector).first
@@ -332,42 +465,64 @@ class VideoBrowserBot:
             time.sleep(0.5)
 
     def go_to_tasks(self):
-        """Clicks the sidebar Tasks item, or opens /tasks."""
+        """Clicks the sidebar Tasks / Training item, or opens /tasks."""
         if self._click_first_visible(SELECTORS["tasks_nav"]):
             print("[Browser Bot]: Opened Tasks.")
+            time.sleep(0.8)
+            return
+        if self._click_first_visible(SELECTORS["training_home"]):
+            print("[Browser Bot]: Opened Training.")
             time.sleep(0.8)
             return
         if "atlascapture.io" in (self.page.url or ""):
             from urllib.parse import urljoin
 
-            tasks_url = urljoin(self.page.url, "/tasks")
-            if "/tasks" not in self.page.url:
-                print(f"[Browser Bot]: Navigating to {tasks_url}")
-                self.page.goto(tasks_url, wait_until="domcontentloaded")
-                time.sleep(0.8)
+            for path in ("/tasks", "/training", "/onboarding"):
+                tasks_url = urljoin(self.page.url, path)
+                if path not in self.page.url:
+                    print(f"[Browser Bot]: Navigating to {tasks_url}")
+                    self.page.goto(tasks_url, wait_until="domcontentloaded")
+                    time.sleep(0.8)
+                if self.segment_count() > 0 or path == "/tasks":
+                    break
 
     def open_work_queue(self) -> str:
-        """After login: Tasks → assessment practice, or first listed live task."""
-        if self._has_visible_segments():
+        """After login: training Practice assessment, or first listed live task."""
+        if self.segment_count() > 0:
             print("[Browser Bot]: Segment editor already open.")
             return "editor"
 
         self.go_to_tasks()
+        mode = ATLAS_LABEL_MODE
 
-        if self._click_first_visible(SELECTORS["continue_practice"]):
-            print("[Browser Bot]: Clicked Continue Assessment Practice.")
-            time.sleep(1.2)
-            return "practice"
+        if mode in {"practice", "auto", ""}:
+            if self._open_practice_assessment_flow():
+                return "practice"
+            if self._click_first_visible(SELECTORS["continue_practice"]):
+                if self._wait_for_segment_rows(timeout=15.0):
+                    return "practice"
+
+        if mode == "assessment":
+            if self._open_graded_assessment_flow():
+                return "assessment"
+            if self._click_first_visible(SELECTORS["continue_assessment"]):
+                if self._wait_for_segment_rows(timeout=15.0):
+                    return "assessment"
 
         for key in ("review_task", "start_task"):
             if self._click_first_visible(SELECTORS[key]):
                 print(f"[Browser Bot]: Opened listed task via {key}.")
                 time.sleep(1.2)
-                return "live"
+                if self._wait_for_segment_rows(timeout=12.0):
+                    return "live"
+
+        if mode == "auto":
+            if self._open_graded_assessment_flow():
+                return "assessment"
 
         print(
-            "[Browser Bot]: No practice button or listed task found. "
-            "Click Continue Assessment Practice or Review on a task if you see it."
+            "[Browser Bot]: No practice or task entry found. "
+            "Click Practice assessment in the training sidebar, then Continue."
         )
         return "manual"
 
