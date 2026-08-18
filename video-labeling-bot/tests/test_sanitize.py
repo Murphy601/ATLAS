@@ -811,13 +811,13 @@ def test_copied_twist_pliers_becomes_shears_twist_fold():
         "hold shears with right hand, twist blue cable with both hands"
     )
     assert apply_context_fixes(
-        copied, previous_label=copied, duration_seconds=3.4
+        copied, previous_label=copied, duration_seconds=4.0
     ) == fold
     assert choose_final_label(
         copied,
         copied,
         previous_label=copied,
-        duration_seconds=3.4,
+        duration_seconds=4.0,
         frames_have_video=True,
     ) == fold
     strip = "strip blue wire with pliers in right hand, hold wire with left hand"
@@ -964,7 +964,7 @@ def test_trusts_simpler_vision_over_compound_draft():
     assert choose_final_label(
         "pick up wrench from toolbox with right hand",
         "pick up wrench with right hand, place wrench in toolbox with right hand",
-        duration_seconds=3.0,
+        duration_seconds=4.0,
         frames_have_video=True,
     ) == "pick up wrench from toolbox with right hand"
     assert choose_final_label(
@@ -1033,7 +1033,7 @@ def test_assessment_pass_count_object_and_hand_golds():
     assert choose_final_label(
         inflated,
         sachet_pass,
-        duration_seconds=3.2,
+        duration_seconds=4.0,
         frames_have_video=True,
     ) == sachet_pass
     assert sanitize_label(

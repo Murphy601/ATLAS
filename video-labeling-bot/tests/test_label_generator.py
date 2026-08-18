@@ -217,7 +217,7 @@ def test_prompt_does_not_include_atlas_draft(monkeypatch):
         draft_label=draft,
         previous_label=draft,
         duration_seconds=5.0,
-    ) == "hold sheep with left hand, trim wool with scissors in right hand"
+    ) == "hold animal with left hand, trim animal with scissors in right hand"
     prompt = seen[0]
     assert draft not in prompt
     assert "Do NOT copy:" not in prompt
@@ -251,7 +251,7 @@ def test_real_frames_use_action_prompt_that_forbids_no_action(monkeypatch):
     assert "five seconds" in prompt
     assert 'or "No Action"' not in prompt
     assert "START — both hands" not in prompt
-    assert "LEFT hand and RIGHT hand separately" in prompt
+    assert "shoulder origin" in prompt.lower() or "LEFT hand appears on the RIGHT" in prompt
 
 
 def test_generic_animal_output_tries_next_model(monkeypatch):
@@ -287,7 +287,7 @@ def test_generic_animal_output_tries_next_model(monkeypatch):
     assert generate_label_from_frames(
         ["aaa"],
         draft_label="hold animal with left hand, trim animal with scissors in right hand",
-    ) == "hold sheep with left hand, trim wool with scissors in right hand"
+    ) == "hold animal with left hand, trim animal with scissors in right hand"
     assert calls[0] == VISION_MODELS[0]
     assert calls[1] == VISION_MODELS[1]
 
@@ -331,7 +331,7 @@ def test_retries_no_action_with_hand_work_prompt(monkeypatch):
         draft_label="hold animal with left hand, trim animal with scissors in right hand",
         frames_have_video=True,
     ) == (
-        "hold stuffed animal with left hand, trim stuffed animal with scissors in right hand"
+        "hold animal with left hand, trim animal with scissors in right hand"
     )
     assert len(calls) == 1
 

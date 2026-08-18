@@ -8,6 +8,18 @@ load_dotenv()
 # Minimum object-noun token overlap before Vision may override an Atlas draft.
 OBJECT_SIMILARITY_THRESHOLD = 0.8
 
+# Grading rulebook: short windows and clause caps (NLP semantic parser limits).
+SHORT_WINDOW_MAX_SECONDS = 3.5
+MEDIUM_WINDOW_MAX_CLAUSES = 2
+
+SPATIAL_HAND_RULES = """
+EGOCENTRIC SPATIAL HAND MAPPING (CRITICAL — prevents Fact Wrong Hand):
+The user's LEFT hand appears on the RIGHT side of an egocentric frame.
+The user's RIGHT hand appears on the LEFT side of the frame.
+Determine hand placement from anatomical shoulder/wrist origin, NOT from screen-left vs screen-right alone.
+When uncertain, trace which arm extends from the worker's left vs right shoulder before naming the hand.
+"""
+
 # System prompt enforcing Atlas Capture Standard Text Annotation Rules
 SYSTEM_PROMPT = """
 You are an expert video annotation bot for first-person (ego) video task labelling. Your sole job is to process input video keyframes or descriptions and output EXACT, audit-proof task labels according to strict guidelines.
@@ -52,9 +64,9 @@ CRITICAL ACTION RULES:
 3. DETECT TRANSFERS ACCURATELY:
    - Track hand ownership across frames: If an object moves from Hand A to Hand B, explicitly output "pass [object] from [hand A] to [hand B]".
    - Do not write hold/open when the first motion is pick up then pass.
-4. SHORT WINDOWS:
-   - Under 3 seconds: output EXACTLY 1 action clause.
-   - 3 to under 6 seconds: output at most 2 action clauses.
+4. SHORT WINDOWS (grading parser limits):
+   - Under 3.5 seconds: output EXACTLY 1 action clause. Strip any second clause.
+   - 3.5 seconds or longer: output at most 2 action clauses when two distinct actions occur.
    - Never output 3 actions for windows under 6 seconds.
    - pick up + pass is TWO clauses. Never write hold + pass + hold.
    - When Vision sees a single hold or pick up, do not force compound Atlas draft steps into the label.
@@ -109,9 +121,8 @@ CRITICAL HAND RULES:
 * PLURAL-ONLY TOOLS (CRITICAL): Tools with two blades/jaws MUST ALWAYS BE PLURAL: "scissors", "tongs", "pliers" (NEVER "scissor").
 
 ### 3. WATCH THE FRAMES BEFORE YOU WRITE
-EGO CAMERA: these images are from the worker's head. Do not mirror.
-* The hand on the LEFT SIDE of the image is the LEFT hand.
-* The hand on the RIGHT SIDE of the image is the RIGHT hand.
+EGO CAMERA: these images are from the worker's head-mounted view.
+""" + SPATIAL_HAND_RULES + """
 Compare FIRST frame (start) to LAST frame (end):
 * pick up = object was at rest on a surface AND leaves it. If it is already in the hand in the FIRST frame, it is not pick up.
 * hold = off-hand keeps gripping while the other hand does different work. Do not add hold for an empty hand or for the same tool already named.
@@ -211,7 +222,8 @@ TEMPLATE: verb + object + with [left hand|right hand|both hands]
 No articles (a/an/the). No digits. No trailing period. No pronouns (their/his/her).
 No inspect, check, adjust, reach, manipulate, grab, then, next, other, fingers, or generic tool/animal.
 grab → pick up. adjust → slide/align/rotate/flatten/tighten/fold/tuck/squeeze.
-Max 3 comma-separated clauses. LEFT side of each image is the LEFT hand.
+Max 3 comma-separated clauses.
+""" + SPATIAL_HAND_RULES + """
 place/set always needs a location (on table, in bin, on ground).
 
 both hands ONLY when both hands do the SAME motion on the SAME object (knead dough, lift a box, seal a bag).
@@ -267,7 +279,8 @@ CRITICAL ACTION RULES:
 NEVER use sew, draw, write, press, or use tool for sewing. Sewing is insert sewing needle into [object] with [hand] and pull sewing needle with [hand].
 If a hand turns a glass cup while wiping, write rotate [object] with [hand], not hold.
 If an object moves from one hand to the other, write pass [object] from [hand A] to [hand B].
-A window under 3 seconds has EXACTLY ONE action. Under 6 seconds, at most TWO actions. Never output 3 actions for short windows.
+A window under 3.5 seconds has EXACTLY ONE action. At 3.5 seconds or longer, at most TWO actions. Never output 3 actions for short windows.
+""" + SPATIAL_HAND_RULES + """
 pick up + pass is TWO clauses. Never write hold + pass + hold.
 Use baseline object names: book not page, ground not lawn, cup not jar.
 When an Atlas reference draft is provided, you MUST only use nouns from the allowed whitelist.
@@ -342,6 +355,12 @@ VERB_CORRECTIONS = {
     "smoothing": "smoothen",
     "smoothe": "smoothen",
     "smooth": "smoothen",
+    "scrubbing": "scrub",
+    "wiping": "wipe",
+    "washing": "wash",
+    "ironing": "iron",
+    "stirring": "stir",
+    "digging": "dig",
     "erasing": "wipe",
 }
 

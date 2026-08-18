@@ -6,7 +6,9 @@ from label_generator import (
     enforce_atlas_template,
     finalize_pipeline_label,
     held_objects_at_segment_end,
+    lint_atlas_syntax,
     lint_label_final,
+    lock_draft_nouns,
     perform_draft_surgery,
 )
 from frame_sampling import (
@@ -95,6 +97,30 @@ def test_apply_verb_state_from_frames_rewrites_pick_up_at_contact():
 
 def test_enforce_atlas_template_adds_missing_hand():
     assert enforce_atlas_template("pick up fork") == "pick up fork with right hand"
+
+
+def test_lint_atlas_syntax_splits_and_and_adds_hand():
+    assert lint_atlas_syntax("scrubbing shirt and squeezing shirt") == (
+        "scrub shirt with right hand, squeeze shirt with right hand"
+    )
+
+
+def test_lock_draft_nouns_maps_package_to_pouch():
+    draft = "pick up glass cleaner pouch with right hand"
+    vision = "pick up blue package with right hand"
+    assert lock_draft_nouns(draft, vision) == (
+        "pick up glass cleaner pouch with right hand"
+    )
+
+
+def test_duration_cap_one_clause_under_3_5_seconds():
+    from label_generator import enforce_segment_action_limit
+
+    bloated = "hold bottle with left hand, pass bottle from left hand to right hand"
+    assert enforce_segment_action_limit(bloated, 3.4) == "hold bottle with left hand"
+    assert enforce_segment_action_limit(bloated, 3.5) == (
+        "hold bottle with left hand, pass bottle from left hand to right hand"
+    )
 
 
 def test_static_segment_collapses_to_start_frame():

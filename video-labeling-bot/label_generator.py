@@ -25,6 +25,10 @@ from config import (
     MAX_ACTIONS_PER_LABEL,
     NO_ACTION_MIN_SECONDS,
     OBJECT_SIMILARITY_THRESHOLD,
+    SHORT_WINDOW_MAX_SECONDS,
+    MEDIUM_WINDOW_MAX_CLAUSES,
+    SPATIAL_HAND_RULES,
+    VERB_CORRECTIONS,
     WORK_MICROS,
     KEEP_PICKUP_BEFORE,
     MISSING_IF_DROPPED,
@@ -1309,14 +1313,12 @@ def _named_implement_in(*texts: str | None) -> str | None:
 
 
 def _max_clauses_for_duration(duration_sec: float | None) -> int | None:
-    """Hard caps: under 3s → 1 clause; under 6s → 2 clauses."""
+    """Grading parser caps: under 3.5s → 1 clause; 3.5s+ → 2 clauses max."""
     if duration_sec is None:
-        return None
-    if duration_sec < 3.0:
+        return MEDIUM_WINDOW_MAX_CLAUSES
+    if duration_sec < SHORT_WINDOW_MAX_SECONDS:
         return 1
-    if duration_sec < 6.0:
-        return 2
-    return None
+    return MEDIUM_WINDOW_MAX_CLAUSES
 
 
 def enforce_segment_action_limit(label: str, duration_sec: float | None) -> str:
@@ -1562,7 +1564,7 @@ def _rewrite_short_bag_place_to_pass(
     duration_seconds: float | None,
 ) -> str:
     """Short bag pick-up windows are a hand-off, not a place on the counter."""
-    if duration_seconds is None or duration_seconds >= 3.0:
+    if duration_seconds is None or duration_seconds >= SHORT_WINDOW_MAX_SECONDS:
         return label
     clauses = split_actions(label)
     if len(clauses) != 2:
@@ -2119,7 +2121,7 @@ def build_draft_vocabulary_system_addon(
     forbidden = ", ".join(f"'{word}'" for word in FORBIDDEN_GENERIC_OBJECTS[:6])
     return (
         "\n\nCRITICAL DRAFT VOCABULARY LOCK:\n"
-        f"MUST only use these nouns: [{quoted}].\n"
+        f"MUST only use these nouns: [{quoted}]. Select object nouns EXCLUSIVELY from this list.\n"
         f"You are strictly forbidden from outputting generic terms like {forbidden}.\n"
         "DO NOT rename items to generic colors or categories "
         "(e.g. use 'glass cleaner pouch' NOT 'blue package'; "
@@ -2345,23 +2347,111 @@ def _lock_draft_work_verbs(label: str, draft: str | None) -> str:
     return ", ".join(updated)
 
 
+def _should_lock_clause_noun(clause: str) -> bool:
+    """Skip noun-lock on implement/transfer clauses the grader parses separately."""
+    verb = _leading_verb(clause)
+    if verb in {"insert", "pull", "pass", "cut", "strip", "rake", "water", "fill", "dig"}:
+        return False
+    if re.search(
+        r"\b(?:sewing needle|needle into|into cap|into patch)\b",
+        clause,
+        re.IGNORECASE,
+    ):
+        return False
+    if re.search(r"\binsert\b.*\bneedle\b", clause, re.IGNORECASE):
+        return False
+    return True
+
+
+def _map_clause_object_to_draft_noun(clause: str, draft_nouns: list[str]) -> str:
+    """Replace a Vision object phrase with the closest Atlas draft noun."""
+    if not clause or not draft_nouns:
+        return clause
+    obj = _clause_object_noun(clause)
+    if not obj:
+        return clause
+    obj_tokens = _object_phrase_tokens(obj)
+    best = draft_nouns[0]
+    best_score = -1
+    for noun in draft_nouns:
+        score = len(obj_tokens & _object_phrase_tokens(noun))
+        if score > best_score:
+            best_score = score
+            best = noun
+    if obj.casefold() == best.casefold():
+        return clause
+    return re.sub(re.escape(obj), best, clause, count=1, flags=re.IGNORECASE)
+
+
+def _object_needs_draft_lock(obj: str, draft_nouns: list[str]) -> bool:
+    """True when Vision used a different object phrase than any Atlas draft noun."""
+    if not obj or not draft_nouns:
+        return False
+    obj_cf = obj.casefold().strip()
+    return not any(obj_cf == noun.casefold().strip() for noun in draft_nouns)
+
+
+def lock_draft_nouns(atlas_draft: str | None, vision_output: str) -> str:
+    """Keep Atlas draft nouns; let Vision update active verbs and hands only."""
+    if not atlas_draft or not vision_output or vision_output == "No Action":
+        return vision_output
+    updated = _lock_atlas_draft_objects(vision_output, atlas_draft)
+    if looks_like_leftover_label(atlas_draft):
+        return updated
+    draft_nouns = draft_object_phrases(atlas_draft)
+    if not draft_nouns:
+        return updated
+    primary = draft_nouns[0]
+    for forbidden in FORBIDDEN_GENERIC_OBJECTS:
+        updated = re.sub(
+            rf"\b{re.escape(forbidden)}\b",
+            primary,
+            updated,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    needs_map = bool(GENERIC_VISION_DEGRADATIONS.search(updated))
+    if not needs_map:
+        for clause in split_actions(updated):
+            obj = _clause_object_noun(clause)
+            if obj and _object_needs_draft_lock(obj, draft_nouns):
+                needs_map = True
+                break
+    if not needs_map:
+        return updated
+    mapped: list[str] = []
+    for clause in split_actions(updated):
+        if _should_lock_clause_noun(clause):
+            mapped.append(_map_clause_object_to_draft_noun(clause, draft_nouns))
+        else:
+            mapped.append(clause)
+    return ", ".join(mapped)
+
+
+def lint_atlas_syntax(text: str) -> str:
+    """Deterministic pre-submit linter for the grading NLP semantic parser."""
+    if not text or text == "No Action":
+        return text
+    updated = lint_label_final(text)
+    for progressive, imperative in sorted(
+        VERB_CORRECTIONS.items(), key=lambda item: len(item[0]), reverse=True
+    ):
+        updated = re.sub(
+            rf"\b{re.escape(progressive)}\b",
+            imperative,
+            updated,
+            flags=re.IGNORECASE,
+        )
+    updated = enforce_atlas_template(updated)
+    return updated.strip(" ,")
+
+
 def perform_draft_surgery(atlas_draft: str | None, vision_label: str) -> str:
     """Keep Atlas object nouns; let Vision update verbs and hands."""
     if not atlas_draft or not vision_label or vision_label == "No Action":
         return vision_label
-    updated = _lock_atlas_draft_objects(vision_label, atlas_draft)
+    updated = lock_draft_nouns(atlas_draft, vision_label)
     updated = _lock_draft_work_verbs(updated, atlas_draft)
-    draft_phrases = draft_object_phrases(atlas_draft)
-    if draft_phrases:
-        primary = draft_phrases[0]
-        for forbidden in FORBIDDEN_GENERIC_OBJECTS:
-            updated = re.sub(
-                rf"\b{re.escape(forbidden)}\b",
-                primary,
-                updated,
-                count=1,
-                flags=re.IGNORECASE,
-            )
     return updated
 
 
@@ -2479,9 +2569,8 @@ def finalize_pipeline_label(
                     count=1,
                     flags=re.IGNORECASE,
                 )
-    updated = lint_label_final(updated)
+    updated = lint_atlas_syntax(updated)
     updated = sanitize_label(updated)
-    updated = enforce_atlas_template(updated)
     updated = apply_context_fixes(
         updated,
         draft_label,
@@ -2785,7 +2874,7 @@ def _prefer_simpler_model_over_compound_draft(
             return False
     if (
         duration_seconds is not None
-        and duration_seconds >= 6.0
+        and duration_seconds >= SHORT_WINDOW_MAX_SECONDS
         and _has_release(draft)
         and not _has_release(model)
         and _same_goal_verb(model, draft)
@@ -3065,7 +3154,7 @@ def choose_final_label(
         if len(split_actions(model)) > len(split_actions(draft)):
             if (
                 duration_seconds is not None
-                and duration_seconds < 6.0
+                and duration_seconds < SHORT_WINDOW_MAX_SECONDS
                 and not looks_like_leftover_label(draft_raw)
             ):
                 print(
@@ -3125,7 +3214,7 @@ def choose_final_label(
             ):
                 if (
                     duration_seconds is not None
-                    and duration_seconds < 6.0
+                    and duration_seconds < SHORT_WINDOW_MAX_SECONDS
                     and not _is_case_a_stabilize(draft)
                 ):
                     print(
@@ -3432,8 +3521,8 @@ def _vision_user_content(
         "These frames are sampled while the clip plays at normal speed "
         "(laundry, cooking, dishes, grooming, assembly, crafts). "
         "Always output an Atlas label or No Action. Never refuse. Never explain. "
-        "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. Do not mirror. "
-        "Name the hand, the object, and the motion. No pronouns. No -ing. No articles. "
+        + SPATIAL_HAND_RULES
+        + "Name the hand, the object, and the motion. No pronouns. No -ing. No articles. "
         "Always label the off-hand when it holds or works. "
         "If an object changes hands, write pass [object] from [hand] to [hand]. "
         "place/set always needs a location. "
@@ -3491,18 +3580,16 @@ def _vision_user_content(
             "Missing the hold is Missing Action. "
             "A clear dish is glass plate, not bowl. "
             "Do not write stuffed animal, scissors, dough, hose, or any example unless it is visible. "
-            "LEFT side of each image = LEFT hand. RIGHT side = RIGHT hand. "
             "Atlas syntax: verb + object + with [hand]. Never refuse. Never explain. "
-            "Output only the raw label."
+            + SPATIAL_HAND_RULES
+            + "Output only the raw label."
         )
     user_content: list[dict] = [{"type": "text", "text": intro}]
     if duration_seconds is not None:
         cap = (
             "EXACTLY 1 action clause."
-            if duration_seconds < 3.0
-            else "at most 2 action clauses."
-            if duration_seconds < 6.0
-            else "at most 2 action clauses unless a clear pass/place is visible."
+            if duration_seconds < SHORT_WINDOW_MAX_SECONDS
+            else f"at most {MEDIUM_WINDOW_MAX_CLAUSES} action clauses."
         )
         user_content[0]["text"] += (
             f" This window is {duration_seconds:.1f} seconds long. Output {cap}"
@@ -3548,9 +3635,9 @@ def _vision_user_content(
         if frame_timestamps and index < len(frame_timestamps):
             stamp = f" t={frame_timestamps[index]:.2f}s"
         if index == 0:
-            caption = f"Frame {index + 1}/{total} START{stamp} — LEFT hand and RIGHT hand separately."
+            caption = f"Frame {index + 1}/{total} START{stamp} — identify left vs right hand from shoulder origin."
         elif index + 1 == total:
-            caption = f"Frame {index + 1}/{total} END{stamp} — LEFT hand and RIGHT hand, what changed."
+            caption = f"Frame {index + 1}/{total} END{stamp} — identify left vs right hand, what changed."
         else:
             caption = f"Frame {index + 1}/{total}{stamp}"
         user_content.append({"type": "text", "text": caption})
