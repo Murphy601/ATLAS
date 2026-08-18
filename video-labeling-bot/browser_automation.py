@@ -374,7 +374,7 @@ class VideoBrowserBot:
 
     def play_segment_clip(self, segment_number: int):
         """Clicks 'Play segment N' so Atlas plays that window at 1x. No seeking."""
-        self._exit_player_fullscreen()
+        self._enter_player_fullscreen()
         row_input = self.page.locator(
             f'input[aria-label="Segment {segment_number} label"]'
         ).first
@@ -549,6 +549,7 @@ class VideoBrowserBot:
                 if (video) video.pause();
             }"""
         )
+        self._enter_player_fullscreen()
         print("[Browser Bot]: In-page video is ready for frame capture.")
 
     def _enter_player_fullscreen(self) -> bool:
@@ -916,12 +917,9 @@ class VideoBrowserBot:
             )
         else:
             self._enter_player_fullscreen()
-            try:
-                frames = self._capture_realtime(
-                    start_seconds, segment_duration, interval_seconds
-                )
-            finally:
-                self._exit_player_fullscreen()
+            frames = self._capture_realtime(
+                start_seconds, segment_duration, interval_seconds
+            )
         in_window = [
             item
             for item in frames
@@ -1095,6 +1093,7 @@ class VideoBrowserBot:
             print("[Browser Bot]: Video duration unavailable; capturing 0 frames.")
             return []
 
+        self._enter_player_fullscreen()
         frames: list[tuple[float, str]] = []
         timestamp = 0.0
         while timestamp < end_time:
