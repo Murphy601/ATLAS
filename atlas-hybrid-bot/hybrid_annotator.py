@@ -9,10 +9,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-try:
-    import mediapipe as mp
-except ImportError:  # pragma: no cover - optional at import for lint-only tests
-    mp = None
+from mediapipe_hands import close_hand_tracker, get_hand_tracker
 
 SHORT_WINDOW_MAX_SECONDS = 3.5
 DEFAULT_MOTION_THRESHOLD = 0.015
@@ -90,7 +87,7 @@ class AtlasHybridPipeline:
     state_memory: SegmentStateMemory = field(default_factory=SegmentStateMemory)
     ego_swap_hands: bool = True
     motion_threshold: float = DEFAULT_MOTION_THRESHOLD
-    _hands: object | None = field(default=None, repr=False)
+    _hand_from_draft_fallback: bool = True
 
     def __post_init__(self) -> None:
         swap = os.getenv("EGO_SWAP_HANDS", "true").strip().lower()
@@ -103,66 +100,49 @@ class AtlasHybridPipeline:
             except ValueError:
                 pass
 
-    def _ensure_mediapipe(self):
-        if mp is None:
-            raise RuntimeError(
-                "mediapipe is not installed. Run: pip install mediapipe opencv-python numpy"
-            )
-        if self._hands is None:
-            self._hands = mp.solutions.hands.Hands(
-                static_image_mode=False,
-                max_num_hands=2,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
-        return self._hands
-
     def close(self) -> None:
-        if self._hands is not None:
-            self._hands.close()
-            self._hands = None
+        close_hand_tracker()
 
     def analyze_frame_motion_from_memory(
         self,
         frame_arrays: list[np.ndarray],
         sample_rate: int = 2,
+        draft_label: str | None = None,
     ) -> HandMotionProfile:
         """Wrist velocity vectors from BGR/RGB numpy frames (browser capture path)."""
         if not frame_arrays:
-            return HandMotionProfile()
-        try:
-            hands = self._ensure_mediapipe()
-        except RuntimeError:
-            return HandMotionProfile()
+            return HandMotionProfile(
+                detected_hand=_hand_tag_from_draft(draft_label) or "with right hand"
+            )
 
         left_positions: list[tuple[float, float] | None] = []
         right_positions: list[tuple[float, float] | None] = []
         sampled = frame_arrays[:: max(1, sample_rate)]
 
-        for frame in sampled:
-            rgb = _to_rgb(frame)
-            results = hands.process(rgb)
-            left_pos, right_pos = None, None
-            if results.multi_hand_landmarks and results.multi_handedness:
-                for landmarks, handedness in zip(
-                    results.multi_hand_landmarks,
-                    results.multi_handedness,
-                ):
-                    label = handedness.classification[0].label
-                    if self.ego_swap_hands:
-                        label = "Right" if label == "Left" else "Left"
-                    wrist = landmarks.landmark[0]
-                    pos = (wrist.x, wrist.y)
-                    if label == "Left":
-                        left_pos = pos
-                    else:
-                        right_pos = pos
-            left_positions.append(left_pos)
-            right_positions.append(right_pos)
+        try:
+            tracker = get_hand_tracker()
+            for frame in sampled:
+                rgb = _to_rgb(frame)
+                left_pos, right_pos = tracker.process_rgb(
+                    rgb,
+                    ego_swap_hands=self.ego_swap_hands,
+                )
+                left_positions.append(left_pos)
+                right_positions.append(right_pos)
+        except Exception as exc:
+            print(
+                f"[Hybrid]: Hand tracking unavailable ({exc}). "
+                "Using draft hand tags + regex only."
+            )
+            draft_hand = _hand_tag_from_draft(draft_label) or "with right hand"
+            return HandMotionProfile(detected_hand=draft_hand)
 
         v_left = _mean_wrist_velocity(left_positions)
         v_right = _mean_wrist_velocity(right_positions)
         detected = _hand_from_velocities(v_left, v_right, self.motion_threshold)
+        draft_hand = _hand_tag_from_draft(draft_label)
+        if draft_hand and v_left <= self.motion_threshold and v_right <= self.motion_threshold:
+            detected = draft_hand
         start_left = left_positions[0] is not None if left_positions else False
         start_right = right_positions[0] is not None if right_positions else False
         return HandMotionProfile(
@@ -257,6 +237,10 @@ class AtlasHybridPipeline:
         elif clauses:
             text = ", ".join(clauses)
 
+        text = re.sub(r"\bin both hands\b", "with both hands", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bin left hand\b", "with left hand", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bin right hand\b", "with right hand", text, flags=re.IGNORECASE)
+
         if not any(
             tag in text
             for tag in ("with left hand", "with right hand", "with both hands")
@@ -275,7 +259,10 @@ class AtlasHybridPipeline:
     ) -> str:
         """In-memory frames → deterministic Atlas label (no LLM)."""
         duration = max(0.2, end_sec - start_sec)
-        motion = self.analyze_frame_motion_from_memory(frame_arrays)
+        motion = self.analyze_frame_motion_from_memory(
+            frame_arrays,
+            draft_label=draft_label,
+        )
         return self._finalize_segment(
             draft_label,
             duration,
@@ -355,6 +342,20 @@ def _mean_wrist_velocity(positions: list[tuple[float, float] | None]) -> float:
         distances.append(float(np.sqrt(dx * dx + dy * dy)))
         prev = pos
     return float(np.mean(distances)) if distances else 0.0
+
+
+def _hand_tag_from_draft(draft: str | None) -> str | None:
+    """Parse 'in both hands' / 'with right hand' from Atlas draft text."""
+    if not draft:
+        return None
+    blob = draft.casefold()
+    if "both hands" in blob:
+        return "with both hands"
+    if "left hand" in blob:
+        return "with left hand"
+    if "right hand" in blob:
+        return "with right hand"
+    return None
 
 
 def _hand_from_velocities(v_left: float, v_right: float, threshold: float) -> str:

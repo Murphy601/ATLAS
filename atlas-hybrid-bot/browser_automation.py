@@ -331,6 +331,7 @@ class VideoBrowserBot:
     def ensure_labeling_ready(self, timeout: float = 120.0) -> bool:
         """Navigate until segment rows exist and the in-page video is primed."""
         deadline = time.time() + timeout
+        last_queue_attempt = 0.0
         while time.time() < deadline:
             if self.segment_count() > 0:
                 try:
@@ -341,7 +342,14 @@ class VideoBrowserBot:
                     f"[Browser Bot]: Segment editor is open ({self.segment_count()} rows)."
                 )
                 return True
-            self.open_work_queue()
+            now = time.time()
+            # Avoid hammering /tasks — retry navigation at most every 8 seconds.
+            if now - last_queue_attempt >= 8.0:
+                self.open_work_queue()
+                last_queue_attempt = now
+            else:
+                time.sleep(1.0)
+                continue
             time.sleep(0.8)
         return False
 
@@ -466,6 +474,14 @@ class VideoBrowserBot:
 
     def go_to_tasks(self):
         """Clicks the sidebar Tasks / Training item, or opens /tasks."""
+        if self.segment_count() > 0:
+            return
+        current_url = (self.page.url or "").lower()
+        if any(
+            token in current_url
+            for token in ("/tasks", "/training", "/onboarding", "/practice", "/assessment")
+        ):
+            return
         if self._click_first_visible(SELECTORS["tasks_nav"]):
             print("[Browser Bot]: Opened Tasks.")
             time.sleep(0.8)
@@ -474,12 +490,12 @@ class VideoBrowserBot:
             print("[Browser Bot]: Opened Training.")
             time.sleep(0.8)
             return
-        if "atlascapture.io" in (self.page.url or ""):
+        if "atlascapture.io" in current_url:
             from urllib.parse import urljoin
 
             for path in ("/tasks", "/training", "/onboarding"):
                 tasks_url = urljoin(self.page.url, path)
-                if path not in self.page.url:
+                if path not in current_url:
                     print(f"[Browser Bot]: Navigating to {tasks_url}")
                     self.page.goto(tasks_url, wait_until="domcontentloaded")
                     time.sleep(0.8)

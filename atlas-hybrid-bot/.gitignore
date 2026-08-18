@@ -1,4 +1,6 @@
 venv/
+models/
+hand_landmarker.task
 .env
 __pycache__/
 *.py[cod]

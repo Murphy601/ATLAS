@@ -108,18 +108,44 @@ def process_live_task(
             elif draft:
                 print(f"[Hybrid]: AI draft: '{draft}'")
 
-            label = generate_label_hybrid(
-                [frame[1] for frame in chunk],
-                pipeline,
-                previous_label=previous_label,
-                draft_label=draft,
-                duration_seconds=duration,
-                frame_timestamps=[frame[0] for frame in chunk],
-                frames_have_video=getattr(bot, "last_frames_have_video", False),
-                next_label=next_draft,
-                global_context=global_context,
-                segment_start_seconds=segment.start_seconds,
-            )
+            try:
+                label = generate_label_hybrid(
+                    [frame[1] for frame in chunk],
+                    pipeline,
+                    previous_label=previous_label,
+                    draft_label=draft,
+                    duration_seconds=duration,
+                    frame_timestamps=[frame[0] for frame in chunk],
+                    frames_have_video=getattr(bot, "last_frames_have_video", False),
+                    next_label=next_draft,
+                    global_context=global_context,
+                    segment_start_seconds=segment.start_seconds,
+                )
+            except Exception as exc:
+                print(
+                    f"[Hybrid]: Segment {segment.number} error: {exc}. "
+                    "Using regex-only draft cleanup."
+                )
+                from label_pipeline import finalize_hybrid_label
+
+                label = "No Action"
+                if draft:
+                    motion = pipeline.analyze_frame_motion_from_memory(
+                        [],
+                        draft_label=draft,
+                    )
+                    label = pipeline.lint_atlas_syntax(
+                        draft,
+                        duration,
+                        motion.detected_hand,
+                    )
+                    label = finalize_hybrid_label(
+                        label,
+                        draft,
+                        previous_label,
+                        duration,
+                        global_context,
+                    )
 
             print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
             print(f"Generated Label: '{label}'")

@@ -67,6 +67,27 @@ main.py
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
+## Troubleshooting
+
+### `module 'mediapipe' has no attribute 'solutions'`
+
+You have MediaPipe **1.0+** (normal on Python 3.14). The bot auto-downloads the hand model on first run and uses the **Tasks API**. On first segment you may see:
+
+```
+[Hybrid]: Downloading MediaPipe hand model (~7.5 MB)...
+```
+
+If hand tracking still fails, the bot falls back to **regex + draft hand tags** (e.g. `in both hands` from the Atlas draft).
+
+### Tab keeps refreshing before the editor opens
+
+Wait for login to finish. The bot retries `/tasks` at most every 8 seconds. Once segment rows appear, it stops navigating and plays each clip.
+
+### Python version
+
+- **Python 3.14**: uses `mediapipe>=1.0` (Tasks API)
+- **Python 3.10–3.12**: either version works
+
 ## vs LLM bot
 
 | | `atlas-hybrid-bot` | `video-labeling-bot` |
