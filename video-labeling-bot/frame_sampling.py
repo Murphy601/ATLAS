@@ -4,10 +4,28 @@ from __future__ import annotations
 
 import base64
 
+from dataclasses import dataclass
+
 import cv2
 import numpy as np
 
 from config import MAX_FRAMES_PER_SEGMENT, MIN_FRAMES_PER_SEGMENT
+
+STATIC_MOTION_THRESHOLD = 2.5
+ACTIVE_MOTION_THRESHOLD = 6.0
+HIGH_MOTION_MAX_FRAMES = 10
+
+
+@dataclass(frozen=True)
+class SegmentMotionProfile:
+    """Motion cues for pick up vs hold and adaptive frame density."""
+
+    start_has_contact: bool = False
+    has_active_motion: bool = False
+    mean_motion: float = 0.0
+    peak_motion: float = 0.0
+    is_static: bool = False
+    reliable: bool = False
 
 
 def max_frames_for_duration(duration_seconds: float | None) -> int:
@@ -100,13 +118,54 @@ def select_motion_keyframes(
     return picked_frames, picked_times
 
 
+def analyze_segment_motion(
+    frames: list[str],
+    timestamps: list[float] | None = None,
+) -> SegmentMotionProfile:
+    """Infer start contact and active manipulation from pixel motion deltas."""
+    del timestamps  # reserved for future timestamp-weighted analysis
+    if not frames:
+        return SegmentMotionProfile()
+    grays: list[np.ndarray | None] = [_decode_gray(frame) for frame in frames]
+    scores: list[float] = [0.0]
+    for index in range(1, len(grays)):
+        scores.append(motion_score(grays[index - 1], grays[index]))
+    if len(scores) < 2:
+        return SegmentMotionProfile()
+    tail = scores[1:]
+    mean_motion = float(sum(tail) / len(tail))
+    peak_motion = float(max(tail))
+    start_delta = scores[1]
+    start_has_contact = start_delta < STATIC_MOTION_THRESHOLD
+    has_active_motion = (
+        peak_motion >= ACTIVE_MOTION_THRESHOLD
+        or mean_motion >= STATIC_MOTION_THRESHOLD * 1.8
+    )
+    is_static = peak_motion < STATIC_MOTION_THRESHOLD and mean_motion < STATIC_MOTION_THRESHOLD
+    return SegmentMotionProfile(
+        start_has_contact=start_has_contact,
+        has_active_motion=has_active_motion,
+        mean_motion=mean_motion,
+        peak_motion=peak_motion,
+        is_static=is_static,
+        reliable=True,
+    )
+
+
 def prepare_segment_frames(
     frames: list[str],
     timestamps: list[float] | None = None,
     duration_seconds: float | None = None,
     start_seconds: float | None = None,
+    motion_profile: SegmentMotionProfile | None = None,
 ) -> tuple[list[str], list[float] | None]:
     """Apply start-frame guarantee, motion peaks, and duration-aware cap."""
-    limit = max_frames_for_duration(duration_seconds)
+    profile = motion_profile or analyze_segment_motion(frames, timestamps)
     ordered, ordered_times = ensure_start_frame(frames, timestamps, start_seconds)
+    if profile.is_static and len(ordered) > 1:
+        static_times = [ordered_times[0]] if ordered_times else None
+        return [ordered[0]], static_times
+    limit = max_frames_for_duration(duration_seconds)
+    if profile.has_active_motion:
+        limit = max(limit, min(len(ordered), HIGH_MOTION_MAX_FRAMES))
     return select_motion_keyframes(ordered, ordered_times, limit)

@@ -841,9 +841,7 @@ def test_short_window_keeps_place_draft_and_rewrites_bag_pass():
         "place bottle in refrigerator with right hand"
     )
     place = "place bottle on counter with left hand"
-    assert enforce_segment_action_limit(bloated, 2.0) == (
-        "hold bottle with left hand, pass bottle from left hand to right hand"
-    )
+    assert enforce_segment_action_limit(bloated, 2.0) == "hold bottle with left hand"
     assert choose_final_label(
         bloated,
         place,
@@ -860,7 +858,7 @@ def test_short_window_keeps_place_draft_and_rewrites_bag_pass():
         "pick up orange red snack bag with right hand, "
         "place orange snack bag on counter with right hand",
         duration_seconds=2.6,
-    ) == "pick up bag with right hand, pass bag from right hand to left hand"
+        ) == "pick up bag with right hand"
     assert choose_final_label(
         "pick up red snack bag with right hand, place red snack bag on counter with right hand",
         "pick up sachet with right hand, place sachet on counter with right hand",
@@ -916,9 +914,7 @@ def test_keeps_pass_chain_and_metal_pin_draft():
         "place wrench on table with right hand"
     )
     assert sanitize_label(transfer) == three
-    assert apply_context_fixes(three, duration_seconds=2.5) == (
-        "hold wrench with left hand, pass wrench from left hand to right hand"
-    )
+    assert apply_context_fixes(three, duration_seconds=2.5) == "hold wrench with left hand"
     assert choose_final_label(
         "pick up wrench from toolbox with right hand, place wrench on table with right hand",
         "pick up metal pin and place metal pin on table with right hand",

@@ -49,7 +49,7 @@ def test_falls_back_to_next_openrouter_model(monkeypatch):
         )
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
-    assert generate_label_from_frames(["aaa"]) == "pick up fork"
+    assert generate_label_from_frames(["aaa"]) == "pick up fork with right hand"
     assert calls[0] == VISION_MODELS[0]
     assert calls[1] == VISION_MODELS[1]
 
@@ -65,7 +65,7 @@ def test_openrouter_route_fallbacks_are_capped_at_three(monkeypatch):
         )
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
-    assert generate_label_from_frames(["aaa"]) == "pick up fork"
+    assert generate_label_from_frames(["aaa"]) == "pick up fork with right hand"
     assert len(seen[0]) == min(OPENROUTER_MAX_ROUTE_FALLBACKS, max(0, len(VISION_MODELS) - 1))
     assert seen[0] == VISION_MODELS[1 : 1 + OPENROUTER_MAX_ROUTE_FALLBACKS]
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-test")
@@ -90,7 +90,7 @@ def test_sanitize_still_runs_on_model_output(monkeypatch):
         )
 
     monkeypatch.setattr("label_generator.client.chat.completions.create", fake_create)
-    assert generate_label_from_frames(["aaa"]) == "pick up two spoons"
+    assert generate_label_from_frames(["aaa"]) == "pick up two spoons with right hand"
 
 
 def test_generate_label_reconciles_trailing_hold_with_draft(monkeypatch):

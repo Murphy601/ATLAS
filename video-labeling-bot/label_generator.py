@@ -47,7 +47,11 @@ from config import (
     VERB_REPLACEMENTS,
     VISION_MODELS,
 )
-from frame_sampling import prepare_segment_frames
+from frame_sampling import (
+    SegmentMotionProfile,
+    analyze_segment_motion,
+    prepare_segment_frames,
+)
 
 load_dotenv()
 
@@ -1305,12 +1309,12 @@ def _named_implement_in(*texts: str | None) -> str | None:
 
 
 def _max_clauses_for_duration(duration_sec: float | None) -> int | None:
-    """Hard caps: under 2s → 1 clause; under 5s → 2 clauses."""
+    """Hard caps: under 3s → 1 clause; under 6s → 2 clauses."""
     if duration_sec is None:
         return None
-    if duration_sec < 2.0:
+    if duration_sec < 3.0:
         return 1
-    if duration_sec < 5.0:
+    if duration_sec < 6.0:
         return 2
     return None
 
@@ -2115,7 +2119,7 @@ def build_draft_vocabulary_system_addon(
     forbidden = ", ".join(f"'{word}'" for word in FORBIDDEN_GENERIC_OBJECTS[:6])
     return (
         "\n\nCRITICAL DRAFT VOCABULARY LOCK:\n"
-        f"Allowed objects: [{quoted}].\n"
+        f"MUST only use these nouns: [{quoted}].\n"
         f"You are strictly forbidden from outputting generic terms like {forbidden}.\n"
         "DO NOT rename items to generic colors or categories "
         "(e.g. use 'glass cleaner pouch' NOT 'blue package'; "
@@ -2227,6 +2231,84 @@ def apply_state_continuity(label: str, previous_label: str | None) -> str:
             clause = re.sub(r"^pick up\b", "hold", clause, count=1, flags=re.IGNORECASE)
         updated.append(clause)
     return ", ".join(updated)
+
+
+def align_verb_state(
+    vision_verb: str,
+    segment_start_has_contact: bool,
+    has_active_motion: bool,
+) -> str:
+    """Enforce pick up vs hold from Frame-0 contact and segment motion."""
+    verb = (vision_verb or "").strip().lower()
+    if verb not in {"pick up", "hold"}:
+        return vision_verb
+    if segment_start_has_contact:
+        if has_active_motion:
+            return vision_verb
+        return "hold"
+    if verb == "hold":
+        return "pick up"
+    return vision_verb
+
+
+def apply_verb_state_from_frames(
+    label: str,
+    motion_profile: SegmentMotionProfile | None,
+) -> str:
+    """Rewrite pick up/hold clauses using physical frame state heuristics."""
+    if not label or label == "No Action" or not motion_profile or not motion_profile.reliable:
+        return label
+    updated: list[str] = []
+    for clause in split_actions(label):
+        verb = _leading_verb(clause)
+        if verb not in {"pick up", "hold"}:
+            updated.append(clause)
+            continue
+        aligned = align_verb_state(
+            verb,
+            motion_profile.start_has_contact,
+            motion_profile.has_active_motion,
+        )
+        if aligned.lower() != verb:
+            clause = re.sub(
+                rf"^{re.escape(verb)}\b",
+                aligned,
+                clause,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        updated.append(clause)
+    return ", ".join(updated)
+
+
+def enforce_atlas_template(label: str) -> str:
+    """Pre-submission check: every clause is [VERB] [NOUN] with [HAND]."""
+    if not label or label == "No Action":
+        return label
+    fixed: list[str] = []
+    for clause in split_actions(label):
+        piece = clause.strip()
+        if not piece:
+            continue
+        if validate_clause_syntax(piece) and HAND_PATTERN.search(piece):
+            fixed.append(piece)
+            continue
+        verb = _leading_verb(piece)
+        obj = _clause_object_noun(piece)
+        hand = _clause_hand(piece)
+        if verb and obj and not hand:
+            piece = f"{piece} with right hand"
+        if verb and not obj and hand:
+            obj_guess = _named_implement_in(piece) or "object"
+            piece = re.sub(
+                rf"^{re.escape(verb)}\b",
+                f"{verb} {obj_guess}",
+                piece,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        fixed.append(piece)
+    return ", ".join(fixed) if fixed else label
 
 
 def perform_draft_surgery(atlas_draft: str | None, vision_label: str) -> str:
@@ -2344,12 +2426,14 @@ def finalize_pipeline_label(
     previous_label: str | None = None,
     duration_seconds: float | None = None,
     global_context: GlobalVideoContext | None = None,
+    motion_profile: SegmentMotionProfile | None = None,
 ) -> str:
     """Draft surgery, state continuity, lint, and duration caps before browser submit."""
     if not label or label == "No Action":
         return label
     updated = perform_draft_surgery(draft_label, label)
     updated = apply_state_continuity(updated, previous_label)
+    updated = apply_verb_state_from_frames(updated, motion_profile)
     if global_context and global_context.objects:
         for phrase in global_context.objects:
             for forbidden in FORBIDDEN_GENERIC_OBJECTS:
@@ -2362,6 +2446,7 @@ def finalize_pipeline_label(
                 )
     updated = lint_label_final(updated)
     updated = sanitize_label(updated)
+    updated = enforce_atlas_template(updated)
     updated = apply_context_fixes(
         updated,
         draft_label,
@@ -2665,7 +2750,7 @@ def _prefer_simpler_model_over_compound_draft(
             return False
     if (
         duration_seconds is not None
-        and duration_seconds >= 5.0
+        and duration_seconds >= 6.0
         and _has_release(draft)
         and not _has_release(model)
         and _same_goal_verb(model, draft)
@@ -2945,7 +3030,7 @@ def choose_final_label(
         if len(split_actions(model)) > len(split_actions(draft)):
             if (
                 duration_seconds is not None
-                and duration_seconds < 5.0
+                and duration_seconds < 6.0
                 and not looks_like_leftover_label(draft_raw)
             ):
                 print(
@@ -3005,7 +3090,7 @@ def choose_final_label(
             ):
                 if (
                     duration_seconds is not None
-                    and duration_seconds < 5.0
+                    and duration_seconds < 6.0
                     and not _is_case_a_stabilize(draft)
                 ):
                     print(
@@ -3379,9 +3464,9 @@ def _vision_user_content(
     if duration_seconds is not None:
         cap = (
             "EXACTLY 1 action clause."
-            if duration_seconds < 2.0
+            if duration_seconds < 3.0
             else "at most 2 action clauses."
-            if duration_seconds < 5.0
+            if duration_seconds < 6.0
             else "at most 2 action clauses unless a clear pass/place is visible."
         )
         user_content[0]["text"] += (
@@ -3621,11 +3706,13 @@ def generate_label_from_frames(
     start_seconds = segment_start_seconds
     if start_seconds is None and frame_timestamps:
         start_seconds = min(frame_timestamps)
+    motion_profile = analyze_segment_motion(base64_frames, frame_timestamps)
     base64_frames, frame_timestamps = prepare_segment_frames(
         base64_frames,
         frame_timestamps,
         duration_seconds=duration_seconds,
         start_seconds=start_seconds,
+        motion_profile=motion_profile,
     )
     insist = bool(frames_have_video)
     user_content = _vision_user_content(
@@ -3670,6 +3757,7 @@ def generate_label_from_frames(
         previous_label,
         duration_seconds,
         global_context,
+        motion_profile,
     )
 
 

@@ -53,10 +53,9 @@ CRITICAL ACTION RULES:
    - Track hand ownership across frames: If an object moves from Hand A to Hand B, explicitly output "pass [object] from [hand A] to [hand B]".
    - Do not write hold/open when the first motion is pick up then pass.
 4. SHORT WINDOWS:
-   - Under 2 seconds: output EXACTLY 1 action clause.
-   - 2 to under 5 seconds: output at most 2 action clauses.
-   - 5 to 6 seconds: at most 2 action clauses unless a clear pass/place hand-off is visible.
-   - Never output 3 actions for windows under 5 seconds.
+   - Under 3 seconds: output EXACTLY 1 action clause.
+   - 3 to under 6 seconds: output at most 2 action clauses.
+   - Never output 3 actions for windows under 6 seconds.
    - pick up + pass is TWO clauses. Never write hold + pass + hold.
    - When Vision sees a single hold or pick up, do not force compound Atlas draft steps into the label.
 5. OBJECT NAMES:
@@ -75,9 +74,11 @@ CRITICAL ACTION RULES:
    - pick up cloth uses one hand unless both hands lift together for place on shelf.
 
 ### HAND ATTRIBUTION (BIMANUAL)
-* Do not label an action as with both hands unless BOTH hands actively manipulate or exert equal force on the object simultaneously.
-* If Hand A holds stationary while Hand B works (wipe, scrub, cut, stir), write two clauses: hold [object] with [Hand A], [verb] [object] with [Hand B].
-* Use with both hands ONLY for symmetrical force (squeeze garment with both hands, fold cloth with both hands, twist wire with both hands).
+CRITICAL HAND RULES:
+- Use with both hands ONLY if both hands exert active, equal force (squeeze shirt with both hands, fold cloth with both hands).
+- If Hand A holds an object while Hand B acts on it, output TWO comma-separated clauses.
+  Example: hold container with left hand, reposition items in refrigerator with right hand
+- Do not label an action as with both hands if one hand merely stabilizes while the other works.
 
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
@@ -266,15 +267,17 @@ CRITICAL ACTION RULES:
 NEVER use sew, draw, write, press, or use tool for sewing. Sewing is insert sewing needle into [object] with [hand] and pull sewing needle with [hand].
 If a hand turns a glass cup while wiping, write rotate [object] with [hand], not hold.
 If an object moves from one hand to the other, write pass [object] from [hand A] to [hand B].
-A window under 2 seconds has at most ONE action. Under 5 seconds, at most TWO actions. Do not invent extra hold/pass/place chains.
+A window under 3 seconds has EXACTLY ONE action. Under 6 seconds, at most TWO actions. Never output 3 actions for short windows.
 pick up + pass is TWO clauses. Never write hold + pass + hold.
 Use baseline object names: book not page, ground not lawn, cup not jar.
-When an Atlas reference draft is provided, use ONLY its exact object names.
+When an Atlas reference draft is provided, you MUST only use nouns from the allowed whitelist.
 DO NOT rename to generic colors or categories (glass cleaner pouch NOT blue package; garment NOT clothes).
 FORBIDDEN generic nouns when a glossary is provided: item, container, package, clothes, clothing, object, thing.
 When Vision reports fewer actions than the Atlas draft, trust the simpler Vision label unless frame quality is very poor.
 
-HAND ATTRIBUTION: both hands ONLY when both hands exert equal force on one object. Stabilizing hand gets its own hold clause.
+CRITICAL HAND RULES:
+Use with both hands ONLY when both hands exert equal, active force on one object.
+If one hand holds while the other works, write two clauses: hold [object] with [Hand A], [verb] with [Hand B].
 STATE RULE: pick up ONLY when Frame 0 shows the object on a surface. Already gripped at Frame 0 → hold or the work verb, never pick up.
 Keep Atlas names: sachet not food from refrigerator or red box. bag not red box.
 A metal pin is not a wrench. When wiping a glass cup, the cup is the target and cloth is the implement.

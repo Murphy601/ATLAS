@@ -1,12 +1,21 @@
 from label_generator import (
     GlobalVideoContext,
+    align_verb_state,
     apply_state_continuity,
+    apply_verb_state_from_frames,
+    enforce_atlas_template,
     finalize_pipeline_label,
     held_objects_at_segment_end,
     lint_label_final,
     perform_draft_surgery,
 )
-from frame_sampling import max_frames_for_duration, ensure_start_frame
+from frame_sampling import (
+    SegmentMotionProfile,
+    analyze_segment_motion,
+    ensure_start_frame,
+    max_frames_for_duration,
+    prepare_segment_frames,
+)
 
 
 def test_max_frames_scales_with_short_segments():
@@ -59,3 +68,44 @@ def test_finalize_pipeline_applies_surgery_and_continuity():
     )
     assert "clothes" not in final.lower()
     assert "scrub" in final.lower() or "grey shirt" in final.lower()
+
+
+def test_align_verb_state_contact_and_motion():
+    assert align_verb_state("pick up", True, False) == "hold"
+    assert align_verb_state("hold", False, False) == "pick up"
+    assert align_verb_state("wipe", True, True) == "wipe"
+    assert align_verb_state("pick up", False, False) == "pick up"
+
+
+def test_apply_verb_state_from_frames_rewrites_pick_up_at_contact():
+    profile = SegmentMotionProfile(
+        start_has_contact=True, has_active_motion=False, reliable=True
+    )
+    label = apply_verb_state_from_frames(
+        "pick up hose with right hand", profile
+    )
+    assert label == "hold hose with right hand"
+
+
+def test_enforce_atlas_template_adds_missing_hand():
+    assert enforce_atlas_template("pick up fork") == "pick up fork with right hand"
+
+
+def test_static_segment_collapses_to_start_frame():
+    static_frame = (
+        "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsL"
+        "DBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/"
+        "2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy"
+        "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QA"
+        "FAABAAAAAAAAAAAAAAAAAAAAAv/EABQBAQAAAAAAAAAAAAAAAAAAAAD/xAAUEAEA"
+        "AAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGfAP/Z"
+    )
+    frames = [static_frame] * 6
+    times = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    profile = analyze_segment_motion(frames, times)
+    assert profile.is_static
+    picked, picked_times = prepare_segment_frames(
+        frames, times, duration_seconds=2.5, motion_profile=profile
+    )
+    assert len(picked) == 1
+    assert picked_times == [0.0]
