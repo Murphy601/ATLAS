@@ -1,5 +1,9 @@
 opencv-python>=4.10.0
 mediapipe>=0.10.14
 numpy>=1.26.0
+playwright>=1.47.0
 python-dotenv>=1.0.1
 pytest>=8.0.0
+
+# Optional — only needed if you call LLM helpers directly (hybrid main does not)
+openai>=1.40.0

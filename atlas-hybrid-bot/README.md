@@ -1,88 +1,65 @@
-# Atlas Hybrid Annotator
+# Atlas Hybrid Bot
 
-**Non-LLM / hybrid pipeline** for Atlas Capture labels: classical computer vision (MediaPipe hands), cross-segment state memory, and deterministic regex linting.
+**Full browser automation + non-LLM labeling** for Atlas Capture: Playwright opens Atlas, watches segment clips, captures frames, and fills labels using **MediaPipe hand tracking**, **cross-segment state memory**, and the **same deterministic post-processing** as the LLM bot — **without any OpenRouter / vision API calls**.
 
-This bot is **fully separate** from [`video-labeling-bot/`](../video-labeling-bot/README.md) (the Playwright + OpenRouter vision pipeline). They do not share code, venv, or browser sessions.
+Sibling project: [`video-labeling-bot/`](../video-labeling-bot/README.md) (same browser flow, but uses vision LLMs).
 
-## Strategy
-
-| Layer | What it does |
-|---|---|
-| **MediaPipe Hands** | Wrist velocity → `with left hand` / `with right hand` / `with both hands` |
-| **Frame-0 contact** | Wrist visible at segment start → prefer `hold` over `pick up` |
-| **State memory** | JSON-like dict across segments: if Segment 1 held `wrench`, Segment 2 rewrites `pick up wrench` → `hold wrench` |
-| **Regex linter** | Lexicon lock, `-ing` → imperative, strip `and`/`then`, duration clause cap (<3.5s = 1 clause) |
-
-No API keys. Runs on CPU.
-
-## Setup (Windows)
+## What runs when you start it
 
 ```powershell
 cd $env:USERPROFILE\ATLAS\atlas-hybrid-bot
+git pull
 python -m venv venv
 .\venv\Scripts\pip.exe install -r requirements.txt
+.\venv\Scripts\playwright.exe install chromium
 copy .env.example .env
+.\venv\Scripts\python.exe main.py
 ```
 
-## Quick demo (no video, no MediaPipe motion)
+This will:
 
-```powershell
-.\venv\Scripts\python.exe main.py --demo
+1. Open Chrome (persistent `./browser_session` — log in once)
+2. Navigate to **Practice assessment** (or graded, via `--mode`)
+3. Play each segment clip at 1× speed and capture frames
+4. Read the **Atlas AI draft** from each row input
+5. Run **MediaPipe** wrist velocity → hand tag
+6. Apply **regex linter**, draft noun lock, verb-state, duration caps (from `label_generator.py`)
+7. Fill each segment label and wait for you to review/submit
+
+No API key needed.
+
+## CLI flags (same as LLM bot)
+
+| Flag | Purpose |
+|---|---|
+| `--mode practice` | Training Practice assessment (default) |
+| `--mode assessment` | Graded 70% test |
+| `--mode auto` | Practice first, then graded |
+| `--auto-submit` | Submit without review pause |
+| `--headless` | Headless capture (needs prior login cookies) |
+| `--video clip.mp4` | Local file fallback instead of live player |
+| `--skip-browser` | Print labels from `--video` only |
+| `--demo` | Regex/state demo in terminal (no browser) |
+
+## Architecture
+
+```
+main.py
+  └─ VideoBrowserBot (browser_automation.py)  ← Playwright, capture, fill, submit
+  └─ generate_label_hybrid (label_pipeline.py)
+       ├─ AtlasHybridPipeline (hybrid_annotator.py)  ← MediaPipe + state memory
+       └─ finalize_pipeline_label (label_generator.py)  ← draft surgery, lint, caps
 ```
 
-## Process a local video + segment JSON
+## Env
 
-`segments.json`:
-
-```json
-[
-  {"start": 0.0, "end": 2.5, "draft": "picking up blue package and clothes", "object": "glass cleaner pouch"},
-  {"start": 2.5, "end": 6.0, "draft": "pick up blue package then wipe table", "object": "glass cleaner pouch"}
-]
-```
-
-```powershell
-.\venv\Scripts\python.exe main.py --video clip.mp4 --segments segments.json
-```
-
-## In-memory frames (browser integration pattern)
-
-Export base64 JPEGs from your capture step, then:
-
-```powershell
-.\venv\Scripts\python.exe main.py --frames-json frames.json --segments segments.json
-```
-
-`frames.json`: `{"frames": ["<base64>", "..."]}`
-
-## Python API
-
-```python
-from hybrid_annotator import AtlasHybridPipeline
-from frame_utils import frames_from_base64_list
-
-pipeline = AtlasHybridPipeline()
-frames = frames_from_base64_list(segment_jpegs_base64)
-label = pipeline.process_frame_batch(
-    frames,
-    start_sec=0.0,
-    end_sec=2.8,
-    draft_label="picking up blue package and clothes",
-    target_object="glass cleaner pouch",
-)
-pipeline.close()
-```
-
-## vs LLM bot
-
-| | `atlas-hybrid-bot` | `video-labeling-bot` |
+| Variable | Default | Purpose |
 |---|---|---|
-| Vision | MediaPipe (local) | OpenRouter VLMs |
-| Cost | Free | API usage |
-| Best for | Hand/state/taxonomy rules | Complex scene understanding |
-| Browser | Manual / export frames | Full Playwright automation |
-
-You can run **hybrid first** on drafts, then send hard segments to the LLM bot — keep them in separate folders and venvs.
+| `EGO_SWAP_HANDS` | `true` | Swap L/R for ego camera |
+| `HAND_MOTION_THRESHOLD` | `0.015` | Wrist motion sensitivity |
+| `ATLAS_LABEL_MODE` | `practice` | Which Atlas flow to open |
+| `AUTO_SUBMIT` | `false` | Skip review pause |
+| `PORTAL_URL` | audit.atlascapture.io | Portal URL |
 
 ## Tests
 
@@ -90,9 +67,14 @@ You can run **hybrid first** on drafts, then send hard segments to the LLM bot �
 .\venv\Scripts\python.exe -m pytest -q
 ```
 
-## Env
+## vs LLM bot
 
-| Variable | Default | Purpose |
+| | `atlas-hybrid-bot` | `video-labeling-bot` |
 |---|---|---|
-| `EGO_SWAP_HANDS` | `true` | Swap MediaPipe L/R for ego camera |
-| `HAND_MOTION_THRESHOLD` | `0.015` | Wrist velocity threshold |
+| Browser automation | Yes | Yes |
+| MediaPipe hands | Yes | No |
+| Vision LLM | **No** | Yes (OpenRouter) |
+| API key | Not required | Required |
+| Object names | From Atlas AI draft | Draft + vision override |
+
+Object identification comes from the **pre-filled Atlas draft** on each row; MediaPipe only picks the active hand and pick-up vs hold corrections.
