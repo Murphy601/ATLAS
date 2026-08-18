@@ -9,9 +9,13 @@ from config import (
     DEFAULT_FRAME_INTERVAL,
     DEFAULT_PORTAL_URL,
     DEFAULT_SEGMENT_DURATION,
+    GLOBAL_SWEEP_INTERVAL_SECONDS,
+    TWO_PASS_ENABLED,
 )
 from frame_extractor import extract_frames_from_video, format_timestamp
 from label_generator import (
+    GlobalVideoContext,
+    analyze_global_video_context,
     apply_context_fixes,
     generate_label_from_frames,
     rewrite_generic_animal_draft,
@@ -45,6 +49,7 @@ def process_live_task(
     bot: VideoBrowserBot,
     segment_duration: float = 3.0,
     interval_seconds: float = 1.0,
+    global_context: GlobalVideoContext | None = None,
 ):
     """Captures frames from the in-page player and fills Atlas segment label rows."""
     bot.prepare_video_playback()
@@ -57,7 +62,29 @@ def process_live_task(
     if callable(remember):
         segments = remember(segments)
 
-    print(f"\n[Pipeline]: Correcting {len(segments)} existing AI-labeled segments...")
+    if global_context is None and TWO_PASS_ENABLED:
+        capture_timeline = getattr(bot, "capture_live_frames", None)
+        if callable(capture_timeline):
+            print("[Pipeline]: Pass 1 — full-video observation sweep for object glossary...")
+            sweep_frames = capture_timeline(
+                interval_seconds=GLOBAL_SWEEP_INTERVAL_SECONDS
+            )
+            if sweep_frames:
+                draft_hints = [
+                    usable_draft(segment.draft_label) or ""
+                    for segment in segments
+                ]
+                global_context = analyze_global_video_context(
+                    [frame[1] for frame in sweep_frames],
+                    frame_timestamps=[frame[0] for frame in sweep_frames],
+                    segment_drafts=[draft for draft in draft_hints if draft],
+                )
+            else:
+                print("[Pipeline]: Pass 1 sweep skipped (no timeline frames).")
+        else:
+            print("[Pipeline]: Pass 1 sweep skipped (capture_live_frames unavailable).")
+
+    print(f"\n[Pipeline]: Pass 2 — correcting {len(segments)} segment labels...")
     processed_any = False
 
     previous_label = None
@@ -98,6 +125,8 @@ def process_live_task(
             frame_timestamps=[frame[0] for frame in chunk],
             frames_have_video=getattr(bot, "last_frames_have_video", False),
             next_label=next_draft,
+            global_context=global_context,
+            segment_start_seconds=segment.start_seconds,
         )
 
         print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")

@@ -38,8 +38,9 @@ CRITICAL ANNOTATION RULES:
    - If hand A holds an object and hand B picks up another, BOTH must be listed.
    - Look for hand-to-hand transfers: pass [object] from left hand to right hand.
 2. VERB PRECISION (hold vs pick up):
-   - pick up ONLY if the object starts on a surface and is raised.
-   - hold if the object is ALREADY in hand at the first frame.
+   - pick up ONLY if the segment shows the exact moment the hand reaches down, contacts an object on a surface, and lifts it off the surface.
+   - If the object is ALREADY in the hand at the FIRST frame (Frame 0), you MUST use hold or the active verb (wipe, scrub, stir), NEVER pick up.
+   - Never output pick up if the object is held in the air or maintained in hand throughout the clip.
 3. GRAMMAR: every verb clause MUST contain an explicit object noun.
 
 CRITICAL ACTION RULES:
@@ -52,14 +53,17 @@ CRITICAL ACTION RULES:
    - Track hand ownership across frames: If an object moves from Hand A to Hand B, explicitly output "pass [object] from [hand A] to [hand B]".
    - Do not write hold/open when the first motion is pick up then pass.
 4. SHORT WINDOWS:
-   - Under 2 seconds: at most ONE action clause.
-   - Under 5 seconds: at most TWO action clauses. Do not invent extra hold/pass/place chains.
+   - Under 2 seconds: output EXACTLY 1 action clause.
+   - 2 to under 5 seconds: output at most 2 action clauses.
+   - 5 to 6 seconds: at most 2 action clauses unless a clear pass/place hand-off is visible.
+   - Never output 3 actions for windows under 5 seconds.
    - pick up + pass is TWO clauses. Never write hold + pass + hold.
    - When Vision sees a single hold or pick up, do not force compound Atlas draft steps into the label.
 5. OBJECT NAMES:
    - Use environment baseline terms: book not page, ground not lawn, cup not jar.
    - When an Atlas reference draft is provided, use ONLY its exact object names.
    - DO NOT rename to generic colors or categories (glass cleaner pouch NOT blue package; garment or shirt NOT clothes).
+   - FORBIDDEN generic nouns when a draft glossary is provided: item, container, package, clothes, clothing, object, thing.
    - If the exact subtype is unclear, prefer bag, needle, cable, shears, or cap over a guessed brand or color name.
    - A metal pin is not a wrench. A wiping cloth is the implement, not the target: wipe the glass cup, not the cloth.
 6. DO NOT COPY THE PREVIOUS SEGMENT:
@@ -69,6 +73,11 @@ CRITICAL ACTION RULES:
 8. TOOL vs WORKPIECE:
    - During strip, hold wire/cable in one hand; pliers/shears are only named in the strip clause.
    - pick up cloth uses one hand unless both hands lift together for place on shelf.
+
+### HAND ATTRIBUTION (BIMANUAL)
+* Do not label an action as with both hands unless BOTH hands actively manipulate or exert equal force on the object simultaneously.
+* If Hand A holds stationary while Hand B works (wipe, scrub, cut, stir), write two clauses: hold [object] with [Hand A], [verb] [object] with [Hand B].
+* Use with both hands ONLY for symmetrical force (squeeze garment with both hands, fold cloth with both hands, twist wire with both hands).
 
 ### 1. CORE SYNTAX & FORMATTING
 * TEMPLATE: [action] [object] ([location]) with [hand]
@@ -262,7 +271,11 @@ pick up + pass is TWO clauses. Never write hold + pass + hold.
 Use baseline object names: book not page, ground not lawn, cup not jar.
 When an Atlas reference draft is provided, use ONLY its exact object names.
 DO NOT rename to generic colors or categories (glass cleaner pouch NOT blue package; garment NOT clothes).
+FORBIDDEN generic nouns when a glossary is provided: item, container, package, clothes, clothing, object, thing.
 When Vision reports fewer actions than the Atlas draft, trust the simpler Vision label unless frame quality is very poor.
+
+HAND ATTRIBUTION: both hands ONLY when both hands exert equal force on one object. Stabilizing hand gets its own hold clause.
+STATE RULE: pick up ONLY when Frame 0 shows the object on a surface. Already gripped at Frame 0 → hold or the work verb, never pick up.
 Keep Atlas names: sachet not food from refrigerator or red box. bag not red box.
 A metal pin is not a wrench. When wiping a glass cup, the cup is the target and cloth is the implement.
 Do not copy the previous segment's label if this window shows a new motion (fold, strip, place, insert).
@@ -465,6 +478,64 @@ PROMPT_EXAMPLE_LABELS = frozenset(
 MAX_ACTIONS_PER_LABEL = 3
 NO_ACTION_MIN_SECONDS = 5.0
 
+# Generic object terms Vision must not output when a draft glossary exists.
+FORBIDDEN_GENERIC_OBJECTS = (
+    "item",
+    "container",
+    "package",
+    "clothes",
+    "clothing",
+    "object",
+    "thing",
+    "stuff",
+)
+
+# Few-shot correction pairs injected before segment labeling (OpenRouter messages).
+FEW_SHOT_CORRECTION_MESSAGES = [
+    {
+        "role": "user",
+        "content": "Draft: pick up cup. Vision sees cup held for 5s in all frames.",
+    },
+    {
+        "role": "assistant",
+        "content": "hold cup with right hand",
+    },
+    {
+        "role": "user",
+        "content": "Draft: wash clothes. Vision sees blue garment scrubbed in bowl.",
+    },
+    {
+        "role": "assistant",
+        "content": "scrub grey shirt with both hands",
+    },
+    {
+        "role": "user",
+        "content": "Draft: pick up hose. Previous segment ended with hose in both hands.",
+    },
+    {
+        "role": "assistant",
+        "content": "hold hose with both hands",
+    },
+    {
+        "role": "user",
+        "content": "Draft: hold glass cleaner pouch. Vision wrote blue package.",
+    },
+    {
+        "role": "assistant",
+        "content": "hold glass cleaner pouch with left hand",
+    },
+]
+
+# Two-pass pipeline: full-video observation sweep before segment editing.
+TWO_PASS_ENABLED = os.getenv("TWO_PASS_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+GLOBAL_SWEEP_INTERVAL_SECONDS = float(os.getenv("GLOBAL_SWEEP_INTERVAL_SECONDS", "1.0"))
+GLOBAL_SWEEP_MAX_FRAMES = int(os.getenv("GLOBAL_SWEEP_MAX_FRAMES", "20"))
+
 # Goal-use verbs: pick up of the same tool right before these is instrumental (extra action).
 USE_VERBS = {
     "water",
@@ -564,9 +635,10 @@ TEMPERATURE = 0.1  # Ensures low variability and deterministic outputs
 # Claude 3.7 Sonnet and Gemini 1.5 Pro 404 on OpenRouter.
 # gpt-4o refuses egocentric hand images ("I'm sorry, I can't assist with that").
 DEFAULT_MODELS = [
-    "google/gemini-2.5-flash",
     "qwen/qwen2.5-vl-72b-instruct",
     "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
+    "openai/gpt-4o",
 ]
 _primary_model = (os.getenv("VISION_MODEL") or "").strip()
 VISION_MODELS = (

@@ -15,6 +15,7 @@ from config import (
     MIN_FRAMES_PER_SEGMENT,
     SELECTORS,
 )
+from frame_sampling import prepare_segment_frames
 
 MAX_LABEL_LENGTH = 2000
 DEBUG_FRAMES_DIR = Path("debug_frames")
@@ -947,6 +948,15 @@ class VideoBrowserBot:
                 "[Browser Bot]: WARNING: debug_frames do not show video texture "
                 "(black hole or player chrome). Models will say No Action."
             )
+        payloads = [payload for _timestamp, payload in frames]
+        times = [timestamp for timestamp, _payload in frames]
+        payloads, times = prepare_segment_frames(
+            payloads,
+            times,
+            duration_seconds=segment_duration,
+            start_seconds=start_seconds,
+        )
+        frames = list(zip(times, payloads))
         return frames
 
     def _save_debug_frames(self, frames: list[tuple[float, str]]):

@@ -10,11 +10,11 @@ DISH_GOLD = (
 
 def test_default_models_use_live_openrouter_vision_slugs():
     assert DEFAULT_MODELS == [
-        "google/gemini-2.5-flash",
         "qwen/qwen2.5-vl-72b-instruct",
         "google/gemini-2.5-pro",
+        "google/gemini-2.5-flash",
+        "openai/gpt-4o",
     ]
-    assert "openai/gpt-4o" not in DEFAULT_MODELS
     assert "anthropic/claude-3.5-sonnet" not in DEFAULT_MODELS
     assert "anthropic/claude-3.7-sonnet" not in DEFAULT_MODELS
     assert "google/gemini-1.5-pro" not in DEFAULT_MODELS

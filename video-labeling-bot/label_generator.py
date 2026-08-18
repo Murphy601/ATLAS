@@ -1,17 +1,25 @@
+from __future__ import annotations
+
+import json
 import os
 import re
+from dataclasses import dataclass
 
 import openai
 from dotenv import load_dotenv
 
 from config import (
+    ACTION_SYSTEM_PROMPT,
     ARTICLE_PATTERN,
     COMMA_AND_PATTERN,
     CONTINUOUS_VERBS,
     DIGIT_PATTERN,
+    FEW_SHOT_CORRECTION_MESSAGES,
     FILL_SOURCE_TOOLS,
+    FORBIDDEN_GENERIC_OBJECTS,
     FORBIDDEN_WORDS,
     GENERIC_NOUNS,
+    GLOBAL_SWEEP_MAX_FRAMES,
     HAND_PATTERN,
     LOOKING_VERBS,
     MAX_ACTIONS_PER_LABEL,
@@ -33,13 +41,13 @@ from config import (
     SEMICOLON_PATTERN,
     SLASH_PATTERN,
     SYSTEM_PROMPT,
-    ACTION_SYSTEM_PROMPT,
     TEMPERATURE,
     USE_VERBS,
     VERB_CORRECTIONS,
     VERB_REPLACEMENTS,
     VISION_MODELS,
 )
+from frame_sampling import prepare_segment_frames
 
 load_dotenv()
 
@@ -2095,19 +2103,24 @@ def should_trust_vision_over_draft(
     return object_noun_similarity(model, draft) >= OBJECT_SIMILARITY_THRESHOLD
 
 
-def build_draft_vocabulary_system_addon(draft: str | None) -> str:
-    """Append Atlas draft object names to the Vision system prompt."""
-    phrases = draft_object_phrases(draft)
+def build_draft_vocabulary_system_addon(
+    draft: str | None,
+    global_context: GlobalVideoContext | None = None,
+) -> str:
+    """Append Atlas draft + Pass-1 glossary object names to the Vision system prompt."""
+    phrases = merge_allowed_object_names(draft, global_context)
     if not phrases:
         return ""
     quoted = ", ".join(f"'{phrase}'" for phrase in phrases)
+    forbidden = ", ".join(f"'{word}'" for word in FORBIDDEN_GENERIC_OBJECTS[:6])
     return (
         "\n\nCRITICAL DRAFT VOCABULARY LOCK:\n"
-        f"You MUST use these exact object names from the Atlas reference draft: {quoted}.\n"
+        f"Allowed objects: [{quoted}].\n"
+        f"You are strictly forbidden from outputting generic terms like {forbidden}.\n"
         "DO NOT rename items to generic colors or categories "
         "(e.g. use 'glass cleaner pouch' NOT 'blue package'; "
         "use 'grey shirt' or 'garment' NOT 'clothes').\n"
-        "Select object nouns ONLY from the reference draft list above."
+        "Select object nouns ONLY from the allowed list above."
     )
 
 
@@ -2168,6 +2181,321 @@ def _finalize_draft_choice(
     duration_seconds: float | None = None,
 ) -> str:
     return _clean_atlas_draft_fallback(draft, model, duration_seconds)
+
+
+@dataclass(frozen=True)
+class GlobalVideoContext:
+    """Pass-1 observation sweep: object glossary and coarse state timeline."""
+
+    objects: tuple[str, ...] = ()
+    timeline: str = ""
+    raw_summary: str = ""
+
+
+def held_objects_at_segment_end(label: str | None) -> set[str]:
+    """Objects still in hand when the segment ends (for pick up vs hold continuity)."""
+    if not label or label == "No Action":
+        return set()
+    held: set[str] = set()
+    release_verbs = {"place", "set", "put down", "drop", "empty"}
+    for clause in split_actions(label):
+        verb = _leading_verb(clause)
+        obj = _clause_object_noun(clause)
+        if not obj:
+            continue
+        key = obj.lower()
+        if verb in release_verbs:
+            held.discard(key)
+            continue
+        if verb in {"hold", "pick up", "pass"} or verb not in {"", "hold"}:
+            held.add(key)
+    return held
+
+
+def apply_state_continuity(label: str, previous_label: str | None) -> str:
+    """If the prior segment ended holding an object, rewrite erroneous pick up → hold."""
+    if not label or not previous_label or label == "No Action":
+        return label
+    prev_held = held_objects_at_segment_end(previous_label)
+    if not prev_held:
+        return label
+    updated: list[str] = []
+    for clause in split_actions(label):
+        verb = _leading_verb(clause)
+        obj = _clause_object_noun(clause)
+        if verb == "pick up" and obj and obj.lower() in prev_held:
+            clause = re.sub(r"^pick up\b", "hold", clause, count=1, flags=re.IGNORECASE)
+        updated.append(clause)
+    return ", ".join(updated)
+
+
+def perform_draft_surgery(atlas_draft: str | None, vision_label: str) -> str:
+    """Keep Atlas object nouns; let Vision update verbs and hands."""
+    if not atlas_draft or not vision_label or vision_label == "No Action":
+        return vision_label
+    updated = _lock_atlas_draft_objects(vision_label, atlas_draft)
+    draft_phrases = draft_object_phrases(atlas_draft)
+    if draft_phrases:
+        primary = draft_phrases[0]
+        for forbidden in FORBIDDEN_GENERIC_OBJECTS:
+            updated = re.sub(
+                rf"\b{re.escape(forbidden)}\b",
+                primary,
+                updated,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+    return updated
+
+
+def lint_label_final(label: str) -> str:
+    """Deterministic pre-submission linter for Atlas syntax guideline failures."""
+    if not label or label == "No Action":
+        return label
+    updated = label.strip()
+    dual = re.match(
+        r"^(scrub|squeeze|wash|wipe|iron|fold)\s+and\s+"
+        r"(scrub|squeeze|wash|wipe|iron|fold)\s+(.+)$",
+        updated,
+        re.IGNORECASE,
+    )
+    if dual and "," not in updated:
+        tail = dual.group(3).strip()
+        updated = (
+            f"{dual.group(1).lower()} {tail}, "
+            f"{dual.group(2).lower()} {tail}"
+        )
+    updated = SEMICOLON_PATTERN.sub(", ", updated)
+    updated = re.sub(r"\bthen\b", ", ", updated, flags=re.IGNORECASE)
+    updated = NARRATIVE_PATTERN.sub("", updated)
+    updated = re.sub(r"\bholding\b", "hold", updated, flags=re.IGNORECASE)
+    updated = re.sub(r"\bpicking up\b", "pick up", updated, flags=re.IGNORECASE)
+    parts: list[str] = []
+    for clause in split_actions(updated):
+        piece = clause.strip()
+        if not piece:
+            continue
+        dual = re.match(
+            r"^(scrub|squeeze|wash|wipe|iron|fold)\s+and\s+"
+            r"(scrub|squeeze|wash|wipe|iron|fold)\s+(.+)$",
+            piece,
+            re.IGNORECASE,
+        )
+        if dual:
+            first_verb, second_verb, tail = dual.group(1), dual.group(2), dual.group(3)
+            parts.append(f"{first_verb.lower()} {tail.strip()}")
+            parts.append(f"{second_verb.lower()} {tail.strip()}")
+            continue
+        if re.search(r"\band\b", piece, re.IGNORECASE):
+            split_parts = re.split(r"\s+and\s+", piece, maxsplit=1, flags=re.IGNORECASE)
+            if len(split_parts) == 2 and LEADING_VERB_PATTERN.search(split_parts[1].strip()):
+                parts.append(split_parts[0].strip())
+                parts.append(split_parts[1].strip())
+                continue
+        parts.append(piece)
+    updated = ", ".join(parts)
+    updated = COMMA_AND_PATTERN.sub(",", updated)
+    updated = " ".join(updated.split())
+    return updated.strip(" ,")
+
+
+def merge_allowed_object_names(
+    draft_label: str | None,
+    global_context: GlobalVideoContext | None,
+) -> list[str]:
+    """Union of Pass-1 glossary and segment draft object phrases."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for source in (
+        draft_object_phrases(draft_label),
+        list(global_context.objects) if global_context else [],
+    ):
+        for phrase in source:
+            key = phrase.casefold()
+            if key not in seen:
+                seen.add(key)
+                names.append(phrase)
+    return names
+
+
+def build_global_context_system_addon(context: GlobalVideoContext | None) -> str:
+    if not context or (not context.objects and not context.timeline):
+        return ""
+    lines = ["\n\nGLOBAL VIDEO CONTEXT (Pass 1 observation sweep):"]
+    if context.objects:
+        quoted = ", ".join(f"'{name}'" for name in context.objects)
+        lines.append(f"Canonical object glossary for this clip: {quoted}.")
+        lines.append(
+            "You are strictly forbidden from outputting generic terms like "
+            "'blue package', 'item', 'container', or 'clothes' when a glossary name fits."
+        )
+    if context.timeline:
+        lines.append(f"Object state timeline: {context.timeline}")
+    lines.append(
+        "Use pick up ONLY at the moment an object leaves a surface. "
+        "If the timeline or Frame 0 shows the object already held, write hold."
+    )
+    return "\n".join(lines) + "\n"
+
+
+def finalize_pipeline_label(
+    label: str,
+    draft_label: str | None = None,
+    previous_label: str | None = None,
+    duration_seconds: float | None = None,
+    global_context: GlobalVideoContext | None = None,
+) -> str:
+    """Draft surgery, state continuity, lint, and duration caps before browser submit."""
+    if not label or label == "No Action":
+        return label
+    updated = perform_draft_surgery(draft_label, label)
+    updated = apply_state_continuity(updated, previous_label)
+    if global_context and global_context.objects:
+        for phrase in global_context.objects:
+            for forbidden in FORBIDDEN_GENERIC_OBJECTS:
+                updated = re.sub(
+                    rf"\b{re.escape(forbidden)}\b",
+                    phrase,
+                    updated,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+    updated = lint_label_final(updated)
+    updated = sanitize_label(updated)
+    updated = apply_context_fixes(
+        updated,
+        draft_label,
+        previous_label,
+        duration_seconds=duration_seconds,
+    )
+    if draft_label and model_degrades_draft_vocabulary(label, draft_label):
+        draft_clean = apply_context_fixes(
+            sanitize_label(draft_label),
+            draft_label,
+            previous_label,
+            duration_seconds=duration_seconds,
+        )
+        work_parts = [
+            part
+            for part in split_actions(draft_clean)
+            if _leading_verb(part) not in {"hold", "pass"}
+        ]
+        if work_parts and len(split_actions(updated)) == 1:
+            updated = work_parts[0]
+    updated = enforce_segment_action_limit(updated, duration_seconds)
+    return updated
+
+
+def _parse_global_context_json(text: str) -> GlobalVideoContext | None:
+    blob = (text or "").strip()
+    if not blob:
+        return None
+    match = re.search(r"\{.*\}", blob, re.DOTALL)
+    if not match:
+        return None
+    try:
+        payload = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    raw_objects = payload.get("objects") or payload.get("object_glossary") or []
+    objects: list[str] = []
+    if isinstance(raw_objects, list):
+        for item in raw_objects:
+            if isinstance(item, str) and item.strip():
+                objects.append(item.strip())
+    timeline = str(payload.get("timeline") or payload.get("state_history") or "").strip()
+    return GlobalVideoContext(
+        objects=tuple(objects),
+        timeline=timeline,
+        raw_summary=blob[:500],
+    )
+
+
+def analyze_global_video_context(
+    base64_frames: list[str],
+    frame_timestamps: list[float] | None = None,
+    segment_drafts: list[str] | None = None,
+) -> GlobalVideoContext:
+    """Pass 1: full-clip observation sweep for object glossary and state timeline."""
+    if not _api_key() or not base64_frames:
+        draft_objects: list[str] = []
+        for draft in segment_drafts or []:
+            draft_objects.extend(draft_object_phrases(draft))
+        unique = list(dict.fromkeys(draft_objects))
+        return GlobalVideoContext(objects=tuple(unique))
+
+    frames, times = prepare_segment_frames(
+        base64_frames,
+        frame_timestamps,
+        duration_seconds=None,
+        start_seconds=frame_timestamps[0] if frame_timestamps else 0.0,
+    )
+    frames = frames[:GLOBAL_SWEEP_MAX_FRAMES]
+    if times:
+        times = times[: len(frames)]
+
+    draft_hint = ""
+    if segment_drafts:
+        hints = []
+        for draft in segment_drafts:
+            hints.extend(draft_object_phrases(draft))
+        if hints:
+            draft_hint = (
+                " Atlas row hints (prefer these exact names): "
+                + ", ".join(dict.fromkeys(hints))
+                + "."
+            )
+
+    user_parts: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                "Analyze this ENTIRE first-person activity clip from the frames. "
+                "List every primary object using precise terms (not generic package/clothes/item). "
+                "Map when objects are picked up, held, put down, or passed between hands."
+                + draft_hint
+                + " Return ONLY valid JSON with keys: "
+                '{"objects": ["..."], "timeline": "..."}'
+            ),
+        }
+    ]
+    for index, frame in enumerate(frames):
+        stamp = f" t={times[index]:.1f}s" if times and index < len(times) else ""
+        user_parts.append({"type": "text", "text": f"Timeline frame {index + 1}{stamp}"})
+        user_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{frame}", "detail": "low"},
+            }
+        )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT + build_global_context_system_addon(None)},
+        {"role": "user", "content": user_parts},
+    ]
+    try:
+        response = client.chat.completions.create(
+            model=VISION_MODELS[0],
+            messages=messages,
+            temperature=0.0,
+            extra_headers=OPENROUTER_HEADERS,
+        )
+        raw = response.choices[0].message.content or ""
+        parsed = _parse_global_context_json(raw)
+        if parsed and parsed.objects:
+            print(
+                f"[Pipeline]: Pass 1 glossary ({len(parsed.objects)} objects): "
+                f"{', '.join(parsed.objects)}"
+            )
+            return parsed
+    except Exception as exc:
+        print(f"[Pipeline]: Pass 1 context sweep failed ({exc}). Using draft hints only.")
+
+    draft_objects = []
+    for draft in segment_drafts or []:
+        draft_objects.extend(draft_object_phrases(draft))
+    unique = list(dict.fromkeys(draft_objects))
+    return GlobalVideoContext(objects=tuple(unique))
 
 
 def scene_tokens(label: str | None) -> set[str]:
@@ -2976,6 +3304,7 @@ def _vision_user_content(
     frame_timestamps: list[float] | None = None,
     insist_action: bool = False,
     frames_have_video: bool = False,
+    global_context: GlobalVideoContext | None = None,
 ) -> list[dict]:
     """Build the vision prompt. Atlas drafts are never included — models copy them."""
     total = len(base64_frames)
@@ -3048,8 +3377,24 @@ def _vision_user_content(
         )
     user_content: list[dict] = [{"type": "text", "text": intro}]
     if duration_seconds is not None:
-        user_content[0]["text"] += f" This window is {duration_seconds:.1f} seconds long."
-    if draft_label:
+        cap = (
+            "EXACTLY 1 action clause."
+            if duration_seconds < 2.0
+            else "at most 2 action clauses."
+            if duration_seconds < 5.0
+            else "at most 2 action clauses unless a clear pass/place is visible."
+        )
+        user_content[0]["text"] += (
+            f" This window is {duration_seconds:.1f} seconds long. Output {cap}"
+        )
+    allowed = merge_allowed_object_names(draft_label, global_context)
+    if allowed:
+        user_content[0]["text"] += (
+            " Allowed objects (use ONLY these exact nouns): "
+            + ", ".join(allowed)
+            + "."
+        )
+    elif draft_label:
         draft_objects = draft_object_phrases(draft_label)
         if draft_objects:
             user_content[0]["text"] += (
@@ -3057,6 +3402,8 @@ def _vision_user_content(
                 + ", ".join(draft_objects)
                 + "."
             )
+    if global_context and global_context.timeline:
+        user_content[0]["text"] += f" Clip state timeline: {global_context.timeline}."
     if previous_label and previous_label != "No Action":
         objects = sorted(scene_tokens(previous_label))
         if objects and (frames_have_video or not is_generic_placeholder_label(previous_label)):
@@ -3259,6 +3606,8 @@ def generate_label_from_frames(
     frame_timestamps: list[float] | None = None,
     frames_have_video: bool = False,
     next_label: str | None = None,
+    global_context: GlobalVideoContext | None = None,
+    segment_start_seconds: float | None = None,
 ) -> str:
     """Sends encoded frame images to OpenRouter VLMs with sequential fallbacks."""
     if not _api_key():
@@ -3269,8 +3618,14 @@ def generate_label_from_frames(
     previous_label = usable_draft(previous_label)
     next_label = usable_draft(next_label)
 
-    base64_frames, frame_timestamps = _subsample_frames(
-        base64_frames, frame_timestamps, max_frames=5
+    start_seconds = segment_start_seconds
+    if start_seconds is None and frame_timestamps:
+        start_seconds = min(frame_timestamps)
+    base64_frames, frame_timestamps = prepare_segment_frames(
+        base64_frames,
+        frame_timestamps,
+        duration_seconds=duration_seconds,
+        start_seconds=start_seconds,
     )
     insist = bool(frames_have_video)
     user_content = _vision_user_content(
@@ -3281,14 +3636,14 @@ def generate_label_from_frames(
         frame_timestamps=frame_timestamps,
         insist_action=insist,
         frames_have_video=frames_have_video,
+        global_context=global_context,
     )
     system = ACTION_SYSTEM_PROMPT if frames_have_video else SYSTEM_PROMPT
-    if draft_label:
-        system += build_draft_vocabulary_system_addon(draft_label)
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_content},
-    ]
+    system += build_draft_vocabulary_system_addon(draft_label, global_context)
+    system += build_global_context_system_addon(global_context)
+    messages = [{"role": "system", "content": system}]
+    messages.extend(FEW_SHOT_CORRECTION_MESSAGES)
+    messages.append({"role": "user", "content": user_content})
     label = _query_vision_models(
         messages,
         draft_label,
@@ -3301,13 +3656,20 @@ def generate_label_from_frames(
         print(
             "[Pipeline]: All models said No Action and there is no usable Atlas draft."
         )
-    return choose_final_label(
+    final = choose_final_label(
         label,
         draft_label,
         previous_label,
         frames_have_video=frames_have_video,
         duration_seconds=duration_seconds,
         next_label=next_label,
+    )
+    return finalize_pipeline_label(
+        final,
+        draft_label,
+        previous_label,
+        duration_seconds,
+        global_context,
     )
 
 
