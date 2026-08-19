@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -1023,14 +1024,16 @@ def _is_terminal_wipe_segment(
 
 def reorder_dual_hand_clauses(label: str) -> str:
     """
-    Ensures stabilizing hold/rotate clauses precede manipulation wipe/clean/cut clauses.
-    Tool-based continuous actions (iron, scrub, mop, polish) are left untouched.
+    Ensures stabilizing hold/rotate clauses precede manipulation clauses for
+    continuous dual-hand work (wipe/clean/cut/sand/polish).
+    Tool actions whose hold clause is fabricated (iron, mop, scrub, ...) are
+    handled by sanitize_grooming_and_tool_actions instead.
     Example: 'wipe shoe sole with cloth in right hand, hold shoe with left hand'
           -> 'hold shoe with left hand, wipe shoe sole with cloth in right hand'
     """
     if not label or label == "No Action":
         return label
-    pattern = r"^(wipe|clean|cut)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
+    pattern = r"^(wipe|clean|cut|sand|polish)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
     match = re.match(pattern, label.strip(), flags=re.IGNORECASE)
     if match:
         manipulation_clause = f"{match.group(1)} {match.group(2)}"
@@ -1146,9 +1149,12 @@ def sanitize_grooming_and_tool_actions(label: str) -> str:
     return label
 
 
+_CONTINUOUS_MANIPULATION = re.compile(r"\b(?:wipe|sand|polish)\b", re.IGNORECASE)
+
+
 def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
-    """Convert stabilizing hold clauses to rotate during active wipe windows."""
-    if not label or not re.search(r"\bwipe\b", label, re.IGNORECASE):
+    """Convert stabilizing hold clauses to rotate during continuous work windows."""
+    if not label or not _CONTINUOUS_MANIPULATION.search(label):
         return label
     updated = re.sub(
         r"\bhold\s+([\w\s]+?)\s+with\s+(left hand|right hand)\b",
@@ -1165,9 +1171,10 @@ def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
 
 def normalize_episode_wiping_verbs(segment_labels: list[str]) -> list[str]:
     """
-    Applies ATLAS multi-segment wiping rules across an entire clip:
+    Applies ATLAS multi-segment rules across an entire clip for continuous
+    manipulation tasks (wipe, sand, polish):
     - Seg 1 & Seg N: keep hold on the stabilized object
-    - Seg 2 to N-1: upgrade hold to rotate during wipe windows
+    - Seg 2 to N-1: upgrade hold to rotate during work windows
     - Dual-hand labels: stabilizing clause must precede manipulation clause
     """
     total = len(segment_labels)
@@ -1177,7 +1184,7 @@ def normalize_episode_wiping_verbs(segment_labels: list[str]) -> list[str]:
     processed: list[str] = []
     for idx, label in enumerate(segment_labels):
         label = reorder_dual_hand_clauses(label or "")
-        if 0 < idx < (total - 1) and label and re.search(r"\bwipe\b", label, re.I):
+        if 0 < idx < (total - 1) and label and _CONTINUOUS_MANIPULATION.search(label):
             label = _upgrade_hold_to_rotate_in_wipe_label(label)
         processed.append(label)
     return processed
@@ -1931,6 +1938,80 @@ def _ensure_offhand_hold(label: str) -> str:
     return label
 
 
+_STABILIZE_HAND_CLAUSE = re.compile(
+    r"^(?:hold|rotate)\s+.+?\s+with\s+(left hand|right hand)\s*$",
+    re.IGNORECASE,
+)
+_CONTINUOUS_TOOL_WORK_CLAUSE = re.compile(
+    r"^(?:wipe|sand|polish|clean|wash|dry|scrub|rub|buff|file|grind)\s+.+?\s+"
+    r"with\s+.+?\s+in\s+(left hand|right hand)\s*$",
+    re.IGNORECASE,
+)
+
+# MediaPipe wrist-velocity hand verification can be disabled via env.
+_VERIFY_WORK_HAND = os.getenv("HAND_SWAP_VERIFY", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+
+
+def verify_work_hand_against_motion(
+    label: str,
+    motion: HandMotionProfile | None,
+) -> str:
+    """
+    Swap stabilizer/worker hand tags when wrist velocity clearly contradicts the
+    draft: in 'hold X with hand A, sand X with tool in hand B' the B wrist must
+    be the fast one. Only fires on two-clause continuous work labels when both
+    wrists are tracked and the stabilizer hand is at least 2x faster than the
+    alleged working hand.
+    """
+    if not _VERIFY_WORK_HAND:
+        return label
+    if not label or label == "No Action" or motion is None:
+        return label
+    if motion.frames_analyzed < 3:
+        return label
+    if not (motion.start_left_contact and motion.start_right_contact):
+        return label
+
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    stab = _STABILIZE_HAND_CLAUSE.match(clauses[0].strip())
+    work = _CONTINUOUS_TOOL_WORK_CLAUSE.match(clauses[1].strip())
+    if not stab or not work:
+        return label
+
+    stab_hand = stab.group(1).lower()
+    work_hand = work.group(1).lower()
+    if stab_hand == work_hand:
+        return label
+
+    v_work = motion.v_right if work_hand == "right hand" else motion.v_left
+    v_stab = motion.v_left if work_hand == "right hand" else motion.v_right
+    threshold = 0.015
+    clearly_reversed = v_stab > threshold * 2 and v_stab >= max(v_work * 2.0, 0.01)
+    if not clearly_reversed:
+        return label
+
+    sentinel = "@@hand-swap@@"
+    swapped = re.sub(
+        rf"\b{work_hand}\b", sentinel, label, count=1, flags=re.IGNORECASE
+    )
+    swapped = re.sub(
+        rf"\b{stab_hand}\b", work_hand, swapped, count=1, flags=re.IGNORECASE
+    )
+    swapped = swapped.replace(sentinel, stab_hand)
+    print(
+        f"[Hybrid]: Motion contradicts draft hands "
+        f"(v_left={motion.v_left:.4f}, v_right={motion.v_right:.4f}); "
+        f"swapped to '{swapped}'."
+    )
+    return swapped
+
+
 def _fix_hand_attribution(
     label: str,
     motion: HandMotionProfile | None,
@@ -2085,6 +2166,7 @@ def draft_preserving_cleaner(
     )
     label = _ensure_offhand_hold(label)
     label = _fix_hand_attribution(label, motion, draft_text=draft_text)
+    label = verify_work_hand_against_motion(label, motion)
     label = _fix_pick_up_both_hands(label, motion)
     label = _inject_tool_release(label, previous_label, clip_glossary)
     label = _validate_and_repair_clauses(label)

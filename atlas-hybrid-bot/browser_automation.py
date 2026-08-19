@@ -610,7 +610,20 @@ class VideoBrowserBot:
         try:
             self.page.evaluate(
                 """() => {
-                    const video = document.querySelector('video');
+                    const videos = Array.from(document.querySelectorAll('video')).filter((el) => {
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return (
+                            rect.width >= 80 && rect.height >= 80 &&
+                            style.visibility !== 'hidden' && style.display !== 'none'
+                        );
+                    });
+                    videos.sort((a, b) => {
+                        const ra = a.getBoundingClientRect();
+                        const rb = b.getBoundingClientRect();
+                        return rb.width * rb.height - ra.width * ra.height;
+                    });
+                    const video = videos[0] || document.querySelector('video');
                     if (!video) return;
                     video.muted = true;
                     video.playsInline = true;
@@ -632,7 +645,20 @@ class VideoBrowserBot:
         should_seek = abs(current - start_seconds) > 1.25
         self.page.evaluate(
             """async ({ start, shouldSeek }) => {
-                const video = document.querySelector('video');
+                const videos = Array.from(document.querySelectorAll('video')).filter((el) => {
+                    const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    return (
+                        rect.width >= 80 && rect.height >= 80 &&
+                        style.visibility !== 'hidden' && style.display !== 'none'
+                    );
+                });
+                videos.sort((a, b) => {
+                    const ra = a.getBoundingClientRect();
+                    const rb = b.getBoundingClientRect();
+                    return rb.width * rb.height - ra.width * ra.height;
+                });
+                const video = videos[0] || document.querySelector('video');
                 if (!video) return;
                 video.muted = true;
                 video.playsInline = true;
@@ -661,7 +687,20 @@ class VideoBrowserBot:
         try:
             value = self.page.evaluate(
                 """() => {
-                    const video = document.querySelector('video');
+                    const videos = Array.from(document.querySelectorAll('video')).filter((el) => {
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        return (
+                            rect.width >= 80 && rect.height >= 80 &&
+                            style.visibility !== 'hidden' && style.display !== 'none'
+                        );
+                    });
+                    videos.sort((a, b) => {
+                        const ra = a.getBoundingClientRect();
+                        const rb = b.getBoundingClientRect();
+                        return rb.width * rb.height - ra.width * ra.height;
+                    });
+                    const video = videos[0] || document.querySelector('video');
                     return video ? video.currentTime : 0;
                 }"""
             )

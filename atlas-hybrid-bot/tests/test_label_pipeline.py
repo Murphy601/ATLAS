@@ -812,3 +812,85 @@ def test_pass_chain_untouched_by_tool_sanitizer():
         "place wrench on table with right hand"
     )
     assert sanitize_grooming_and_tool_actions(chain) == chain
+
+
+def test_sand_clause_order_becomes_hold_first():
+    out = atlas_guide_cleaner(
+        "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand"
+    )
+    assert out.lower() == (
+        "hold wooden disc with left hand, "
+        "sand wooden disc with sandpaper in right hand"
+    )
+
+
+def test_sand_episode_rotates_middle_segments():
+    from label_pipeline import normalize_episode_sequence
+
+    draft = "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand"
+    out = normalize_episode_sequence([draft] * 4)
+    assert out[0].lower() == (
+        "hold wooden disc with left hand, "
+        "sand wooden disc with sandpaper in right hand"
+    )
+    assert out[1].lower().startswith("rotate wooden disc with left hand")
+    assert "sand wooden disc with sandpaper in right hand" in out[1].lower()
+    assert out[2].lower().startswith("rotate wooden disc with left hand")
+    assert out[3].lower() == out[0].lower()
+
+
+def test_motion_contradiction_swaps_sanding_work_hand():
+    from hybrid_annotator import HandMotionProfile
+
+    motion = HandMotionProfile(
+        v_left=0.09,
+        v_right=0.004,
+        frames_analyzed=6,
+        start_left_contact=True,
+        start_right_contact=True,
+    )
+    out = atlas_guide_cleaner(
+        "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand",
+        motion=motion,
+    )
+    assert out.lower() == (
+        "hold wooden disc with right hand, "
+        "sand wooden disc with sandpaper in left hand"
+    )
+
+
+def test_motion_agreement_keeps_draft_hands():
+    from hybrid_annotator import HandMotionProfile
+
+    motion = HandMotionProfile(
+        v_left=0.004,
+        v_right=0.09,
+        frames_analyzed=6,
+        start_left_contact=True,
+        start_right_contact=True,
+    )
+    out = atlas_guide_cleaner(
+        "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand",
+        motion=motion,
+    )
+    assert out.lower() == (
+        "hold wooden disc with left hand, "
+        "sand wooden disc with sandpaper in right hand"
+    )
+
+
+def test_hand_swap_skipped_when_only_one_wrist_tracked():
+    from hybrid_annotator import HandMotionProfile
+
+    motion = HandMotionProfile(
+        v_left=0.09,
+        v_right=0.0,
+        frames_analyzed=6,
+        start_left_contact=True,
+        start_right_contact=False,
+    )
+    out = atlas_guide_cleaner(
+        "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand",
+        motion=motion,
+    )
+    assert "sandpaper in right hand" in out.lower()
