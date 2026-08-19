@@ -101,7 +101,8 @@ def test_clip_consensus_keeps_draft_when_peaks_ambiguous():
     assert all(label.lower() == draft.lower() for label in out)
 
 
-def test_clip_consensus_uses_best_segment_across_clip():
+def test_clip_consensus_ignores_noisy_seek_fallback_segments():
+    """Seg 2–4 seek noise must not block a clear wipe signal in segment 1."""
     draft = "hold plate with left hand, wipe plate with cloth in right hand"
     profiles = [
         HandMotionProfile(
@@ -109,11 +110,29 @@ def test_clip_consensus_uses_best_segment_across_clip():
             peak_right=0.008,
             angular_left=0.136,
             angular_right=0.028,
-            frames_analyzed=8,
+            frames_analyzed=9,
         ),
-        HandMotionProfile(peak_left=0.01, peak_right=0.008, frames_analyzed=8),
-        HandMotionProfile(peak_left=0.009, peak_right=0.007, frames_analyzed=8),
-        HandMotionProfile(peak_left=0.012, peak_right=0.01, frames_analyzed=8),
+        HandMotionProfile(
+            peak_left=0.05,
+            peak_right=0.045,
+            angular_left=0.02,
+            angular_right=0.03,
+            frames_analyzed=10,
+        ),
+        HandMotionProfile(
+            peak_left=0.048,
+            peak_right=0.044,
+            angular_left=0.018,
+            angular_right=0.025,
+            frames_analyzed=10,
+        ),
+        HandMotionProfile(
+            peak_left=0.046,
+            peak_right=0.042,
+            angular_left=0.022,
+            angular_right=0.028,
+            frames_analyzed=10,
+        ),
     ]
     work, stab, conf = infer_clip_hand_roles(profiles)
     assert work == "left hand"
@@ -123,6 +142,41 @@ def test_clip_consensus_uses_best_segment_across_clip():
     assert all(
         label.lower() == "hold plate with right hand, wipe plate with cloth in left hand"
         for label in out
+    )
+
+
+def test_aggregate_peaks_would_fail_without_best_segment():
+    """Regression: max peak aggregation hides angular asymmetry from segment 1."""
+    # Old aggregate: peaks inflated by seek segments, angular diluted.
+    work, stab, conf = _infer_hand_roles(0.05, 0.045, 0.136, 0.03, 0.015)
+    assert work is None or conf < 0.25
+    # Per-segment seg1 alone is clear.
+    work, stab, conf = _infer_hand_roles(0.012, 0.008, 0.136, 0.028, 0.015)
+    assert work == "left hand"
+    assert conf > 0.25
+
+
+def test_clip_consensus_uses_best_segment_across_clip():
+    draft = "hold plate with left hand, wipe plate with cloth in right hand"
+    profiles = [
+        HandMotionProfile(peak_left=0.012, peak_right=0.008, frames_analyzed=8),
+        HandMotionProfile(
+            peak_left=0.11,
+            peak_right=0.015,
+            angular_left=0.05,
+            angular_right=0.01,
+            frames_analyzed=10,
+        ),
+        HandMotionProfile(peak_left=0.009, peak_right=0.007, frames_analyzed=8),
+        HandMotionProfile(peak_left=0.012, peak_right=0.01, frames_analyzed=8),
+    ]
+    work, stab, conf = infer_clip_hand_roles(profiles)
+    assert work == "left hand"
+    assert stab == "right hand"
+    assert conf > 0.25
+    out = apply_clip_hand_consensus([draft] * 4, profiles)
+    assert out[1].lower() == (
+        "hold plate with right hand, wipe plate with cloth in left hand"
     )
 
 

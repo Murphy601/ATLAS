@@ -480,18 +480,19 @@ def _infer_hand_roles(
     """
     min_act = threshold * 1.8
     peak_max = max(peak_left, peak_right)
+    strong_peaks = peak_max >= min_act * 1.5
 
     if peak_max >= min_act:
         slower = min(peak_left, peak_right)
-        if slower <= 0.0:
+        if slower > 0.0:
+            if peak_left >= peak_right * 1.45:
+                confidence = min(1.0, (peak_left - peak_right) / max(peak_left, 1e-6))
+                return "left hand", "right hand", confidence
+            if peak_right >= peak_left * 1.45:
+                confidence = min(1.0, (peak_right - peak_left) / max(peak_right, 1e-6))
+                return "right hand", "left hand", confidence
+        if strong_peaks:
             return None, None, 0.0
-        if peak_left >= peak_right * 1.45:
-            confidence = min(1.0, (peak_left - peak_right) / max(peak_left, 1e-6))
-            return "left hand", "right hand", confidence
-        if peak_right >= peak_left * 1.45:
-            confidence = min(1.0, (peak_right - peak_left) / max(peak_right, 1e-6))
-            return "right hand", "left hand", confidence
-        return None, None, 0.0
 
     act_left = _hand_activity_score(peak_left, angular_left)
     act_right = _hand_activity_score(peak_right, angular_right)
@@ -515,27 +516,27 @@ def infer_clip_hand_roles(
     threshold: float = DEFAULT_MOTION_THRESHOLD,
 ) -> tuple[str | None, str | None, float]:
     """
-    Best motion signal across all segments in a clip (max peak + max angular per hand).
-    One segment with clear wipe strokes is enough to lock hands for the whole clip.
+    Pick the single segment with the clearest work/stabilize asymmetry.
+
+    Aggregating max peak per hand across segments lets noisy seek-fallback frames
+    on segments 2–4 wash out a clear wipe signal from segment 1.
     """
-    peak_left = 0.0
-    peak_right = 0.0
-    angular_left = 0.0
-    angular_right = 0.0
+    best_work: str | None = None
+    best_stab: str | None = None
+    best_conf = 0.0
     for motion in motion_profiles:
         if motion is None or motion.frames_analyzed < 3:
             continue
-        peak_left = max(peak_left, motion.peak_left)
-        peak_right = max(peak_right, motion.peak_right)
-        angular_left = max(angular_left, motion.angular_left)
-        angular_right = max(angular_right, motion.angular_right)
-    return _infer_hand_roles(
-        peak_left,
-        peak_right,
-        angular_left,
-        angular_right,
-        threshold,
-    )
+        work, stab, conf = _infer_hand_roles(
+            motion.peak_left,
+            motion.peak_right,
+            motion.angular_left,
+            motion.angular_right,
+            threshold,
+        )
+        if conf > best_conf:
+            best_work, best_stab, best_conf = work, stab, conf
+    return best_work, best_stab, best_conf
 
 
 def stabilizer_rotation_sweep(

@@ -87,6 +87,20 @@ def apply_clip_hand_consensus(
 
     work, stab, confidence = infer_clip_hand_roles(motion_profiles or [])
     if not work or not stab or confidence < _MIN_HAND_CONFIDENCE:
+        if _VISION_ENABLED and any(
+            _BIMANUAL_TOOL_LABEL.search(lbl or "") for lbl in segment_labels
+        ):
+            sample = next(
+                (m for m in (motion_profiles or []) if m and m.frames_analyzed >= 3),
+                None,
+            )
+            if sample:
+                print(
+                    "[Hybrid]: Vision hand consensus skipped "
+                    f"(confidence={confidence:.2f}, need>={_MIN_HAND_CONFIDENCE:.2f}, "
+                    f"peakL={sample.peak_left:.3f} peakR={sample.peak_right:.3f}, "
+                    f"angL={sample.angular_left:.3f} angR={sample.angular_right:.3f})"
+                )
         return segment_labels
 
     updated: list[str] = []
