@@ -82,12 +82,12 @@ def test_generate_label_keeps_multi_clause():
             [],
             pipeline,
             draft_label=(
-                "hold bowl with left hand, scrubbing bowl with sponge in right hand"
+                "hold bowl with left hand, wiping bowl with sponge in right hand"
             ),
             duration_seconds=4.0,
         )
         assert "hold bowl" in label.lower()
-        assert "scrub bowl" in label.lower()
+        assert "wipe bowl" in label.lower()
         assert label.count(",") >= 1
     finally:
         pipeline.close()
@@ -143,7 +143,8 @@ def test_noun_not_swapped_jar_to_cup():
 def test_hold_animal_not_pick_up():
     draft = "hold animal with left hand, trim animal with scissors in right hand"
     out = atlas_guide_cleaner(draft)
-    assert "hold animal" in out.lower()
+    # Single-tool grooming: resting off-hand hold is a hallucinated extra action.
+    assert out.lower() == "trim animal with scissors in right hand"
     assert "pick up animal" not in out.lower()
 
 
@@ -740,10 +741,10 @@ def test_sanitize_tool_actions_strips_injected_smooth_clause():
     assert out.lower() == "iron garment with iron in right hand"
 
 
-def test_scrub_label_clause_order_not_reordered():
+def test_scrub_tool_action_strips_redundant_hold():
     draft = "scrub pot with brush in right hand, hold pot with left hand"
     out = atlas_guide_cleaner(draft)
-    assert out.lower() == draft.lower()
+    assert out.lower() == "scrub pot with brush in right hand"
 
 
 def test_normalize_episode_sequence_preserves_pick_up_in_transfer_clips():
@@ -781,3 +782,33 @@ def test_smooth_shirt_gets_no_fabricated_hold_clause():
     out = atlas_guide_cleaner("smooth shirt with right hand")
     assert out.lower() == "smooth shirt with right hand"
     assert "hold" not in out.lower()
+
+
+def test_trim_animal_strips_redundant_hold_clause():
+    from label_pipeline import sanitize_grooming_and_tool_actions
+
+    out = sanitize_grooming_and_tool_actions(
+        "hold animal with left hand, trim animal with scissors in right hand"
+    )
+    assert out.lower() == "trim animal with scissors in right hand"
+
+
+def test_iron_strips_leading_hold_clause():
+    out = atlas_guide_cleaner("hold shirt with left hand, iron shirt with iron in right hand")
+    assert out.lower() == "iron shirt with iron in right hand"
+
+
+def test_wipe_dual_clause_not_stripped_by_tool_sanitizer():
+    draft = "hold bowl with left hand, wipe bowl with cloth in right hand"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == draft.lower()
+
+
+def test_pass_chain_untouched_by_tool_sanitizer():
+    from label_pipeline import sanitize_grooming_and_tool_actions
+
+    chain = (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
+    assert sanitize_grooming_and_tool_actions(chain) == chain

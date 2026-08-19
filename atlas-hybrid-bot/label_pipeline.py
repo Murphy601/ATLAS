@@ -1110,6 +1110,42 @@ def sanitize_tool_actions(label: str) -> str:
     return ", ".join(kept)
 
 
+_SINGLE_TOOL_VERB_PATTERN = re.compile(
+    r"^(?:trim|cut|shear|clip|iron|mop|scrub|vacuum|sweep)\b",
+    re.IGNORECASE,
+)
+_HOLD_STABILIZER_CLAUSE = re.compile(
+    r"^hold\s+.+?\s+with\s+(?:left|right|both)\s+hands?$",
+    re.IGNORECASE,
+)
+
+
+def sanitize_grooming_and_tool_actions(label: str) -> str:
+    """
+    Strips redundant 'hold [object]' clauses from single-tool tasks like trimming,
+    cutting, ironing, or mopping to prevent 'Fact Extra Action' penalties.
+
+    ATLAS counts 'hold [object]' as a hallucinated extra action when the
+    non-dominant hand is merely resting/guiding/off-camera; grooming and
+    single-tool verbs default to one precise clause.
+
+    Example:
+      'hold animal with left hand, trim animal with scissors in right hand'
+      -> 'trim animal with scissors in right hand'
+    """
+    if not label or label == "No Action":
+        return label
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    first, second = clauses[0].strip(), clauses[1].strip()
+    if _HOLD_STABILIZER_CLAUSE.match(first) and _SINGLE_TOOL_VERB_PATTERN.match(second):
+        return second
+    if _SINGLE_TOOL_VERB_PATTERN.match(first) and _HOLD_STABILIZER_CLAUSE.match(second):
+        return first
+    return label
+
+
 def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
     """Convert stabilizing hold clauses to rotate during active wipe windows."""
     if not label or not re.search(r"\bwipe\b", label, re.IGNORECASE):
@@ -2077,6 +2113,7 @@ def draft_preserving_cleaner(
     )
     label = normalize_pick_and_place(label)
     label = sanitize_tool_actions(label)
+    label = sanitize_grooming_and_tool_actions(label)
 
     return label
 

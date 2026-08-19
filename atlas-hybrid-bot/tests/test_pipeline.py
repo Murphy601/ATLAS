@@ -117,9 +117,8 @@ def test_process_live_task_keeps_bimanual_draft_when_no_action():
 
     assert len(recorded) == 1
     label = recorded[0][1].lower()
-    assert "hold animal" in label
-    assert "trim animal" in label or "scissors" in label
-    assert "," in recorded[0][1]
+    # Single-tool grooming: fabricated off-hand hold is stripped (Fact Extra Action).
+    assert label == "trim animal with scissors in right hand"
 
 
 def test_browser_disconnect_message_matches_playwright_crash():
