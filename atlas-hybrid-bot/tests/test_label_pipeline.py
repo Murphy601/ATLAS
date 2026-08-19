@@ -330,10 +330,13 @@ def _rotating_left_hand_motion():
     return HandMotionProfile(
         v_left=0.05,
         v_right=0.04,
+        peak_left=0.08,
+        peak_right=0.06,
         angular_left=0.25,
         angular_right=0.05,
         work_hand="right hand",
         stabilize_hand="left hand",
+        hand_confidence=0.4,
         frames_analyzed=6,
         start_left_contact=True,
         start_right_contact=True,
@@ -347,10 +350,13 @@ def _static_left_hand_motion():
     return HandMotionProfile(
         v_left=0.003,
         v_right=0.05,
+        peak_left=0.008,
+        peak_right=0.07,
         angular_left=0.02,
         angular_right=0.08,
         work_hand="right hand",
         stabilize_hand="left hand",
+        hand_confidence=0.85,
         frames_analyzed=6,
         start_left_contact=True,
         start_right_contact=True,
@@ -913,44 +919,40 @@ def test_sand_episode_rotates_middle_segments():
     assert out[3].lower() == out[0].lower()
 
 
-def test_motion_contradiction_swaps_sanding_work_hand():
+def test_clip_consensus_swaps_when_left_wipes():
+    from label_pipeline import normalize_episode_sequence
     from hybrid_annotator import HandMotionProfile
 
+    draft = "hold plate with left hand, wipe plate with cloth in right hand"
     motion = HandMotionProfile(
-        v_left=0.09,
-        v_right=0.004,
-        frames_analyzed=6,
+        peak_left=0.09,
+        peak_right=0.01,
+        hand_confidence=0.88,
+        work_hand="left hand",
+        stabilize_hand="right hand",
+        frames_analyzed=8,
         start_left_contact=True,
         start_right_contact=True,
     )
-    out = atlas_guide_cleaner(
-        "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand",
-        motion=motion,
-    )
-    assert out.lower() == (
-        "hold wooden disc with right hand, "
-        "sand wooden disc with sandpaper in left hand"
+    out = normalize_episode_sequence([draft] * 4, [motion] * 4)
+    assert all(
+        label.lower() == "hold plate with right hand, wipe plate with cloth in left hand"
+        for label in out
     )
 
 
-def test_motion_agreement_keeps_draft_hands():
+def test_clip_consensus_keeps_draft_when_peaks_weak():
+    from label_pipeline import normalize_episode_sequence
     from hybrid_annotator import HandMotionProfile
 
+    draft = "hold plate with left hand, wipe plate with cloth in right hand"
     motion = HandMotionProfile(
-        v_left=0.004,
-        v_right=0.09,
-        frames_analyzed=6,
-        start_left_contact=True,
-        start_right_contact=True,
+        peak_left=0.01,
+        peak_right=0.009,
+        frames_analyzed=8,
     )
-    out = atlas_guide_cleaner(
-        "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand",
-        motion=motion,
-    )
-    assert out.lower() == (
-        "hold wooden disc with left hand, "
-        "sand wooden disc with sandpaper in right hand"
-    )
+    out = normalize_episode_sequence([draft] * 4, [motion] * 4)
+    assert all(label.lower() == draft.lower() for label in out)
 
 
 def test_hand_swap_skipped_when_only_one_wrist_tracked():

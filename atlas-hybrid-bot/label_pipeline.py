@@ -23,7 +23,7 @@ from config import (
 from frame_utils import frames_from_base64_list
 from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
 from hybrid_annotator import stabilizer_rotation_sweep
-from vision_hands import apply_vision_hand_corrections
+from vision_hands import apply_clip_hand_consensus, apply_vision_hand_corrections
 from label_generator import (
     CLOTH_PATTERN,
     CLOTH_WORK_VERBS,
@@ -1233,6 +1233,7 @@ def normalize_episode_sequence(
     - Every segment: clean up pick-and-place locations and preposition order
     """
     cleaned = [normalize_pick_and_place(lbl or "") for lbl in segment_labels]
+    cleaned = apply_clip_hand_consensus(cleaned, motion_profiles)
     return normalize_episode_wiping_verbs(cleaned, motion_profiles)
 
 
@@ -2177,7 +2178,6 @@ def draft_preserving_cleaner(
         label, previous_label, clip_draft_blob
     )
     label = reorder_dual_hand_clauses(label)
-    label = apply_vision_hand_corrections(label, motion)
     label = dynamic_verb_hold_to_rotate(
         label,
         previous_label,
@@ -2193,7 +2193,6 @@ def draft_preserving_cleaner(
     )
     label = _ensure_offhand_hold(label)
     label = _fix_hand_attribution(label, motion, draft_text=draft_text)
-    label = verify_work_hand_against_motion(label, motion)
     label = _fix_pick_up_both_hands(label, motion)
     label = _inject_tool_release(label, previous_label, clip_glossary)
     label = _validate_and_repair_clauses(label)

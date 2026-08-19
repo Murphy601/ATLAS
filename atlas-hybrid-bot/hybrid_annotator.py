@@ -71,6 +71,8 @@ class SegmentStateMemory:
 class HandMotionProfile:
     v_left: float = 0.0
     v_right: float = 0.0
+    peak_left: float = 0.0
+    peak_right: float = 0.0
     vy_left: float = 0.0
     vy_right: float = 0.0
     angular_left: float = 0.0
@@ -78,6 +80,7 @@ class HandMotionProfile:
     detected_hand: str = "with right hand"
     work_hand: str | None = None
     stabilize_hand: str | None = None
+    hand_confidence: float = 0.0
     start_left_contact: bool = False
     start_right_contact: bool = False
     frames_analyzed: int = 0
@@ -146,6 +149,8 @@ class AtlasHybridPipeline:
 
         v_left = _mean_wrist_velocity(left_positions)
         v_right = _mean_wrist_velocity(right_positions)
+        peak_left = _peak_wrist_velocity(left_positions)
+        peak_right = _peak_wrist_velocity(right_positions)
         vy_left = _mean_wrist_vertical_delta(left_positions)
         vy_right = _mean_wrist_vertical_delta(right_positions)
         center = _rotation_center(left_positions, right_positions)
@@ -155,9 +160,9 @@ class AtlasHybridPipeline:
         draft_hand = _hand_tag_from_draft(draft_label)
         if draft_hand and v_left <= self.motion_threshold and v_right <= self.motion_threshold:
             detected = draft_hand
-        work_hand, stabilize_hand = _infer_hand_roles(
-            v_left,
-            v_right,
+        work_hand, stabilize_hand, confidence = _infer_hand_roles(
+            peak_left,
+            peak_right,
             angular_left,
             angular_right,
             self.motion_threshold,
@@ -167,6 +172,8 @@ class AtlasHybridPipeline:
         return HandMotionProfile(
             v_left=v_left,
             v_right=v_right,
+            peak_left=peak_left,
+            peak_right=peak_right,
             vy_left=vy_left,
             vy_right=vy_right,
             angular_left=angular_left,
@@ -174,6 +181,7 @@ class AtlasHybridPipeline:
             detected_hand=detected,
             work_hand=work_hand,
             stabilize_hand=stabilize_hand,
+            hand_confidence=confidence,
             start_left_contact=start_left,
             start_right_contact=start_right,
             frames_analyzed=len(sampled),
@@ -369,6 +377,21 @@ def _mean_wrist_velocity(positions: list[tuple[float, float] | None]) -> float:
     return float(np.mean(distances)) if distances else 0.0
 
 
+def _peak_wrist_velocity(positions: list[tuple[float, float] | None]) -> float:
+    """Max frame-to-frame wrist displacement — wiping strokes spike; static hold stays near zero."""
+    valid = [pos for pos in positions if pos is not None]
+    if len(valid) < 2:
+        return 0.0
+    distances: list[float] = []
+    prev = valid[0]
+    for pos in valid[1:]:
+        dx = pos[0] - prev[0]
+        dy = pos[1] - prev[1]
+        distances.append(float(np.sqrt(dx * dx + dy * dy)))
+        prev = pos
+    return float(max(distances)) if distances else 0.0
+
+
 def _mean_wrist_vertical_delta(positions: list[tuple[float, float] | None]) -> float:
     """Mean vertical wrist delta; positive values indicate downward motion in frame space."""
     valid = [pos for pos in positions if pos is not None]
@@ -421,26 +444,98 @@ def _angular_sweep(
     return float(sweep)
 
 
+def _hand_activity_score(
+    peak_velocity: float,
+    angular_sweep: float,
+    *,
+    angular_weight: float = 0.35,
+    angular_min_rad: float = 0.08,
+) -> float:
+    """
+    Combined wrist activity for role inference.
+
+    Wiping often shows low mean/peak linear motion but clear angular sweep around
+    the held object. Angular only counts above angular_min_rad to ignore static jitter.
+    """
+    linear = peak_velocity
+    rotational = angular_sweep * angular_weight if angular_sweep >= angular_min_rad else 0.0
+    return max(linear, rotational)
+
+
 def _infer_hand_roles(
-    v_left: float,
-    v_right: float,
+    peak_left: float,
+    peak_right: float,
     angular_left: float,
     angular_right: float,
     threshold: float,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, float]:
     """
-    Faster/more active wrist -> working hand; slower -> stabilizing hand.
-    Returns (work_hand, stabilize_hand) or (None, None) when ambiguous.
+    Wiping/tool hand = higher peak wrist velocity (stroke spikes).
+    When peaks are too weak to compare, fall back to angular sweep (subtle wipes).
+
+    Stabilizer rotation in middle segments can inflate angular on the hold hand;
+    we ignore angular whenever either peak is strong enough to compare directly.
+
+    Returns (work_hand, stabilize_hand, confidence 0..1).
     """
-    activity_left = v_left + angular_left * 0.35
-    activity_right = v_right + angular_right * 0.35
-    if activity_left < threshold and activity_right < threshold:
-        return None, None
-    if activity_left >= activity_right * 1.35:
-        return "left hand", "right hand"
-    if activity_right >= activity_left * 1.35:
-        return "right hand", "left hand"
-    return None, None
+    min_act = threshold * 1.8
+    peak_max = max(peak_left, peak_right)
+
+    if peak_max >= min_act:
+        slower = min(peak_left, peak_right)
+        if slower <= 0.0:
+            return None, None, 0.0
+        if peak_left >= peak_right * 1.45:
+            confidence = min(1.0, (peak_left - peak_right) / max(peak_left, 1e-6))
+            return "left hand", "right hand", confidence
+        if peak_right >= peak_left * 1.45:
+            confidence = min(1.0, (peak_right - peak_left) / max(peak_right, 1e-6))
+            return "right hand", "left hand", confidence
+        return None, None, 0.0
+
+    act_left = _hand_activity_score(peak_left, angular_left)
+    act_right = _hand_activity_score(peak_right, angular_right)
+    work_act = max(act_left, act_right)
+    if work_act < min_act:
+        return None, None, 0.0
+    slower = min(act_left, act_right)
+    if slower <= 0.0 or work_act / slower < 1.45:
+        return None, None, 0.0
+    if act_left >= act_right * 1.45:
+        confidence = min(1.0, (act_left - act_right) / max(act_left, 1e-6))
+        return "left hand", "right hand", confidence
+    if act_right >= act_left * 1.45:
+        confidence = min(1.0, (act_right - act_left) / max(act_right, 1e-6))
+        return "right hand", "left hand", confidence
+    return None, None, 0.0
+
+
+def infer_clip_hand_roles(
+    motion_profiles: list[HandMotionProfile | None],
+    threshold: float = DEFAULT_MOTION_THRESHOLD,
+) -> tuple[str | None, str | None, float]:
+    """
+    Best motion signal across all segments in a clip (max peak + max angular per hand).
+    One segment with clear wipe strokes is enough to lock hands for the whole clip.
+    """
+    peak_left = 0.0
+    peak_right = 0.0
+    angular_left = 0.0
+    angular_right = 0.0
+    for motion in motion_profiles:
+        if motion is None or motion.frames_analyzed < 3:
+            continue
+        peak_left = max(peak_left, motion.peak_left)
+        peak_right = max(peak_right, motion.peak_right)
+        angular_left = max(angular_left, motion.angular_left)
+        angular_right = max(angular_right, motion.angular_right)
+    return _infer_hand_roles(
+        peak_left,
+        peak_right,
+        angular_left,
+        angular_right,
+        threshold,
+    )
 
 
 def stabilizer_rotation_sweep(
