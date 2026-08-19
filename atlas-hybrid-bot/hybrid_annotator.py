@@ -360,7 +360,10 @@ def _hand_tag_from_draft(draft: str | None) -> str | None:
 
 def _hand_from_velocities(v_left: float, v_right: float, threshold: float) -> str:
     if v_left > threshold and v_right > threshold:
-        return "with both hands"
+        slower = min(v_left, v_right)
+        faster = max(v_left, v_right)
+        if slower > 0 and faster / slower < 1.5:
+            return "with both hands"
     if v_left > v_right and v_left > threshold:
         return "with left hand"
     if v_right > v_left and v_right > threshold:

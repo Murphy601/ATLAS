@@ -44,13 +44,18 @@ No API key needed.
 
 | Rule | What the bot does |
 |---|---|
-| Bimanual / off-hand hold | Keeps up to **3** clauses — e.g. `hold bowl with left hand, scrub bowl with sponge in right hand` |
-| `place` needs location | Adds `on/in [location]` when draft omits it |
-| Tool syntax | Preserves `with [tool] in [hand]` |
+| Bimanual / off-hand hold | Keeps up to **3** clauses from the draft — e.g. `hold bowl with left hand, scrub bowl with sponge in right hand` |
+| `place` needs location | Keeps location when the draft includes it; does not invent locations |
+| Tool syntax | Preserves `with [tool] in [hand]`; fixes broken `with [tool] with [hand]` |
+| Draft verbs | Keeps `smooth` and other imperatives; does not rewrite to `smoothen` |
+| Off-hand stabilize | Adds `hold [object] in left hand` when draft names one working hand on cloth/dish work |
+| Plural nouns | Keeps `papers` when draft or prior segment uses plural |
+| Hand attribution | Splits false `both hands` bimanual clauses; motion corrects single-hand dominance |
 | No articles / digits | Strips `the`, `a`, `an`; spells out numbers |
-| Banned verbs | `adjust`→`shift`, `grab`→`pick up`; drops `inspect`/`check` |
+| Banned verbs | `adjust`→`shift`, `grab`→`pick up` |
 | Plural tools | `scissors`, `tongs`, `pliers` always plural |
-| Hand-state carryover | `pick up`→`hold` only if prior segment ended holding same object |
+| Hand-state carryover | `pick up`→`hold` only if prior segment ended holding same object; never `hold`→`pick up` |
+| Draft trust | No noun swaps, fake off-hand holds, or location injection |
 
 ## Architecture
 
@@ -58,7 +63,7 @@ No API key needed.
 main.py
   └─ VideoBrowserBot (browser_automation.py)
   └─ generate_label_hybrid (label_pipeline.py)
-       └─ atlas_guide_cleaner → sanitize_label + lint + place/3-action cap
+       └─ draft_preserving_cleaner → safe syntax only (no sanitize_label surgery)
 ```
 
 ## Env

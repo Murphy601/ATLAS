@@ -143,3 +143,53 @@ def test_hold_animal_not_pick_up():
     out = atlas_guide_cleaner(draft)
     assert "hold animal" in out.lower()
     assert "pick up animal" not in out.lower()
+
+
+def test_smooth_not_converted_to_smoothen():
+    out = atlas_guide_cleaner("smoothing shirt with right hand")
+    assert "smooth shirt" in out.lower()
+    assert "smoothen" not in out.lower()
+
+
+def test_smooth_imperative_preserved():
+    out = atlas_guide_cleaner("smooth cloth with right hand")
+    assert "smooth cloth" in out.lower()
+    assert "smoothen" not in out.lower()
+
+
+def test_offhand_hold_added_for_cloth_work():
+    out = atlas_guide_cleaner("smooth cloth with right hand")
+    assert "hold cloth" in out.lower()
+    assert "left hand" in out.lower()
+    assert "smooth cloth with right hand" in out.lower()
+
+
+def test_papers_plural_from_prior_segment():
+    out = atlas_guide_cleaner(
+        "shift paper with left hand",
+        previous_label="hold papers with left hand",
+    )
+    assert "papers" in out.lower()
+    assert "shift papers" in out.lower()
+
+
+def test_split_both_hands_into_hold_and_wipe():
+    out = atlas_guide_cleaner("wipe plate with cloth in both hands")
+    assert "hold plate" in out.lower()
+    assert "wipe plate" in out.lower()
+    assert "left hand" in out.lower()
+    assert "right hand" in out.lower()
+    assert "both hands" not in out.lower()
+
+
+def test_motion_corrects_false_both_hands():
+    from hybrid_annotator import HandMotionProfile
+
+    motion = HandMotionProfile(
+        v_left=0.05,
+        v_right=0.005,
+        detected_hand="with left hand",
+    )
+    out = atlas_guide_cleaner("pick up sock with both hands", motion=motion)
+    assert "left hand" in out.lower()
+    assert "both hands" not in out.lower()
