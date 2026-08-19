@@ -234,3 +234,47 @@ def test_cut_demoted_to_align_when_scissors_sandwiched():
     )
     assert "align papers" in out.lower()
     assert "cut paper" not in out.lower()
+
+
+def test_pick_up_and_place_expands_to_two_clauses():
+    out = atlas_guide_cleaner("pick up and place wrench with right hand")
+    assert "pick up wrench with right hand" in out.lower()
+    assert "place wrench on table with right hand" in out.lower()
+    assert "pick up," not in out.lower()
+
+
+def test_malformed_pick_up_comma_place_repaired():
+    out = atlas_guide_cleaner("pick up, place wrench with right hand")
+    assert "pick up wrench with right hand" in out.lower()
+    assert "place wrench on table with right hand" in out.lower()
+
+
+def test_pick_up_cloth_both_hands_defaults_to_left():
+    out = atlas_guide_cleaner("pick up red cloth with both hands")
+    assert "pick up red cloth with left hand" in out.lower()
+    assert "both hands" not in out.lower()
+
+
+def test_smooth_both_hands_preserved_from_draft():
+    draft = "smooth green cloth with both hands"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == draft.lower()
+
+
+def test_sewing_needle_in_cap_context():
+    blob = "hold cap with left hand, insert needle into patch with right hand"
+    out = atlas_guide_cleaner(
+        "hold cap with left hand, insert needle into patch with right hand",
+        clip_draft_blob=blob,
+    )
+    assert "sewing needle" in out.lower()
+
+
+def test_pull_after_pull_thread_segment():
+    out = atlas_guide_cleaner(
+        "hold cap with left hand, insert needle into patch with right hand",
+        previous_label="hold cap with left hand, pull thread through patch with right hand",
+        clip_draft_blob="hold cap patch thread insert needle pull thread",
+    )
+    assert "pull sewing needle" in out.lower()
+    assert "insert sewing needle into patch" not in out.lower()

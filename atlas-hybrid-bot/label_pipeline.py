@@ -77,6 +77,7 @@ TWO_HANDED_VERBS = frozenset(
         "knead",
         "squeeze",
         "wring",
+        "twist",
     }
 )
 
@@ -116,16 +117,68 @@ KNOWN_CLIP_TOOLS = (
     "soldering iron",
     "mop",
     "iron",
+    "sewing needle",
+    "shears",
 )
+
+_HAND_TAG = r"(?:left hand|right hand|both hands)"
+_PICK_UP_AND_PLACE = re.compile(
+    rf"\bpick up and place\s+(.+?)\s+with\s+({_HAND_TAG})\b",
+    re.IGNORECASE,
+)
+_MALFORMED_PICK_UP_PLACE = re.compile(
+    rf"\bpick up,\s*place\s+(.+?)\s+with\s+({_HAND_TAG})\b",
+    re.IGNORECASE,
+)
+_BARE_PICK_UP = re.compile(r"^pick up\s*$", re.IGNORECASE)
+
+
+def _expand_pick_up_and_place(text: str) -> str:
+    """pick up and place wrench with right hand → two valid Atlas clauses."""
+    match = _PICK_UP_AND_PLACE.search(text)
+    if match:
+        obj = match.group(1).strip()
+        hand = match.group(2)
+        expanded = f"pick up {obj} with {hand}, place {obj} on table with {hand}"
+        return text[: match.start()] + expanded + text[match.end() :]
+    return text
+
+
+def _repair_malformed_pick_up_place(text: str) -> str:
+    """Fix pick up, place wrench with right hand → valid pick up + place clauses."""
+    match = _MALFORMED_PICK_UP_PLACE.search(text)
+    if match:
+        obj = match.group(1).strip()
+        hand = match.group(2)
+        repaired = f"pick up {obj} with {hand}, place {obj} on table with {hand}"
+        return text[: match.start()] + repaired + text[match.end() :]
+    return text
 
 
 def _normalize_draft_separators(text: str) -> str:
+    text = _expand_pick_up_and_place(text)
     text = _SLASH.sub(", ", text)
     text = _SEMICOLON.sub(", ", text)
     text = _COMMA_AND.sub(",", text)
     text = re.sub(r"\s+then\s+", ", ", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s+and\s+", ", ", text, flags=re.IGNORECASE)
+    # Only split on "and" between two verb-led clauses (not pick up and place).
+    if not re.search(r"\bpick up and place\b", text, re.IGNORECASE):
+        parts = re.split(r"\s+and\s+", text, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            rebuilt: list[str] = []
+            carry = parts[0].strip()
+            for part in parts[1:]:
+                piece = part.strip()
+                if _leading_verb(piece) and carry:
+                    rebuilt.append(carry)
+                    carry = piece
+                else:
+                    carry = f"{carry} and {piece}" if carry else piece
+            if carry:
+                rebuilt.append(carry)
+            text = ", ".join(rebuilt)
     text = re.sub(r"\s*,\s*", ", ", text)
+    text = _repair_malformed_pick_up_place(text)
     return " ".join(text.split()).strip(" ,")
 
 
@@ -256,6 +309,142 @@ def _apply_plural_nouns(label: str, draft_text: str, previous_label: str | None)
     if "papers" in context:
         updated = re.sub(r"\bpaper\b(?!s)", "papers", updated, flags=re.IGNORECASE)
     return updated
+
+
+def _clip_context_blob(
+    draft_text: str,
+    clip_glossary: list[str] | None,
+    clip_draft_blob: str | None,
+) -> str:
+    parts = [draft_text or "", clip_draft_blob or ""]
+    if clip_glossary:
+        parts.extend(clip_glossary)
+    return " ".join(parts).lower()
+
+
+def _standardize_context_nouns(
+    label: str,
+    draft_text: str,
+    clip_glossary: list[str] | None,
+    clip_draft_blob: str | None,
+) -> str:
+    """Promote domain-specific nouns when clip context makes the standard term obvious."""
+    if not label or label == "No Action":
+        return label
+    blob = _clip_context_blob(draft_text, clip_glossary, clip_draft_blob)
+    updated = label
+
+    if re.search(r"\b(?:cap|patch|thread|sew|needle)\b", blob):
+        updated = re.sub(r"\binsert needle\b", "insert sewing needle", updated, flags=re.IGNORECASE)
+        updated = re.sub(
+            r"\bpull thread through patch\b",
+            "pull sewing needle through patch",
+            updated,
+            flags=re.IGNORECASE,
+        )
+        updated = re.sub(
+            r"\b(?<!sewing )needle\b",
+            "sewing needle",
+            updated,
+            flags=re.IGNORECASE,
+        )
+
+    if re.search(r"\bstrip\b", blob) and re.search(r"\b(?:wire|cable|pliers|shears)\b", blob):
+        updated = re.sub(r"\bpliers\b", "shears", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bblue wire\b", "blue cable", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bhold wire\b", "hold blue cable", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bstrip blue wire\b", "strip blue cable", updated, flags=re.IGNORECASE)
+        updated = re.sub(
+            r"\bstrip blue cable with shears\b",
+            "strip blue cable with shears",
+            updated,
+            flags=re.IGNORECASE,
+        )
+
+    return updated
+
+
+def _validate_and_repair_clauses(label: str) -> str:
+    """Every clause must include an object noun and explicit hand tag."""
+    if not label or label == "No Action":
+        return label
+
+    clauses = split_actions(label)
+    if not clauses:
+        return label
+
+    fallback_hand = ""
+    for clause in clauses:
+        match = re.search(rf"\bwith\s+({_HAND_TAG})\b", clause, re.IGNORECASE)
+        if match:
+            fallback_hand = match.group(1)
+            break
+
+    repaired: list[str] = []
+    for clause in clauses:
+        piece = clause.strip()
+        if not piece or _BARE_PICK_UP.match(piece):
+            continue
+        if not re.search(rf"\bwith\s+({_HAND_TAG})\b", piece, re.IGNORECASE) and fallback_hand:
+            piece = f"{piece} with {fallback_hand}".strip()
+        repaired.append(piece)
+
+    if not repaired:
+        return label
+    return ", ".join(repaired)
+
+
+def _prefer_pull_over_insert_after_pull(
+    label: str,
+    previous_label: str | None,
+) -> str:
+    """After pulling thread/needle, a repeated insert draft is often a pull-out motion."""
+    if not previous_label or not label:
+        return label
+    prev = previous_label.lower()
+    if "pull thread" not in prev and "pull sewing needle" not in prev:
+        return label
+    if not re.search(r"\binsert sewing needle into patch\b", label, re.IGNORECASE):
+        return label
+    return re.sub(
+        r"\binsert sewing needle into patch with right hand\b",
+        "pull sewing needle with right hand",
+        label,
+        flags=re.IGNORECASE,
+    )
+
+
+def _fix_pick_up_both_hands(
+    label: str,
+    motion: HandMotionProfile | None,
+) -> str:
+    """pick up with both hands is often a single-hand motion on cloth/objects."""
+    clauses = split_actions(label)
+    if not clauses:
+        return label
+
+    threshold = 0.015
+    v_left = motion.v_left if motion else 0.0
+    v_right = motion.v_right if motion else 0.0
+    dominant_left = v_left > threshold and v_left >= v_right * 1.5
+    dominant_right = v_right > threshold and v_right >= v_left * 1.5
+
+    fixed: list[str] = []
+    for clause in clauses:
+        if _leading_verb(clause) != "pick up" or "both hands" not in clause.lower():
+            fixed.append(clause)
+            continue
+        if dominant_left:
+            hand = "left hand"
+        elif dominant_right:
+            hand = "right hand"
+        elif _is_cloth_clause(clause):
+            hand = "left hand"
+        else:
+            fixed.append(clause)
+            continue
+        fixed.append(re.sub(r"\bboth hands\b", hand, clause, flags=re.IGNORECASE))
+    return ", ".join(fixed)
 
 
 def _extract_glossary_from_drafts(drafts: list[str]) -> list[str]:
@@ -428,6 +617,7 @@ def _split_false_both_hands(label: str) -> str:
             verb in CLOTH_WORK_VERBS
             and _is_cloth_clause(clause)
             and not PLACE_LOCATION_PATTERN.search(clause)
+            and verb not in {"smooth", "fold"}
         ):
             obj = _clause_object_phrase(clause) or "cloth"
             return f"hold {obj} in left hand, {clause.replace('both hands', 'right hand')}"
@@ -573,6 +763,7 @@ def draft_preserving_cleaner(
     duration_seconds: float | None = None,
     motion: HandMotionProfile | None = None,
     clip_glossary: list[str] | None = None,
+    clip_draft_blob: str | None = None,
 ) -> str:
     """
     Trust the Atlas AI draft; apply only safe syntax normalization.
@@ -591,12 +782,19 @@ def draft_preserving_cleaner(
         return label
 
     label = _resolve_generic_nouns(label, draft_text, clip_glossary)
+    label = _standardize_context_nouns(
+        label, draft_text, clip_glossary, clip_draft_blob
+    )
     label = _normalize_hand_prepositions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
     label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
+    label = _prefer_pull_over_insert_after_pull(label, previous_label)
     label = _ensure_offhand_hold(label)
     label = _fix_hand_attribution(label, motion, draft_text=draft_text)
+    label = _fix_pick_up_both_hands(label, motion)
     label = _inject_tool_release(label, previous_label, clip_glossary)
+    label = _validate_and_repair_clauses(label)
+    label = _repair_malformed_pick_up_place(label)
     label = _infer_missing_hand_from_motion(label, mp_hand_tag)
     label = _cap_clauses_simple(label, MAX_ACTIONS_PER_LABEL)
 
@@ -615,6 +813,7 @@ def atlas_guide_cleaner(
     duration_seconds: float | None = None,
     motion: HandMotionProfile | None = None,
     clip_glossary: list[str] | None = None,
+    clip_draft_blob: str | None = None,
 ) -> str:
     """Draft-preserving Atlas guide linter (alias for draft_preserving_cleaner)."""
     return draft_preserving_cleaner(
@@ -625,6 +824,7 @@ def atlas_guide_cleaner(
         duration_seconds=duration_seconds,
         motion=motion,
         clip_glossary=clip_glossary,
+        clip_draft_blob=clip_draft_blob,
     )
 
 
@@ -683,12 +883,17 @@ def generate_label_hybrid(
         duration_seconds=duration_seconds,
         motion=motion,
         clip_glossary=clip_glossary or None,
+        clip_draft_blob=getattr(global_context, "raw_summary", None) or None,
     )
 
 
 def build_draft_global_context(segment_drafts: list[str]) -> GlobalVideoContext:
-    """Build clip glossary from all segment drafts (specific tools, not generic 'tool')."""
-    return GlobalVideoContext(objects=tuple(_extract_glossary_from_drafts(segment_drafts)))
+    """Build clip glossary and draft blob from all segment drafts."""
+    cleaned = [d for d in segment_drafts if d]
+    return GlobalVideoContext(
+        objects=tuple(_extract_glossary_from_drafts(segment_drafts)),
+        raw_summary=" | ".join(cleaned),
+    )
 
 
 # Back-compat alias from earlier iteration

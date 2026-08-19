@@ -140,6 +140,7 @@ def process_live_task(
                         duration_seconds=duration,
                         motion=motion,
                         clip_glossary=list(global_context.objects),
+                        clip_draft_blob=global_context.raw_summary,
                     )
 
             print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
@@ -154,6 +155,7 @@ def process_live_task(
                     mp_hand_tag=resolve_hand_tag(draft, "with right hand"),
                     duration_seconds=duration,
                     clip_glossary=list(global_context.objects),
+                    clip_draft_blob=global_context.raw_summary,
                 )
                 print(
                     "[Hybrid]: Keeping guide-cleaned draft "

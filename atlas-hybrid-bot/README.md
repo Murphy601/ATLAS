@@ -53,7 +53,9 @@ No API key needed.
 | Hand attribution | Splits false `both hands` bimanual clauses; never downgrades draft `both hands` on rake/sweep/gather |
 | Generic nouns | Replaces `tool`/`object`/`item` with clip glossary or verb hints (`dig`→`hoe`) |
 | Tool release | After `dig with hoe`, prepends `place hoe on ground` before `gather soil` |
-| Scissors alignment | Cut sandwiched between hold-only scissors neighbors → `align papers with both hands` |
+| Grammar repair | `pick up and place X` → `pick up X with [hand], place X on table with [hand]` |
+| Context nouns | Sewing clips: `needle`→`sewing needle`; strip/wire clips: `pliers`→`shears`, `wire`→`blue cable` |
+| Pick up hands | `pick up cloth with both hands` → `left hand` when motion is asymmetric |
 | No articles / digits | Strips `the`, `a`, `an`; spells out numbers |
 | Banned verbs | `adjust`→`shift`, `grab`→`pick up` |
 | Plural tools | `scissors`, `tongs`, `pliers` always plural |
