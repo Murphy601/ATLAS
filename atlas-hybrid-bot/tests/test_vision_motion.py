@@ -149,6 +149,43 @@ def test_surface_wipe_passes_cloth_not_socks_on_exchange():
     assert "socks" not in " ".join(out).lower()
 
 
+def test_surface_wipe_ignores_exchange_at_segment_two_seek_noise():
+    """Hand change at segment 2 alone is seek noise — keep draft hand for whole clip."""
+    draft = "reposition socks on shelf with right hand"
+    profiles = [
+        HandMotionProfile(
+            peak_left=0.01,
+            peak_right=0.07,
+            frames_analyzed=9,
+            start_left_contact=True,
+            start_right_contact=True,
+        ),
+        HandMotionProfile(
+            peak_left=0.075,
+            peak_right=0.01,
+            frames_analyzed=9,
+            start_left_contact=True,
+            start_right_contact=True,
+        ),
+        HandMotionProfile(
+            peak_left=0.07,
+            peak_right=0.012,
+            frames_analyzed=9,
+            start_left_contact=True,
+            start_right_contact=True,
+        ),
+        HandMotionProfile(
+            peak_left=0.065,
+            peak_right=0.01,
+            frames_analyzed=9,
+            start_left_contact=True,
+            start_right_contact=True,
+        ),
+    ]
+    out = apply_clip_motion_enrichment([draft] * 4, profiles)
+    assert all(label.lower() == "wipe shelf with cloth in right hand" for label in out)
+
+
 def test_single_hand_tracking_uses_draft_hand_no_false_exchange():
     """Regression: peakR=0 must not invent a hand exchange from noise."""
     draft = "reposition socks on shelf with right hand"

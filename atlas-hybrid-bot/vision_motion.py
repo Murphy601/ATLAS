@@ -239,17 +239,51 @@ def _clip_shows_wipe_activity(
     )
 
 
+def _clip_draft_hand(labels: list[str]) -> str:
+    for label in labels:
+        hand = _draft_work_hand(label or "")
+        if hand:
+            return hand
+    return "right hand"
+
+
+def _segments_with_both_hands(
+    motion_profiles: list[HandMotionProfile | None],
+) -> int:
+    return sum(
+        1
+        for motion in motion_profiles
+        if motion
+        and motion.frames_analyzed >= 3
+        and motion.start_left_contact
+        and motion.start_right_contact
+    )
+
+
 def _find_hand_exchange_index(
     work_hands: list[str | None],
     motion_profiles: list[HandMotionProfile | None],
 ) -> int | None:
-    """First segment index where the active tool hand changes."""
+    """
+    First segment where the tool hand changes with stable tracking.
+
+    Surface wipes ignore exchange at segment 1 (seek noise) and require both
+    wrists visible in at least two segments.
+    """
     if not _both_hands_tracked_in_clip(motion_profiles):
         return None
-    for index in range(1, len(work_hands)):
+    if _segments_with_both_hands(motion_profiles) < 2:
+        return None
+
+    for index in range(2, len(work_hands)):
         prev, curr = work_hands[index - 1], work_hands[index]
-        if prev and curr and prev != curr:
-            return index
+        if not prev or not curr or prev == curr:
+            continue
+        before = [hand for hand in work_hands[:index] if hand]
+        after = [hand for hand in work_hands[index:] if hand]
+        if before.count(prev) < 1 or after.count(curr) < 1:
+            continue
+        return index
     return None
 
 
@@ -340,27 +374,39 @@ def apply_clip_motion_enrichment(
     if not has_wipe_motion and exchange_idx is None:
         return segment_labels
 
+    clip_draft_hand = _clip_draft_hand(segment_labels)
+
+    # Surface wiping: lock to the draft hand unless a late, stable exchange is seen.
+    if target_kind == "surface" and exchange_idx is None:
+        locked = build_surface_wipe_label(target, clip_draft_hand)
+        if any((label or "").lower() != locked.lower() for label in segment_labels):
+            print(
+                f"[Hybrid]: Vision motion enrichment "
+                f"(wipe_conf={wipe_conf:.2f}, exchange_seg=None, "
+                f"target={target}[surface], hand={clip_draft_hand}): '{locked}'"
+            )
+        return [locked] * len(segment_labels)
+
     updated: list[str] = []
     for index, label in enumerate(segment_labels):
-        draft_hand = _draft_work_hand(label or "") or "right hand"
+        draft_hand = _draft_work_hand(label or "") or clip_draft_hand
 
         if target_kind == "surface":
             if exchange_idx is not None:
+                to_hand = _other_hand(clip_draft_hand)
                 if index < exchange_idx:
-                    work = work_hands[index] or work_hands[exchange_idx - 1] or draft_hand
-                    updated.append(build_surface_wipe_label(target, work))
+                    updated.append(build_surface_wipe_label(target, clip_draft_hand))
                 elif index == exchange_idx:
-                    from_hand = work_hands[exchange_idx - 1] or draft_hand
-                    to_hand = work_hands[exchange_idx] or _other_hand(from_hand)
+                    to_hand = work_hands[exchange_idx] or to_hand
                     updated.append(
-                        build_cloth_exchange_label(target, from_hand, to_hand)
+                        build_cloth_exchange_label(target, clip_draft_hand, to_hand)
                     )
                 else:
-                    work = work_hands[index] or work_hands[exchange_idx] or draft_hand
+                    work = work_hands[index] or to_hand
                     updated.append(build_surface_wipe_label(target, work))
-            else:
-                work = clip_work or work_hands[index] or draft_hand
-                updated.append(build_surface_wipe_label(target, work))
+                continue
+            work = clip_draft_hand
+            updated.append(build_surface_wipe_label(target, work))
         elif exchange_idx is not None:
             if index < exchange_idx:
                 work = work_hands[index] or work_hands[exchange_idx - 1] or draft_hand
