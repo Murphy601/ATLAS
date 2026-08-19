@@ -54,7 +54,10 @@ No API key needed.
 | Generic nouns | Replaces `tool`/`object`/`item` with clip glossary or verb hints (`dig`→`hoe`) |
 | Tool release | After `dig with hoe`, prepends `place hoe on ground` before `gather soil` |
 | Grammar repair | `pick up and place X` → `pick up X with [hand], place X on table with [hand]` |
-| Context nouns | Sewing clips: `needle`→`sewing needle`; strip/wire clips: `pliers`→`shears`, `wire`→`blue cable` |
+| Context nouns | Sewing clips: `needle`→`sewing needle`; strip clips keep `pliers` and `blue wire` |
+| Noun simplify | `syrup bottle`→`bottle`, `red snack bag`→`sachet`, `blue cable`→`blue wire` |
+| Duplicate hands | Strips `in right hand with left hand`; clause validator respects `in [hand]` on tools |
+| Pass transfers | Preserves `pass [object] from [hand] to [hand]` draft syntax |
 | Pick up hands | `pick up cloth with both hands` → `left hand` when motion is asymmetric |
 | No articles / digits | Strips `the`, `a`, `an`; spells out numbers |
 | Banned verbs | `adjust`→`shift`, `grab`→`pick up` |

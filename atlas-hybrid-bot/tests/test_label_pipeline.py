@@ -278,3 +278,51 @@ def test_pull_after_pull_thread_segment():
     )
     assert "pull sewing needle" in out.lower()
     assert "insert sewing needle into patch" not in out.lower()
+
+
+def test_no_duplicate_hand_on_tool_clause():
+    draft = (
+        "hold paper with left hand, cut papers with scissors in right hand"
+    )
+    out = atlas_guide_cleaner(draft)
+    assert "in right hand with" not in out.lower()
+    assert "scissors in right hand" in out.lower()
+
+
+def test_no_duplicate_hand_on_strip_clause():
+    draft = (
+        "strip blue wire with pliers in right hand, hold blue wire with left hand"
+    )
+    out = atlas_guide_cleaner(
+        draft,
+        clip_draft_blob=draft,
+    )
+    assert "in right hand with" not in out.lower()
+    assert "pliers in right hand" in out.lower()
+
+
+def test_pass_syntax_preserved():
+    draft = "pass wrench from left hand to right hand"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == draft.lower()
+
+
+def test_format_hand_transfer_helper():
+    from label_pipeline import format_hand_transfer
+
+    assert (
+        format_hand_transfer("bottle", "right hand", "left hand")
+        == "pass bottle from right hand to left hand"
+    )
+
+
+def test_simplify_kitchen_nouns():
+    out = atlas_guide_cleaner("pick up syrup bottle with right hand")
+    assert "syrup" not in out.lower()
+    assert "pick up bottle with right hand" in out.lower()
+
+
+def test_simplify_blue_cable_to_blue_wire():
+    out = atlas_guide_cleaner("strip blue cable with pliers in right hand")
+    assert "blue wire" in out.lower()
+    assert "blue cable" not in out.lower()

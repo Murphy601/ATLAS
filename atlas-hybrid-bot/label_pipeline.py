@@ -131,6 +131,20 @@ _MALFORMED_PICK_UP_PLACE = re.compile(
     re.IGNORECASE,
 )
 _BARE_PICK_UP = re.compile(r"^pick up\s*$", re.IGNORECASE)
+_HAND_ATTRIBUTION = re.compile(
+    rf"\b(?:with|in)\s+({_HAND_TAG})\b",
+    re.IGNORECASE,
+)
+
+# ATLAS prefers core object terms over visual modifiers in audit matching.
+NOUN_SIMPLIFIERS: tuple[tuple[str, str], ...] = (
+    (r"\bsyrup bottle\b", "bottle"),
+    (r"\bred snack bag\b", "sachet"),
+    (r"\borange snack bag\b", "bag"),
+    (r"\bblue cable\b", "blue wire"),
+    (r"\bhold blue cable\b", "hold blue wire"),
+    (r"\bstrip blue cable\b", "strip blue wire"),
+)
 
 
 def _expand_pick_up_and_place(text: str) -> str:
@@ -349,19 +363,75 @@ def _standardize_context_nouns(
             flags=re.IGNORECASE,
         )
 
-    if re.search(r"\bstrip\b", blob) and re.search(r"\b(?:wire|cable|pliers|shears)\b", blob):
-        updated = re.sub(r"\bpliers\b", "shears", updated, flags=re.IGNORECASE)
-        updated = re.sub(r"\bblue wire\b", "blue cable", updated, flags=re.IGNORECASE)
-        updated = re.sub(r"\bhold wire\b", "hold blue cable", updated, flags=re.IGNORECASE)
-        updated = re.sub(r"\bstrip blue wire\b", "strip blue cable", updated, flags=re.IGNORECASE)
-        updated = re.sub(
-            r"\bstrip blue cable with shears\b",
-            "strip blue cable with shears",
-            updated,
-            flags=re.IGNORECASE,
-        )
-
     return updated
+
+
+def _simplify_atlas_nouns(label: str) -> str:
+    """Strip over-specific visual modifiers down to ATLAS core object terms."""
+    if not label or label == "No Action":
+        return label
+    updated = label
+    for pattern, replacement in NOUN_SIMPLIFIERS:
+        updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    return updated
+
+
+def _clause_has_hand_attribution(clause: str) -> bool:
+    return bool(_HAND_ATTRIBUTION.search(clause or ""))
+
+
+def _clean_duplicate_hands(label: str) -> str:
+    """Remove nested hand tags like 'in right hand with left hand'."""
+    if not label or label == "No Action":
+        return label
+    updated = label
+    updated = re.sub(
+        r"(in (?:left|right) hand)\s+with\s+(?:left|right|both) hands?\b",
+        r"\1",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"(with (?:left|right|both) hands?)\s+with\s+(?:left|right|both) hands?\b",
+        r"\1",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(updated.split())
+
+
+def _normalize_pass_syntax(label: str) -> str:
+    """Preserve and normalize pass [object] from [hand] to [hand] clauses."""
+    if not label or label == "No Action":
+        return label
+    if not re.search(r"\bpass\b", label, re.IGNORECASE):
+        return label
+
+    clauses = split_actions(label)
+    normalized: list[str] = []
+    for clause in clauses:
+        piece = clause.strip()
+        if not piece:
+            continue
+        match = re.search(
+            r"^pass\s+(.+?)\s+from\s+(left hand|right hand|both hands)\s+to\s+"
+            r"(left hand|right hand|both hands)\s*$",
+            piece,
+            re.IGNORECASE,
+        )
+        if match:
+            obj = match.group(1).strip()
+            src = match.group(2).lower()
+            dest = match.group(3).lower()
+            normalized.append(f"pass {obj} from {src} to {dest}")
+        else:
+            normalized.append(piece)
+    return ", ".join(normalized) if normalized else label
+
+
+def format_hand_transfer(object_noun: str, from_hand: str, to_hand: str) -> str:
+    """Standard ATLAS hand-over syntax."""
+    return f"pass {object_noun} from {from_hand} to {to_hand}"
 
 
 def _validate_and_repair_clauses(label: str) -> str:
@@ -375,7 +445,7 @@ def _validate_and_repair_clauses(label: str) -> str:
 
     fallback_hand = ""
     for clause in clauses:
-        match = re.search(rf"\bwith\s+({_HAND_TAG})\b", clause, re.IGNORECASE)
+        match = re.search(rf"\b(?:with|in)\s+({_HAND_TAG})\b", clause, re.IGNORECASE)
         if match:
             fallback_hand = match.group(1)
             break
@@ -385,7 +455,7 @@ def _validate_and_repair_clauses(label: str) -> str:
         piece = clause.strip()
         if not piece or _BARE_PICK_UP.match(piece):
             continue
-        if not re.search(rf"\bwith\s+({_HAND_TAG})\b", piece, re.IGNORECASE) and fallback_hand:
+        if not _clause_has_hand_attribution(piece) and fallback_hand:
             piece = f"{piece} with {fallback_hand}".strip()
         repaired.append(piece)
 
@@ -785,6 +855,8 @@ def draft_preserving_cleaner(
     label = _standardize_context_nouns(
         label, draft_text, clip_glossary, clip_draft_blob
     )
+    label = _simplify_atlas_nouns(label)
+    label = _normalize_pass_syntax(label)
     label = _normalize_hand_prepositions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
     label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
@@ -795,7 +867,9 @@ def draft_preserving_cleaner(
     label = _inject_tool_release(label, previous_label, clip_glossary)
     label = _validate_and_repair_clauses(label)
     label = _repair_malformed_pick_up_place(label)
+    label = _clean_duplicate_hands(label)
     label = _infer_missing_hand_from_motion(label, mp_hand_tag)
+    label = _clean_duplicate_hands(label)
     label = _cap_clauses_simple(label, MAX_ACTIONS_PER_LABEL)
 
     if previous_label:
