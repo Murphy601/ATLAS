@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 
 import cv2
+import math
 import numpy as np
 
 from mediapipe_hands import close_hand_tracker, get_hand_tracker
@@ -72,7 +73,11 @@ class HandMotionProfile:
     v_right: float = 0.0
     vy_left: float = 0.0
     vy_right: float = 0.0
+    angular_left: float = 0.0
+    angular_right: float = 0.0
     detected_hand: str = "with right hand"
+    work_hand: str | None = None
+    stabilize_hand: str | None = None
     start_left_contact: bool = False
     start_right_contact: bool = False
     frames_analyzed: int = 0
@@ -143,10 +148,20 @@ class AtlasHybridPipeline:
         v_right = _mean_wrist_velocity(right_positions)
         vy_left = _mean_wrist_vertical_delta(left_positions)
         vy_right = _mean_wrist_vertical_delta(right_positions)
+        center = _rotation_center(left_positions, right_positions)
+        angular_left = _angular_sweep(left_positions, center)
+        angular_right = _angular_sweep(right_positions, center)
         detected = _hand_from_velocities(v_left, v_right, self.motion_threshold)
         draft_hand = _hand_tag_from_draft(draft_label)
         if draft_hand and v_left <= self.motion_threshold and v_right <= self.motion_threshold:
             detected = draft_hand
+        work_hand, stabilize_hand = _infer_hand_roles(
+            v_left,
+            v_right,
+            angular_left,
+            angular_right,
+            self.motion_threshold,
+        )
         start_left = left_positions[0] is not None if left_positions else False
         start_right = right_positions[0] is not None if right_positions else False
         return HandMotionProfile(
@@ -154,7 +169,11 @@ class AtlasHybridPipeline:
             v_right=v_right,
             vy_left=vy_left,
             vy_right=vy_right,
+            angular_left=angular_left,
+            angular_right=angular_right,
             detected_hand=detected,
+            work_hand=work_hand,
+            stabilize_hand=stabilize_hand,
             start_left_contact=start_left,
             start_right_contact=start_right,
             frames_analyzed=len(sampled),
@@ -361,6 +380,85 @@ def _mean_wrist_vertical_delta(positions: list[tuple[float, float] | None]) -> f
         deltas.append(float(pos[1] - prev[1]))
         prev = pos
     return float(np.mean(deltas)) if deltas else 0.0
+
+
+def _rotation_center(
+    left_positions: list[tuple[float, float] | None],
+    right_positions: list[tuple[float, float] | None],
+) -> tuple[float, float]:
+    """Pivot for angular sweep: midpoint of first frame with both wrists, else frame center."""
+    if left_positions and right_positions:
+        left0 = left_positions[0]
+        right0 = right_positions[0]
+        if left0 is not None and right0 is not None:
+            return ((left0[0] + right0[0]) / 2.0, (left0[1] + right0[1]) / 2.0)
+        if left0 is not None:
+            return left0
+        if right0 is not None:
+            return right0
+    return (0.5, 0.5)
+
+
+def _angular_sweep(
+    positions: list[tuple[float, float] | None],
+    center: tuple[float, float],
+) -> float:
+    """Cumulative angular change (radians) of a wrist path around center."""
+    valid = [pos for pos in positions if pos is not None]
+    if len(valid) < 3:
+        return 0.0
+    angles = [
+        math.atan2(pos[1] - center[1], pos[0] - center[0]) for pos in valid
+    ]
+    sweep = 0.0
+    for index in range(1, len(angles)):
+        delta = angles[index] - angles[index - 1]
+        while delta > math.pi:
+            delta -= 2.0 * math.pi
+        while delta < -math.pi:
+            delta += 2.0 * math.pi
+        sweep += abs(delta)
+    return float(sweep)
+
+
+def _infer_hand_roles(
+    v_left: float,
+    v_right: float,
+    angular_left: float,
+    angular_right: float,
+    threshold: float,
+) -> tuple[str | None, str | None]:
+    """
+    Faster/more active wrist -> working hand; slower -> stabilizing hand.
+    Returns (work_hand, stabilize_hand) or (None, None) when ambiguous.
+    """
+    activity_left = v_left + angular_left * 0.35
+    activity_right = v_right + angular_right * 0.35
+    if activity_left < threshold and activity_right < threshold:
+        return None, None
+    if activity_left >= activity_right * 1.35:
+        return "left hand", "right hand"
+    if activity_right >= activity_left * 1.35:
+        return "right hand", "left hand"
+    return None, None
+
+
+def stabilizer_rotation_sweep(
+    label: str,
+    motion: HandMotionProfile | None,
+) -> float | None:
+    """Angular sweep (radians) of the wrist named in the hold/rotate clause."""
+    if motion is None:
+        return None
+    match = re.search(
+        r"\b(?:hold|rotate)\s+.+?\s+with\s+(left hand|right hand)\b",
+        label or "",
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    hand = match.group(1).lower()
+    return motion.angular_left if hand == "left hand" else motion.angular_right
 
 
 def _hand_tag_from_draft(draft: str | None) -> str | None:

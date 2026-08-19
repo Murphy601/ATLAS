@@ -330,6 +330,10 @@ def _rotating_left_hand_motion():
     return HandMotionProfile(
         v_left=0.05,
         v_right=0.04,
+        angular_left=0.25,
+        angular_right=0.05,
+        work_hand="right hand",
+        stabilize_hand="left hand",
         frames_analyzed=6,
         start_left_contact=True,
         start_right_contact=True,
@@ -343,6 +347,10 @@ def _static_left_hand_motion():
     return HandMotionProfile(
         v_left=0.003,
         v_right=0.05,
+        angular_left=0.02,
+        angular_right=0.08,
+        work_hand="right hand",
+        stabilize_hand="left hand",
         frames_analyzed=6,
         start_left_contact=True,
         start_right_contact=True,

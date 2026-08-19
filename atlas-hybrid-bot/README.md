@@ -1,6 +1,6 @@
 # Atlas Hybrid Bot
 
-**Full browser automation + official ATLAS guide labeling** for Atlas Capture: preserves bimanual actions (hold + work), enforces syntax rules from the annotation guide, and never calls vision LLMs.
+**Full browser automation + official ATLAS guide labeling** for Atlas Capture: preserves bimanual actions (hold + work), enforces syntax rules from the annotation guide, and uses **MediaPipe hand tracking** (no LLM/API calls) to verify hands and rotation.
 
 Sibling project: [`video-labeling-bot/`](../video-labeling-bot/README.md) (same browser flow, but uses vision LLMs).
 

@@ -22,6 +22,8 @@ from config import (
 )
 from frame_utils import frames_from_base64_list
 from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
+from hybrid_annotator import stabilizer_rotation_sweep
+from vision_hands import apply_vision_hand_corrections
 from label_generator import (
     CLOTH_PATTERN,
     CLOTH_WORK_VERBS,
@@ -1151,23 +1153,7 @@ def sanitize_grooming_and_tool_actions(label: str) -> str:
 
 _CONTINUOUS_MANIPULATION = re.compile(r"\b(?:wipe|sand|polish)\b", re.IGNORECASE)
 
-_ROTATE_MIN_STABILIZER_VELOCITY = 0.015
-
-
-def _stabilizer_hand_velocity(
-    label: str,
-    motion: HandMotionProfile | None,
-) -> float | None:
-    """Wrist velocity of the hand named in the hold clause (None when untracked)."""
-    if motion is None:
-        return None
-    match = re.search(
-        r"\bhold\s+.+?\s+with\s+(left hand|right hand)\b", label, re.IGNORECASE
-    )
-    if not match:
-        return None
-    hand = match.group(1).lower()
-    return motion.v_left if hand == "left hand" else motion.v_right
+_ROTATE_MIN_ANGULAR_SWEEP = 0.12  # ~7° cumulative — true object rotation, not jitter
 
 
 def _should_upgrade_hold_to_rotate(
@@ -1175,14 +1161,14 @@ def _should_upgrade_hold_to_rotate(
     motion: HandMotionProfile | None,
 ) -> bool:
     """
-    Rotate is only claimed when the stabilizing wrist visibly moves the object.
-    A static off-hand means the person is just holding — writing 'rotate' then
-    is a fabricated action. Without tracking data, never claim rotation.
+    Rotate is only claimed when the stabilizing wrist traces a visible arc
+    (angular sweep). Linear jitter during wiping/sanding is not rotation.
+    Without tracking data, never claim rotation.
     """
-    velocity = _stabilizer_hand_velocity(label, motion)
-    if velocity is None:
+    sweep = stabilizer_rotation_sweep(label, motion)
+    if sweep is None:
         return False
-    return velocity > _ROTATE_MIN_STABILIZER_VELOCITY
+    return sweep >= _ROTATE_MIN_ANGULAR_SWEEP
 
 
 def _upgrade_hold_to_rotate_in_wipe_label(
@@ -1261,7 +1247,7 @@ def adjust_wiping_rotation_by_segment_index(
     label = reorder_dual_hand_clauses(label)
     if not _is_middle_wipe_segment(segment_index, total_segments):
         return label
-    if not re.search(r"\bwipe\b", label, re.IGNORECASE):
+    if not _CONTINUOUS_MANIPULATION.search(label):
         return label
     return _upgrade_hold_to_rotate_in_wipe_label(label, motion)
 
@@ -1305,11 +1291,21 @@ def dynamic_verb_hold_to_rotate(
     total_segments: int | None = None,
 ) -> str:
     """
-    hold + wipe on a glass cup during continuous cleaning → rotate (not static hold).
-    Middle segments in multi-window wipes use rotate; first/last keep hold.
+    hold + continuous work (wipe/sand/polish) → rotate only when the stabilizing
+    wrist traces a visible arc (angular sweep). Middle segments in multi-window
+    clips use rotate when motion confirms; first/last keep hold.
     """
     if not label or label == "No Action":
         return label
+
+    if _CONTINUOUS_MANIPULATION.search(label):
+        if _is_middle_wipe_segment(segment_index, total_segments):
+            return adjust_wiping_rotation_by_segment_index(
+                label, segment_index, total_segments, motion
+            )
+        if _is_terminal_wipe_segment(segment_index, total_segments):
+            return label
+
     if not re.search(r"\b(?:glass cup|glass jar|glass)\b", label, re.IGNORECASE):
         return label
     if re.search(
@@ -1319,28 +1315,9 @@ def dynamic_verb_hold_to_rotate(
     ):
         return label
 
-    if _is_terminal_wipe_segment(segment_index, total_segments) and re.search(
-        r"\bwipe\b", label, re.IGNORECASE
-    ):
-        return fix_glass_cleaning_syntax_and_nouns(
-            label, previous_label, clip_draft_blob
-        )
-
-    if _is_middle_wipe_segment(segment_index, total_segments):
-        return adjust_wiping_rotation_by_segment_index(
-            fix_glass_cleaning_syntax_and_nouns(
-                label, previous_label, clip_draft_blob
-            ),
-            segment_index,
-            total_segments,
-            motion,
-        )
-
     fixed = fix_glass_cleaning_syntax_and_nouns(
         label, previous_label, clip_draft_blob
     )
-    # Only claim rotation when the stabilizing wrist measurably moves;
-    # a static off-hand is a hold, not a rotate.
     if not _should_upgrade_hold_to_rotate(fixed, motion):
         return label
 
@@ -1349,8 +1326,8 @@ def dynamic_verb_hold_to_rotate(
 
     if len(clauses) == 1:
         clause = clauses[0].strip()
-        if re.match(r"^hold glass cup with left hand\s*$", clause, re.IGNORECASE):
-            return "rotate glass cup with left hand"
+        if re.match(r"^hold glass cup with (?:left|right) hand\s*$", clause, re.IGNORECASE):
+            return re.sub(r"^hold\b", "rotate", clause, count=1, flags=re.IGNORECASE)
         return label
 
     if len(clauses) != 2:
@@ -1360,8 +1337,6 @@ def dynamic_verb_hold_to_rotate(
     hold_obj = _clause_object_phrase(clauses[0])
     wipe_obj = _clause_object_phrase(clauses[1])
     if not _objects_match_simple(hold_obj, wipe_obj):
-        return label
-    if not re.search(r"\b(?:glass cup|glass)\b", label, re.IGNORECASE):
         return label
 
     rotated_first = re.sub(
@@ -2202,6 +2177,7 @@ def draft_preserving_cleaner(
         label, previous_label, clip_draft_blob
     )
     label = reorder_dual_hand_clauses(label)
+    label = apply_vision_hand_corrections(label, motion)
     label = dynamic_verb_hold_to_rotate(
         label,
         previous_label,
