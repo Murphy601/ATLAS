@@ -326,3 +326,53 @@ def test_simplify_blue_cable_to_blue_wire():
     out = atlas_guide_cleaner("strip blue cable with pliers in right hand")
     assert "blue wire" in out.lower()
     assert "blue cable" not in out.lower()
+
+
+def test_glass_hold_becomes_rotate_after_wipe_segment():
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    previous = (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    out = atlas_guide_cleaner(draft, previous_label=previous)
+    assert out.lower().startswith("rotate glass cup")
+    assert "wipe glass cup with cloth in right hand" in out.lower()
+
+
+def test_kitchen_bottle_pickup_injects_pass():
+    draft = "open refrigerator door with right hand, pick up bottle with right hand"
+    out = atlas_guide_cleaner(
+        draft,
+        next_label="place bottle on counter with left hand",
+    )
+    assert out.lower() == (
+        "pick up bottle with right hand, pass bottle from right hand to left hand"
+    )
+
+
+def test_short_bag_pickup_place_becomes_pass():
+    draft = "pick up bag with right hand, place bag on counter with right hand"
+    out = atlas_guide_cleaner(draft, duration_seconds=2.0)
+    assert out.lower() == (
+        "pick up bag with right hand, pass bag from right hand to left hand"
+    )
+
+
+def test_place_bottle_uses_hand_after_prior_pass():
+    previous = "pick up bottle with right hand, pass bottle from right hand to left hand"
+    out = atlas_guide_cleaner(
+        "place bottle on counter with right hand",
+        previous_label=previous,
+    )
+    assert out.lower() == "place bottle on counter with left hand"
+
+
+def test_sewing_stitch_cycle_expands_pull_before_insert():
+    draft = "hold cap with left hand, insert sewing needle into patch with right hand"
+    out = atlas_guide_cleaner(
+        draft,
+        clip_draft_blob="hold cap sewing needle patch thread",
+    )
+    assert out.lower() == (
+        "hold cap with left hand, pull sewing needle with right hand, "
+        "insert sewing needle into cap with right hand"
+    )

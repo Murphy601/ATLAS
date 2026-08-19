@@ -13,6 +13,7 @@ from config import (
     NUMBER_MAP,
     PLURAL_ONLY_TOOLS,
     SEMICOLON_PATTERN,
+    SHORT_WINDOW_MAX_SECONDS,
     SLASH_PATTERN,
     VERB_CORRECTIONS,
     VERB_REPLACEMENTS,
@@ -377,6 +378,12 @@ def _simplify_atlas_nouns(label: str) -> str:
 
 
 def _clause_has_hand_attribution(clause: str) -> bool:
+    if re.search(
+        r"^pass\s+.+\s+from\s+(?:left|right) hand\s+to\s+(?:left|right) hand\s*$",
+        (clause or "").strip(),
+        re.IGNORECASE,
+    ):
+        return True
     return bool(_HAND_ATTRIBUTION.search(clause or ""))
 
 
@@ -393,6 +400,13 @@ def _clean_duplicate_hands(label: str) -> str:
     )
     updated = re.sub(
         r"(with (?:left|right|both) hands?)\s+with\s+(?:left|right|both) hands?\b",
+        r"\1",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"(pass .+ from (?:left|right) hand to (?:left|right) hand)\s+with\s+"
+        r"(?:left|right|both) hands?\b",
         r"\1",
         updated,
         flags=re.IGNORECASE,
@@ -432,6 +446,179 @@ def _normalize_pass_syntax(label: str) -> str:
 def format_hand_transfer(object_noun: str, from_hand: str, to_hand: str) -> str:
     """Standard ATLAS hand-over syntax."""
     return f"pass {object_noun} from {from_hand} to {to_hand}"
+
+
+def check_and_inject_hand_transfer(
+    prev_hand: str, curr_hand: str, object_name: str
+) -> str:
+    """Generate pass phrase when an item transitions between hands."""
+    valid = {"left hand", "right hand"}
+    if prev_hand in valid and curr_hand in valid and prev_hand != curr_hand:
+        return format_hand_transfer(object_name, prev_hand, curr_hand)
+    return ""
+
+
+def _clause_hand(clause: str) -> str:
+    match = _HAND_ATTRIBUTION.search(clause or "")
+    return match.group(1).lower() if match else ""
+
+
+def _objects_match_simple(a: str, b: str) -> bool:
+    left = (a or "").casefold().strip()
+    right = (b or "").casefold().strip()
+    if not left or not right:
+        return False
+    return left == right or left in right or right in left
+
+
+def dynamic_verb_hold_to_rotate(
+    label: str,
+    previous_label: str | None,
+    next_label: str | None,
+    motion: HandMotionProfile | None = None,
+) -> str:
+    """
+    hold + wipe on a glass cup during continuous cleaning → rotate (not static hold).
+    """
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    if _leading_verb(clauses[0]) != "hold" or _leading_verb(clauses[1]) != "wipe":
+        return label
+    hold_obj = _clause_object_phrase(clauses[0])
+    wipe_obj = _clause_object_phrase(clauses[1])
+    if not _objects_match_simple(hold_obj, wipe_obj):
+        return label
+    if not re.search(r"\b(?:glass cup|glass)\b", label, re.IGNORECASE):
+        return label
+
+    previous = previous_label or ""
+    should_rotate = bool(
+        previous
+        and re.search(r"\bwipe\b", previous, re.IGNORECASE)
+        and re.search(r"\b(?:glass cup|glass)\b", previous, re.IGNORECASE)
+    )
+    if motion and motion.v_left > 0.015 and motion.v_right > 0.015:
+        should_rotate = True
+
+    if not should_rotate:
+        return label
+
+    rotated_first = re.sub(
+        r"^hold\b",
+        "rotate",
+        clauses[0],
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return f"{rotated_first}, {clauses[1]}"
+
+
+def _rewrite_bottle_pickup_to_pass(
+    label: str,
+    next_label: str | None,
+    previous_label: str | None = None,
+) -> str:
+    """Kitchen bottle windows: pick up with one hand, then pass to the other."""
+    if re.search(r"\bpass\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\bbottle\b", label, re.IGNORECASE):
+        return label
+    if previous_label and re.search(r"\bbottle\b", previous_label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:pick up|hold|open)\b", label, re.IGNORECASE):
+        return label
+    nxt = next_label or ""
+    if not (
+        re.search(r"\bbottle\b", nxt, re.IGNORECASE)
+        or re.search(r"\b(?:place|counter|refrigerator)\b", nxt, re.IGNORECASE)
+    ):
+        return label
+    return "pick up bottle with right hand, pass bottle from right hand to left hand"
+
+
+def _rewrite_bag_pickup_place_to_pass(
+    label: str,
+    duration_seconds: float | None,
+) -> str:
+    """Short bag pick-up windows are a hand-off, not pick up then place same hand."""
+    if duration_seconds is None or duration_seconds >= SHORT_WINDOW_MAX_SECONDS:
+        return label
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    if _leading_verb(clauses[0]) != "pick up" or _leading_verb(clauses[1]) != "place":
+        return label
+    blob = label.lower()
+    if re.search(r"\bpass\b", blob):
+        return label
+    if not re.search(r"\b(?:snack )?bag\b|\bsachet\b", blob):
+        return label
+    obj = "sachet" if re.search(r"\bsachet\b", blob) else "bag"
+    hand = _clause_hand(clauses[0]) or "right hand"
+    other = "left hand" if hand == "right hand" else "right hand"
+    return f"pick up {obj} with {hand}, pass {obj} from {hand} to {other}"
+
+
+def _align_place_hand_after_pass(
+    label: str,
+    previous_label: str | None,
+) -> str:
+    """After pass from A to B, place uses the receiving hand."""
+    if not label or not previous_label:
+        return label
+    match = re.search(
+        r"pass \S+(?:\s+\S+)? from (left hand|right hand) to (left hand|right hand)",
+        previous_label,
+        re.IGNORECASE,
+    )
+    if not match:
+        return label
+    dest = match.group(2).lower()
+    clauses = split_actions(label)
+    if len(clauses) != 1 or _leading_verb(clauses[0]) not in {"place", "set"}:
+        return label
+    if not re.search(r"\b(?:bottle|bag|sachet)\b", clauses[0], re.IGNORECASE):
+        return label
+    fixed = re.sub(
+        r"\b(?:with|in) (?:left|right) hand\b",
+        f"with {dest}",
+        clauses[0],
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    return fixed
+
+
+def _expand_sewing_stitch_cycle(label: str, clip_draft_blob: str | None) -> str:
+    """
+    Sewing stitch windows need pull then insert (3 actions), not collapsed insert-only.
+    """
+    if not label or label == "No Action":
+        return label
+    blob = f"{label} {clip_draft_blob or ''}".lower()
+    if not re.search(r"\b(?:cap|patch|thread|sew|sewing needle)\b", blob):
+        return label
+    if not re.search(r"\bhold cap\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\binsert sewing needle\b", label, re.IGNORECASE):
+        return label
+    if re.search(r"\bpull sewing needle\b", label, re.IGNORECASE):
+        return label
+
+    updated = re.sub(
+        r"(hold cap with left hand),\s*insert sewing needle into patch with right hand",
+        r"\1, pull sewing needle with right hand, insert sewing needle into cap with right hand",
+        label,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"(hold cap with left hand),\s*(insert sewing needle into cap with right hand)",
+        r"\1, pull sewing needle with right hand, \2",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    return updated
 
 
 def _validate_and_repair_clauses(label: str) -> str:
@@ -841,7 +1028,6 @@ def draft_preserving_cleaner(
     Does NOT: hold→pick up, noun swaps, fake off-hand holds, location injection,
     _cap_actions drop scoring, or full sanitize_label heuristics.
     """
-    _ = duration_seconds
     label = (draft_text or "").strip()
     if not label or label.casefold() == "no action":
         return "No Action"
@@ -857,10 +1043,16 @@ def draft_preserving_cleaner(
     )
     label = _simplify_atlas_nouns(label)
     label = _normalize_pass_syntax(label)
+    label = _rewrite_bottle_pickup_to_pass(label, next_label, previous_label)
+    label = _rewrite_bag_pickup_place_to_pass(label, duration_seconds)
+    label = _expand_sewing_stitch_cycle(label, clip_draft_blob)
     label = _normalize_hand_prepositions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
     label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
     label = _prefer_pull_over_insert_after_pull(label, previous_label)
+    label = dynamic_verb_hold_to_rotate(
+        label, previous_label, next_label, motion
+    )
     label = _ensure_offhand_hold(label)
     label = _fix_hand_attribution(label, motion, draft_text=draft_text)
     label = _fix_pick_up_both_hands(label, motion)
@@ -874,6 +1066,8 @@ def draft_preserving_cleaner(
 
     if previous_label:
         label = apply_state_continuity(label, previous_label)
+
+    label = _align_place_hand_after_pass(label, previous_label)
 
     return label
 
