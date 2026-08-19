@@ -255,10 +255,12 @@ def test_pick_up_cloth_both_hands_defaults_to_left():
     assert "both hands" not in out.lower()
 
 
-def test_smooth_both_hands_preserved_from_draft():
+def test_smooth_both_hands_splits_hold_smoothen():
     draft = "smooth green cloth with both hands"
     out = atlas_guide_cleaner(draft)
-    assert out.lower() == draft.lower()
+    assert out.lower() == (
+        "hold cloth in left hand, smoothen cloth with right hand"
+    )
 
 
 def test_sewing_needle_in_cap_context():
@@ -375,4 +377,26 @@ def test_sewing_stitch_cycle_expands_pull_before_insert():
     assert out.lower() == (
         "hold cap with left hand, pull sewing needle with right hand, "
         "insert sewing needle into cap with right hand"
+    )
+
+
+def test_twist_wire_appends_trailing_pliers_pickup():
+    out = atlas_guide_cleaner(
+        "twist blue wire with both hands",
+        next_label="pick up pliers with right hand, hold blue wire with left hand",
+    )
+    assert out.lower() == (
+        "twist blue wire with both hands, pick up pliers with right hand"
+    )
+
+
+def test_wire_fold_rewrites_pickup_hold_to_shears_twist_fold():
+    previous = (
+        "twist blue wire with both hands, pick up pliers with right hand"
+    )
+    draft = "pick up pliers with right hand, hold blue wire with left hand"
+    out = atlas_guide_cleaner(draft, previous_label=previous)
+    assert out.lower() == (
+        "hold shears with right hand, twist blue cable with both hands, "
+        "fold blue cable with both hands"
     )

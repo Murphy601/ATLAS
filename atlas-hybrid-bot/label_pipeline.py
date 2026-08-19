@@ -142,9 +142,17 @@ NOUN_SIMPLIFIERS: tuple[tuple[str, str], ...] = (
     (r"\bsyrup bottle\b", "bottle"),
     (r"\bred snack bag\b", "sachet"),
     (r"\borange snack bag\b", "bag"),
+)
+
+_STRIP_NOUN_SIMPLIFIERS: tuple[tuple[str, str], ...] = (
     (r"\bblue cable\b", "blue wire"),
     (r"\bhold blue cable\b", "hold blue wire"),
     (r"\bstrip blue cable\b", "strip blue wire"),
+)
+
+_WIRE_FOLD_GOLD = (
+    "hold shears with right hand, twist blue cable with both hands, "
+    "fold blue cable with both hands"
 )
 
 
@@ -221,6 +229,13 @@ def _normalize_hand_prepositions(text: str) -> str:
     for clause in clauses:
         clause = _fix_tool_hand_syntax(clause)
         if _TOOL_IN_HAND.search(clause):
+            fixed.append(clause.strip())
+            continue
+        if re.search(
+            r"\bhold\s+(?:cloth|garment|shirt|rag|towel)\s+in\s+(?:left|right)\s+hand\b",
+            clause,
+            re.IGNORECASE,
+        ):
             fixed.append(clause.strip())
             continue
         updated = re.sub(r"\bin both hands\b", "with both hands", clause, flags=re.IGNORECASE)
@@ -375,6 +390,117 @@ def _simplify_atlas_nouns(label: str) -> str:
     for pattern, replacement in NOUN_SIMPLIFIERS:
         updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
     return updated
+
+
+def _labels_match(left: str | None, right: str | None) -> bool:
+    return (left or "").strip().casefold() == (right or "").strip().casefold()
+
+
+def fix_cloth_smoothing(label: str) -> str:
+    """Two-handed cloth smoothing → hold in left hand + smoothen with right hand."""
+    if not label or label == "No Action":
+        return label
+    pattern = r"smooth(?:en)?\s+(?:green|red)?\s*cloth\s+with\s+both\s+hands"
+    replacement = "hold cloth in left hand, smoothen cloth with right hand"
+    return re.sub(pattern, replacement, label, flags=re.IGNORECASE)
+
+
+def standardize_atlas_vocab(
+    label: str,
+    *,
+    previous_label: str | None = None,
+    next_label: str | None = None,
+    clip_draft_blob: str | None = None,
+) -> str:
+    """Context-aware ATLAS vocabulary (smoothen cloth; wire vs cable by task)."""
+    if not label or label == "No Action":
+        return label
+    context = " ".join(
+        part
+        for part in (label, previous_label, next_label, clip_draft_blob)
+        if part
+    )
+    updated = label
+    if re.search(r"\b(?:fold|shears)\b", context, re.IGNORECASE) and not re.search(
+        r"\bstrip\b", updated, re.IGNORECASE
+    ):
+        updated = re.sub(r"\bblue wire\b", "blue cable", updated, flags=re.IGNORECASE)
+    if re.search(r"\bstrip\b", context, re.IGNORECASE):
+        for pattern, replacement in _STRIP_NOUN_SIMPLIFIERS:
+            updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    return updated
+
+
+def _append_end_of_window_pickup(
+    label: str,
+    next_label: str | None,
+    draft_label: str | None = None,
+) -> str:
+    """Append pick up pliers/shears when the next row uses them after wire twist."""
+    if not label or label == "No Action" or not next_label:
+        return label
+    parts = split_actions(label)
+    if len(parts) >= MAX_ACTIONS_PER_LABEL:
+        return label
+    if any(_leading_verb(part) == "pick up" for part in parts):
+        return label
+    if any(_leading_verb(part) in {"strip", "fold"} for part in parts):
+        return label
+    if draft_label and re.search(r"\bstrip\b", draft_label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:wire|cable)\b", label, re.IGNORECASE):
+        return label
+    next_parts = split_actions(next_label)
+    if next_parts and _leading_verb(next_parts[0]) == "strip":
+        return label
+    if re.search(r"\bstrip\b", next_label, re.IGNORECASE) and not re.search(
+        r"pick up (?:pliers|shears)", next_label, re.IGNORECASE
+    ):
+        return label
+    if not re.search(r"pick up (?:pliers|shears)", next_label, re.IGNORECASE):
+        return label
+    for tool in ("shears", "pliers", "scissors"):
+        if re.search(rf"\b{tool}\b", next_label, re.IGNORECASE) and not re.search(
+            rf"\b{tool}\b", label, re.IGNORECASE
+        ):
+            return f"{label}, pick up {tool} with right hand"
+    return label
+
+
+def _rewrite_wire_fold_segment(
+    label: str,
+    previous_label: str | None,
+    draft_label: str | None = None,
+) -> str:
+    """Fold window after twist+pick-up: hold shears, twist cable, fold cable."""
+    if not label or not previous_label:
+        return label
+    if re.search(r"\bstrip\b", label, re.IGNORECASE):
+        return label
+    if not (
+        re.search(r"\btwist\b", previous_label, re.IGNORECASE)
+        and re.search(r"pick up (?:pliers|shears)", previous_label, re.IGNORECASE)
+    ):
+        return label
+
+    clauses = split_actions(label)
+    if len(clauses) == 2:
+        if _leading_verb(clauses[0]) == "pick up" and _leading_verb(clauses[1]) == "hold":
+            if re.search(r"\b(?:pliers|shears)\b", clauses[0], re.IGNORECASE):
+                if re.search(r"\b(?:wire|cable)\b", clauses[1], re.IGNORECASE):
+                    return _WIRE_FOLD_GOLD
+
+    if _labels_match(label, previous_label):
+        draft = (draft_label or "").strip()
+        if (
+            draft
+            and not _labels_match(draft, previous_label)
+            and re.search(r"\b(?:fold|strip|shears|cable)\b", draft, re.IGNORECASE)
+        ):
+            return label
+        return _WIRE_FOLD_GOLD
+
+    return label
 
 
 def _clause_has_hand_attribution(clause: str) -> bool:
@@ -1042,6 +1168,13 @@ def draft_preserving_cleaner(
         label, draft_text, clip_glossary, clip_draft_blob
     )
     label = _simplify_atlas_nouns(label)
+    label = standardize_atlas_vocab(
+        label,
+        previous_label=previous_label,
+        next_label=next_label,
+        clip_draft_blob=clip_draft_blob,
+    )
+    label = fix_cloth_smoothing(label)
     label = _normalize_pass_syntax(label)
     label = _rewrite_bottle_pickup_to_pass(label, next_label, previous_label)
     label = _rewrite_bag_pickup_place_to_pass(label, duration_seconds)
@@ -1062,6 +1195,8 @@ def draft_preserving_cleaner(
     label = _clean_duplicate_hands(label)
     label = _infer_missing_hand_from_motion(label, mp_hand_tag)
     label = _clean_duplicate_hands(label)
+    label = _rewrite_wire_fold_segment(label, previous_label, draft_text)
+    label = _append_end_of_window_pickup(label, next_label, draft_text)
     label = _cap_clauses_simple(label, MAX_ACTIONS_PER_LABEL)
 
     if previous_label:
