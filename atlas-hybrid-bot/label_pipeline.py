@@ -1028,15 +1028,12 @@ def _is_terminal_wipe_segment(
 def reorder_dual_hand_clauses(label: str) -> str:
     """
     Ensures stabilizing hold/rotate clauses precede manipulation clauses for
-    continuous dual-hand work (wipe/clean/cut/sand/polish).
-    Tool actions whose hold clause is fabricated (iron, mop, scrub, ...) are
-    handled by sanitize_grooming_and_tool_actions instead.
-    Example: 'wipe shoe sole with cloth in right hand, hold shoe with left hand'
-          -> 'hold shoe with left hand, wipe shoe sole with cloth in right hand'
+    continuous dual-hand work (wipe/scrub/clean/cut/sand/polish).
+    Iron/mop single-tool labels are handled by sanitize_grooming_and_tool_actions.
     """
     if not label or label == "No Action":
         return label
-    pattern = r"^(wipe|clean|cut|sand|polish)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
+    pattern = r"^(wipe|scrub|clean|cut|sand|polish|rub)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
     match = re.match(pattern, label.strip(), flags=re.IGNORECASE)
     if match:
         manipulation_clause = f"{match.group(1)} {match.group(2)}"
@@ -1124,20 +1121,42 @@ _HOLD_STABILIZER_CLAUSE = re.compile(
     r"^hold\s+.+?\s+with\s+(?:left|right|both)\s+hands?$",
     re.IGNORECASE,
 )
+_BIMANUAL_TOOL_INSTRUMENT = re.compile(
+    r"\bwith\s+.+?\s+in\s+(?:left|right)\s+hand\s*$",
+    re.IGNORECASE,
+)
+_STRIP_HOLD_TOOL_VERBS = frozenset(
+    {"trim", "cut", "shear", "clip", "iron", "mop", "vacuum", "sweep"}
+)
+_PRESERVE_HOLD_TOOL_VERBS = frozenset({"scrub", "wipe", "sand", "polish", "rub", "buff"})
+
+
+def _should_preserve_bimanual_hold(hold_clause: str, tool_clause: str) -> bool:
+    """
+    Keep hold + tool when the stabilizer and worker clause share the same object
+    and the tool hand holds an instrument (brush, cloth, sandpaper, ...).
+
+    Example: hold circuit board with left hand, scrub circuit board with brush in right hand
+    """
+    verb = _leading_verb(tool_clause)
+    if verb in _STRIP_HOLD_TOOL_VERBS:
+        return False
+    if verb not in _PRESERVE_HOLD_TOOL_VERBS:
+        return False
+    if not _BIMANUAL_TOOL_INSTRUMENT.search(tool_clause):
+        return False
+    hold_obj = _clause_object_phrase(hold_clause)
+    tool_obj = _clause_object_phrase(tool_clause)
+    return _objects_match_simple(hold_obj, tool_obj)
 
 
 def sanitize_grooming_and_tool_actions(label: str) -> str:
     """
-    Strips redundant 'hold [object]' clauses from single-tool tasks like trimming,
-    cutting, ironing, or mopping to prevent 'Fact Extra Action' penalties.
+    Strips redundant 'hold [object]' clauses from grooming and single-tool tasks
+    (trim, cut, iron, mop) to prevent 'Fact Extra Action' penalties.
 
-    ATLAS counts 'hold [object]' as a hallucinated extra action when the
-    non-dominant hand is merely resting/guiding/off-camera; grooming and
-    single-tool verbs default to one precise clause.
-
-    Example:
-      'hold animal with left hand, trim animal with scissors in right hand'
-      -> 'trim animal with scissors in right hand'
+    Preserves bimanual hold + scrub/wipe/sand when both clauses name the same
+    workpiece and the tool is held in the working hand.
     """
     if not label or label == "No Action":
         return label
@@ -1146,8 +1165,12 @@ def sanitize_grooming_and_tool_actions(label: str) -> str:
         return label
     first, second = clauses[0].strip(), clauses[1].strip()
     if _HOLD_STABILIZER_CLAUSE.match(first) and _SINGLE_TOOL_VERB_PATTERN.match(second):
+        if _should_preserve_bimanual_hold(first, second):
+            return label
         return second
     if _SINGLE_TOOL_VERB_PATTERN.match(first) and _HOLD_STABILIZER_CLAUSE.match(second):
+        if _should_preserve_bimanual_hold(second, first):
+            return label
         return first
     return label
 

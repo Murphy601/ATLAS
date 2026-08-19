@@ -801,10 +801,28 @@ def test_sanitize_tool_actions_strips_injected_smooth_clause():
     assert out.lower() == "iron garment with iron in right hand"
 
 
-def test_scrub_tool_action_strips_redundant_hold():
-    draft = "scrub pot with brush in right hand, hold pot with left hand"
+def test_scrub_same_object_keeps_bimanual_hold():
+    draft = (
+        "hold circuit board with left hand, "
+        "scrub circuit board with brush in right hand"
+    )
     out = atlas_guide_cleaner(draft)
-    assert out.lower() == "scrub pot with brush in right hand"
+    assert out.lower() == draft.lower()
+
+
+def test_scrub_reordered_hold_preserved():
+    draft = "scrub circuit board with brush in right hand, hold circuit board with left hand"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == (
+        "hold circuit board with left hand, "
+        "scrub circuit board with brush in right hand"
+    )
+
+
+def test_scrub_tool_action_strips_redundant_hold_for_grooming():
+    draft = "hold animal with left hand, trim animal with scissors in right hand"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == "trim animal with scissors in right hand"
 
 
 def test_normalize_episode_sequence_preserves_pick_up_in_transfer_clips():
