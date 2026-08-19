@@ -98,3 +98,48 @@ def test_state_continuity_pick_up_to_hold():
         previous_label=prev,
     )
     assert "hold wrench" in out.lower()
+
+
+def test_hold_not_converted_to_pick_up():
+    draft = "hold wire with left hand, solder wire with soldering iron in right hand"
+    out = atlas_guide_cleaner(draft)
+    assert "hold wire" in out.lower()
+    assert "pick up wire" not in out.lower()
+
+
+def test_tool_syntax_preserved_in_hand():
+    draft = "wipe exhaust pipe with cloth in left hand, hold motorcycle with right hand"
+    out = atlas_guide_cleaner(draft)
+    assert "with cloth in left hand" in out.lower()
+    assert "with cloth with left hand" not in out.lower()
+
+
+def test_no_redundant_ground_location():
+    draft = "sweep ground with hand broom in both hands"
+    out = atlas_guide_cleaner(draft)
+    assert "on ground" not in out.lower()
+    assert "sweep ground" in out.lower()
+
+
+def test_bimanual_hold_preserved_for_stir():
+    draft = "hold pan with left hand, stir mixture with spatula in right hand"
+    out = atlas_guide_cleaner(draft)
+    assert "hold pan" in out.lower()
+    assert "stir mixture" in out.lower()
+
+
+def test_noun_not_swapped_jar_to_cup():
+    draft = (
+        "place jar on counter with right hand, pick up jar with right hand, "
+        "wipe jar with cloth in both hands"
+    )
+    out = atlas_guide_cleaner(draft)
+    assert "cup" not in out.lower()
+    assert "jar" in out.lower()
+
+
+def test_hold_animal_not_pick_up():
+    draft = "hold animal with left hand, trim animal with scissors in right hand"
+    out = atlas_guide_cleaner(draft)
+    assert "hold animal" in out.lower()
+    assert "pick up animal" not in out.lower()

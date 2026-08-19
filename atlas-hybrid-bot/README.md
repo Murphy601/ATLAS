@@ -40,6 +40,18 @@ No API key needed.
 | `--skip-browser` | Print labels from `--video` only |
 | `--demo` | Regex/state demo in terminal (no browser) |
 
+## Official guide rules (implemented)
+
+| Rule | What the bot does |
+|---|---|
+| Bimanual / off-hand hold | Keeps up to **3** clauses — e.g. `hold bowl with left hand, scrub bowl with sponge in right hand` |
+| `place` needs location | Adds `on/in [location]` when draft omits it |
+| Tool syntax | Preserves `with [tool] in [hand]` |
+| No articles / digits | Strips `the`, `a`, `an`; spells out numbers |
+| Banned verbs | `adjust`→`shift`, `grab`→`pick up`; drops `inspect`/`check` |
+| Plural tools | `scissors`, `tongs`, `pliers` always plural |
+| Hand-state carryover | `pick up`→`hold` only if prior segment ended holding same object |
+
 ## Architecture
 
 ```
@@ -96,4 +108,4 @@ Wait for login to finish. The bot retries `/tasks` at most every 8 seconds. Once
 | API key | Not required | Required |
 | Object names | From Atlas AI draft | Draft + vision override |
 
-Object identification comes from the **pre-filled Atlas draft** on each row; MediaPipe only picks the active hand and pick-up vs hold corrections.
+Object identification comes from the **pre-filled Atlas draft**; MediaPipe is only a hand-tag fallback when the draft omits hands.
