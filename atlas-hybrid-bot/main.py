@@ -20,7 +20,11 @@ from frame_extractor import extract_frames_from_video, format_timestamp
 from hybrid_annotator import AtlasHybridPipeline
 from frame_utils import frames_from_base64_list
 from label_generator import usable_draft
-from label_pipeline import generate_label_hybrid, minimal_atlas_cleaner, resolve_hand_tag
+from label_pipeline import (
+    atlas_guide_cleaner,
+    generate_label_hybrid,
+    resolve_hand_tag,
+)
 
 load_dotenv()
 
@@ -61,7 +65,7 @@ def process_live_task(
     if global_context is None:
         pass  # minimalist mode: no cross-clip glossary rewriting
 
-    print(f"\n[Hybrid]: Correcting {len(segments)} segment labels (minimal draft cleaner)...")
+    print(f"\n[Hybrid]: Correcting {len(segments)} segment labels (ATLAS guide linter)...")
     pipeline = AtlasHybridPipeline()
     processed_any = False
     previous_label = None
@@ -126,23 +130,26 @@ def process_live_task(
                         draft_label=draft,
                     )
                     hand = resolve_hand_tag(draft, motion.detected_hand)
-                    label = minimal_atlas_cleaner(draft, hand)
+                    label = atlas_guide_cleaner(
+                        draft,
+                        previous_label=previous_label,
+                        mp_hand_tag=hand,
+                        duration_seconds=duration,
+                    )
 
             print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
             print(f"Generated Label: '{label}'")
 
             processed_any = True
             if label == "No Action" and draft:
-                motion = pipeline.analyze_frame_motion_from_memory(
-                    [],
-                    draft_label=draft,
-                )
-                kept = minimal_atlas_cleaner(
+                kept = atlas_guide_cleaner(
                     draft,
-                    resolve_hand_tag(draft, motion.detected_hand),
+                    previous_label=previous_label,
+                    mp_hand_tag=resolve_hand_tag(draft, "with right hand"),
+                    duration_seconds=duration,
                 )
                 print(
-                    "[Hybrid]: Keeping minimally cleaned draft "
+                    "[Hybrid]: Keeping guide-cleaned draft "
                     f"'{kept}' instead of No Action."
                 )
                 if kept != "No Action":

@@ -75,10 +75,12 @@ def test_process_live_task_keeps_ai_draft_when_model_says_no_action():
     ):
         process_live_task(FakeBot(), segment_duration=3.0, interval_seconds=1.0)
 
-    assert recorded == [(1, "dig soil with tool with right hand")]
+    assert len(recorded) == 1
+    assert "dig soil" in recorded[0][1].lower()
+    assert "right hand" in recorded[0][1].lower()
 
 
-def test_process_live_task_keeps_first_clause_when_model_says_no_action():
+def test_process_live_task_keeps_bimanual_draft_when_no_action():
     recorded = []
 
     class FakeBot:
@@ -95,7 +97,8 @@ def test_process_live_task_keeps_first_clause_when_model_says_no_action():
                     start_seconds=0.0,
                     locator_index=0,
                     draft_label=(
-                        "hold animal with left hand, trim animal with scissors in right hand"
+                        "hold animal with left hand, "
+                        "trim animal with scissors in right hand"
                     ),
                 )
             ]
@@ -112,7 +115,11 @@ def test_process_live_task_keeps_first_clause_when_model_says_no_action():
     ):
         process_live_task(FakeBot(), segment_duration=3.0, interval_seconds=1.0)
 
-    assert recorded == [(1, "hold animal with left hand")]
+    assert len(recorded) == 1
+    label = recorded[0][1].lower()
+    assert "hold animal" in label
+    assert "trim animal" in label or "scissors" in label
+    assert "," in recorded[0][1]
 
 
 def test_browser_disconnect_message_matches_playwright_crash():

@@ -1,117 +1,119 @@
-"""Minimalist Atlas label pipeline — preserve draft meaning, fix grammar, append hand tag."""
+"""ATLAS official annotation guide compliant label pipeline (no LLM)."""
 
 from __future__ import annotations
 
 import re
 
+from config import MAX_ACTIONS_PER_LABEL
 from frame_utils import frames_from_base64_list
 from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
-from label_generator import usable_draft
-
-# Imperative grammar only — never change verb meaning (no pick up → hold).
-_ING_TO_IMPERATIVE = (
-    ("picking up", "pick up"),
-    ("putting down", "put down"),
-    ("holding", "hold"),
-    ("scrubbing", "scrub"),
-    ("wiping", "wipe"),
-    ("washing", "wash"),
-    ("placing", "place"),
-    ("sweeping", "sweep"),
-    ("digging", "dig"),
-    ("passing", "pass"),
-    ("tightening", "tighten"),
-    ("trimming", "trim"),
-    ("stirring", "stir"),
-    ("mixing", "mix"),
-    ("folding", "fold"),
-    ("ironing", "iron"),
-    ("pouring", "pour"),
-    ("scooping", "scoop"),
-    ("lifting", "lift"),
-    ("grabbing", "grab"),
-    ("moving", "move"),
-    ("opening", "open"),
-    ("closing", "close"),
-    ("turning", "turn"),
-    ("pushing", "push"),
-    ("pulling", "pull"),
-    ("pressing", "press"),
-    ("squeezing", "squeeze"),
-    ("kneading", "knead"),
-    ("scrapping", "scrape"),
-    ("scraping", "scrape"),
-    ("raking", "rake"),
-    ("mopping", "mop"),
-    ("brushing", "brush"),
-    ("sanding", "sand"),
-    ("hammering", "hammer"),
-    ("drilling", "drill"),
-    ("cutting", "cut"),
-    ("chopping", "chop"),
-    ("peeling", "peel"),
-    ("inserting", "insert"),
-    ("removing", "remove"),
-    ("emptying", "empty"),
-    ("filling", "fill"),
-    ("watering", "water"),
-    ("spraying", "spray"),
-    ("drying", "dry"),
-    ("polishing", "polish"),
-    ("aligning", "align"),
-    ("rotating", "rotate"),
-    ("twisting", "twist"),
-    ("pinching", "pinch"),
-    ("gripping", "grip"),
-    ("carrying", "carry"),
-    ("lowering", "lower"),
-    ("raising", "raise"),
-    ("stacking", "stack"),
-    ("unfolding", "unfold"),
-    ("folding", "fold"),
-    ("working", "work"),
+from label_generator import (
+    GlobalVideoContext,
+    _cap_actions,
+    _ensure_place_location,
+    apply_state_continuity,
+    enforce_atlas_template,
+    lint_atlas_syntax,
+    sanitize_label,
+    split_actions,
+    usable_draft,
 )
 
-_HAND_TAG_PATTERN = re.compile(
-    r"\s+(?:with|in)\s+(?:left|right|both)\s+hands?\b",
+# Guide: comma separators OK; ", and" / slash / semicolon are banned.
+_COMMA_AND = re.compile(r",\s*and\b", re.IGNORECASE)
+_SLASH = re.compile(r"\s*/\s*")
+_SEMICOLON = re.compile(r"\s*;\s*")
+
+
+def _normalize_draft_separators(text: str) -> str:
+    text = _SLASH.sub(", ", text)
+    text = _SEMICOLON.sub(", ", text)
+    text = _COMMA_AND.sub(",", text)
+    text = re.sub(r"\s+then\s+", ", ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+and\s+", ", ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*,\s*", ", ", text)
+    return " ".join(text.split()).strip(" ,")
+
+
+_TOOL_IN_HAND = re.compile(
+    r"\bwith\s+\S+(?:\s+\S+)*\s+in\s+(?:left|right|both)\s+hands?\b",
     re.IGNORECASE,
 )
 
 
-def minimal_atlas_cleaner(draft_text: str, mp_hand_tag: str = "with right hand") -> str:
+def _normalize_hand_prepositions(text: str) -> str:
+    """Guide format: with [hand]. Preserve tool syntax: with [tool] in [hand]."""
+    clauses = split_actions(text)
+    if not clauses:
+        return text
+    fixed: list[str] = []
+    for clause in clauses:
+        if _TOOL_IN_HAND.search(clause):
+            fixed.append(clause.strip())
+            continue
+        updated = re.sub(r"\bin both hands\b", "with both hands", clause, flags=re.IGNORECASE)
+        updated = re.sub(r"\bin left hand\b", "with left hand", updated, flags=re.IGNORECASE)
+        updated = re.sub(r"\bin right hand\b", "with right hand", updated, flags=re.IGNORECASE)
+        fixed.append(updated.strip())
+    return ", ".join(fixed)
+
+
+def _infer_missing_hand_from_motion(draft: str, mp_hand: str) -> str:
+    """Append hand tag only when the draft/clauses lack any hand attribution."""
+    if _hand_tag_from_draft(draft):
+        return draft
+    if re.search(
+        r"\b(?:left hand|right hand|both hands)\b",
+        draft,
+        re.IGNORECASE,
+    ):
+        return draft
+    hand = mp_hand if mp_hand.startswith("with ") else f"with {mp_hand}"
+    return f"{draft} {hand}".strip()
+
+
+def atlas_guide_cleaner(
+    draft_text: str,
+    *,
+    previous_label: str | None = None,
+    mp_hand_tag: str = "with right hand",
+    duration_seconds: float | None = None,
+) -> str:
     """
-    Do-no-harm cleaner: keep draft nouns/verbs, fix -ing grammar, one clause only,
-    strip old hand tags, append hand attribution once.
+    Official ATLAS guide linter on the Atlas AI draft:
+    - Keep up to 3 comma-separated actions (off-hand hold + work allowed)
+    - Imperative verbs, no articles/digits, banned verb replacement
+    - place requires location; plural tools; hand on every clause
     """
+    _ = duration_seconds
     label = (draft_text or "").strip()
     if not label or label.casefold() == "no action":
         return label
 
-    for src, dst in _ING_TO_IMPERATIVE:
-        label = re.sub(rf"\b{re.escape(src)}\b", dst, label, flags=re.IGNORECASE)
+    label = _normalize_draft_separators(label)
+    label = _normalize_hand_prepositions(label)
+    label = _infer_missing_hand_from_motion(label, mp_hand_tag)
 
-    label = re.sub(r"\s+(and|then)\s+", ", ", label, flags=re.IGNORECASE)
-    label = re.sub(r"\s+,\s+", ", ", label)
-    label = " ".join(label.split())
+    # Guide: max 3 distinct actions per segment — never collapse to 1.
+    clauses = split_actions(label)[:MAX_ACTIONS_PER_LABEL]
+    label = ", ".join(clauses)
 
-    clauses = [part.strip() for part in label.split(",") if part.strip()]
-    label = clauses[0] if clauses else label
+    label = sanitize_label(label)
+    label = lint_atlas_syntax(label)
+    label = enforce_atlas_template(label)
 
-    label = _HAND_TAG_PATTERN.sub("", label)
-    label = " ".join(label.split()).strip(" ,")
+    if previous_label:
+        label = apply_state_continuity(label, previous_label)
 
-    hand = mp_hand_tag.strip()
-    if not hand.startswith("with "):
-        hand = f"with {hand}"
-    return f"{label} {hand}".strip()
+    label = _ensure_place_location(label, previous_label)
+    label = _cap_actions(label, limit=MAX_ACTIONS_PER_LABEL)
+
+    return label
 
 
 def resolve_hand_tag(draft_label: str, mp_hand_tag: str) -> str:
-    """Prefer explicit hand in the Atlas draft; MediaPipe is fallback only."""
-    draft_hand = _hand_tag_from_draft(draft_label)
-    if draft_hand:
-        return draft_hand
-    return mp_hand_tag or "with right hand"
+    """Prefer explicit hand in draft; MediaPipe is fallback for missing tags."""
+    return _hand_tag_from_draft(draft_label) or mp_hand_tag or "with right hand"
 
 
 def generate_label_hybrid(
@@ -127,12 +129,11 @@ def generate_label_hybrid(
     global_context=None,
     segment_start_seconds: float | None = None,
 ) -> str:
-    """Minimal label from Atlas draft + optional MediaPipe hand tag (no LLM)."""
+    """Guide-compliant label from Atlas draft + optional MediaPipe hand fallback."""
     draft_label = usable_draft(draft_label)
+    previous_label = usable_draft(previous_label)
     _ = (
-        previous_label,
         next_label,
-        duration_seconds,
         frame_timestamps,
         frames_have_video,
         global_context,
@@ -152,12 +153,18 @@ def generate_label_hybrid(
             )
             mp_hand = motion.detected_hand
 
-    hand_tag = resolve_hand_tag(draft_label, mp_hand)
-    return minimal_atlas_cleaner(draft_label, hand_tag)
+    return atlas_guide_cleaner(
+        draft_label,
+        previous_label=previous_label,
+        mp_hand_tag=resolve_hand_tag(draft_label, mp_hand),
+        duration_seconds=duration_seconds,
+    )
 
 
-def build_draft_global_context(segment_drafts: list[str]):
-    """No-op for minimalist mode — kept for API compatibility with main.py."""
-    from label_generator import GlobalVideoContext
-
+def build_draft_global_context(segment_drafts: list[str]) -> GlobalVideoContext:
+    """Guide mode uses per-segment drafts only — no cross-clip LLM glossary."""
     return GlobalVideoContext(objects=tuple())
+
+
+# Back-compat alias from earlier iteration
+minimal_atlas_cleaner = atlas_guide_cleaner
