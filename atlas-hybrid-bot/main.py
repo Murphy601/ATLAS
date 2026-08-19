@@ -22,6 +22,7 @@ from frame_utils import frames_from_base64_list
 from label_generator import usable_draft
 from label_pipeline import (
     atlas_guide_cleaner,
+    build_draft_global_context,
     generate_label_hybrid,
     resolve_hand_tag,
 )
@@ -62,8 +63,9 @@ def process_live_task(
     if callable(remember):
         segments = remember(segments)
 
+    segment_drafts = [segment.draft_label or "" for segment in segments]
     if global_context is None:
-        pass  # minimalist mode: no cross-clip glossary rewriting
+        global_context = build_draft_global_context(segment_drafts)
 
     print(f"\n[Hybrid]: Correcting {len(segments)} segment labels (ATLAS guide linter)...")
     pipeline = AtlasHybridPipeline()
@@ -133,8 +135,11 @@ def process_live_task(
                     label = atlas_guide_cleaner(
                         draft,
                         previous_label=previous_label,
+                        next_label=next_draft,
                         mp_hand_tag=hand,
                         duration_seconds=duration,
+                        motion=motion,
+                        clip_glossary=list(global_context.objects),
                     )
 
             print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
@@ -145,8 +150,10 @@ def process_live_task(
                 kept = atlas_guide_cleaner(
                     draft,
                     previous_label=previous_label,
+                    next_label=next_draft,
                     mp_hand_tag=resolve_hand_tag(draft, "with right hand"),
                     duration_seconds=duration,
+                    clip_glossary=list(global_context.objects),
                 )
                 print(
                     "[Hybrid]: Keeping guide-cleaned draft "

@@ -1,5 +1,7 @@
 """Tests for official ATLAS guide label pipeline."""
 
+import re
+
 from hybrid_annotator import AtlasHybridPipeline
 from label_pipeline import (
     atlas_guide_cleaner,
@@ -193,3 +195,42 @@ def test_motion_corrects_false_both_hands():
     out = atlas_guide_cleaner("pick up sock with both hands", motion=motion)
     assert "left hand" in out.lower()
     assert "both hands" not in out.lower()
+
+
+def test_rake_both_hands_protected_from_motion_downgrade():
+    from hybrid_annotator import HandMotionProfile
+
+    motion = HandMotionProfile(
+        v_left=0.005,
+        v_right=0.05,
+        detected_hand="with right hand",
+    )
+    draft = "rake leaves on lawn with rake in both hands"
+    out = atlas_guide_cleaner(draft, motion=motion)
+    assert out.lower() == draft.lower()
+    assert "both hands" in out.lower()
+
+
+def test_generic_tool_resolved_to_hoe_for_dig():
+    out = atlas_guide_cleaner("dig soil with tool in right hand")
+    assert "dig soil with hoe in right hand" in out.lower()
+    assert re.search(r"\btool\b", out.lower()) is None
+
+
+def test_inject_place_hoe_before_gather():
+    out = atlas_guide_cleaner(
+        "gather soil with both hands",
+        previous_label="dig soil with hoe in right hand",
+    )
+    assert "place hoe on ground with right hand" in out.lower()
+    assert "gather soil with both hands" in out.lower()
+
+
+def test_cut_demoted_to_align_when_scissors_sandwiched():
+    out = atlas_guide_cleaner(
+        "hold paper with left hand, cut paper with scissors in right hand",
+        previous_label="hold paper with left hand, hold scissors with right hand",
+        next_label="hold paper with left hand, hold scissors in right hand",
+    )
+    assert "align papers" in out.lower()
+    assert "cut paper" not in out.lower()

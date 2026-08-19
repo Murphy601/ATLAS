@@ -61,6 +61,63 @@ _DRAFT_VERB_CORRECTIONS = {
 }
 _DRAFT_VERB_CORRECTIONS["smoothing"] = "smooth"
 
+# Verbs that require both hands — never downgrade draft "both hands" via motion.
+TWO_HANDED_VERBS = frozenset(
+    {
+        "rake",
+        "sweep",
+        "carry",
+        "lift",
+        "fold",
+        "gather",
+        "work",
+        "scrub",
+        "mop",
+        "shovel",
+        "knead",
+        "squeeze",
+        "wring",
+    }
+)
+
+FORBIDDEN_GENERIC_NOUNS = frozenset({"tool", "object", "thing", "item", "utensil"})
+
+VERB_DEFAULT_TOOL: dict[str, str] = {
+    "dig": "hoe",
+    "rake": "rake",
+    "sweep": "broom",
+    "stir": "spatula",
+    "scrub": "brush",
+    "sand": "sandpaper",
+    "mop": "mop",
+}
+
+TOOL_WORK_VERBS = frozenset(
+    {"dig", "rake", "sweep", "scrub", "stir", "sand", "hammer", "mop", "shovel"}
+)
+
+KNOWN_CLIP_TOOLS = (
+    "hoe",
+    "rake",
+    "broom",
+    "hand broom",
+    "brush",
+    "spatula",
+    "shovel",
+    "trowel",
+    "scissors",
+    "knife",
+    "pliers",
+    "tongs",
+    "wrench",
+    "screwdriver",
+    "hammer",
+    "sandpaper",
+    "soldering iron",
+    "mop",
+    "iron",
+)
+
 
 def _normalize_draft_separators(text: str) -> str:
     text = _SLASH.sub(", ", text)
@@ -201,6 +258,157 @@ def _apply_plural_nouns(label: str, draft_text: str, previous_label: str | None)
     return updated
 
 
+def _extract_glossary_from_drafts(drafts: list[str]) -> list[str]:
+    """Collect specific tool/object names mentioned anywhere in the clip drafts."""
+    blob = " ".join(d for d in drafts if d).lower()
+    found: list[str] = []
+    seen: set[str] = set()
+    for tool in sorted(KNOWN_CLIP_TOOLS, key=len, reverse=True):
+        if tool in blob and tool not in seen:
+            seen.add(tool)
+            found.append(tool)
+    return found
+
+
+def _resolve_generic_nouns(
+    label: str,
+    draft_text: str,
+    clip_glossary: list[str] | None,
+) -> str:
+    """Replace audit-failing generic nouns (tool, object) with clip-specific names."""
+    if not label or label == "No Action":
+        return label
+    if not re.search(
+        r"\b(?:" + "|".join(re.escape(word) for word in FORBIDDEN_GENERIC_NOUNS) + r")\b",
+        label,
+        re.IGNORECASE,
+    ):
+        return label
+
+    glossary = list(clip_glossary or [])
+    glossary.extend(_extract_glossary_from_drafts([draft_text]))
+    seen: set[str] = set()
+    unique_glossary: list[str] = []
+    for noun in glossary:
+        key = noun.casefold()
+        if key not in seen and key not in FORBIDDEN_GENERIC_NOUNS:
+            seen.add(key)
+            unique_glossary.append(noun)
+
+    updated = label
+    for generic in FORBIDDEN_GENERIC_NOUNS:
+        if not re.search(rf"\b{re.escape(generic)}\b", updated, re.IGNORECASE):
+            continue
+        replacement = next(
+            (noun for noun in unique_glossary if noun.casefold() != generic.casefold()),
+            None,
+        )
+        if not replacement:
+            for clause in split_actions(updated):
+                replacement = VERB_DEFAULT_TOOL.get(_leading_verb(clause) or "")
+                if replacement:
+                    break
+        if replacement:
+            updated = re.sub(rf"\b{re.escape(generic)}\b", replacement, updated, flags=re.IGNORECASE)
+    return updated
+
+
+def _tool_held_from_previous(previous_label: str | None) -> tuple[str, str] | None:
+    """Return (tool_name, hand) when the prior segment ended with a tool-in-hand work verb."""
+    if not previous_label:
+        return None
+    for clause in split_actions(previous_label):
+        verb = _leading_verb(clause)
+        if verb not in TOOL_WORK_VERBS:
+            continue
+        match = re.search(
+            r"\bwith\s+(.+?)\s+in\s+(left|right)\s+hand\s*$",
+            clause,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip(), f"{match.group(2)} hand"
+    return None
+
+
+def _inject_tool_release(
+    label: str,
+    previous_label: str | None,
+    clip_glossary: list[str] | None,
+) -> str:
+    """After tool-use segments, prepend place [tool] before bare-hand follow-up actions."""
+    if not label or label == "No Action" or not previous_label:
+        return label
+
+    held = _tool_held_from_previous(previous_label)
+    if not held:
+        return label
+
+    tool, hand = held
+    if tool.casefold() in FORBIDDEN_GENERIC_NOUNS:
+        resolved = _resolve_generic_nouns(
+            f"with {tool} in {hand}",
+            previous_label,
+            clip_glossary,
+        )
+        match = re.search(
+            r"\bwith\s+(.+?)\s+in\s+(?:left|right)\s+hand",
+            resolved,
+            re.IGNORECASE,
+        )
+        if match:
+            tool = match.group(1).strip()
+
+    if re.search(rf"\bplace\s+{re.escape(tool)}\b", label, re.IGNORECASE):
+        return label
+    if re.search(rf"\bwith\s+{re.escape(tool)}\s+in\b", label, re.IGNORECASE):
+        return label
+
+    current_verbs = {_leading_verb(clause) for clause in split_actions(label)}
+    current_verbs.discard("")
+    bare_hand_followup = current_verbs & {"gather", "pick up", "hold", "move", "pass", "shift"}
+    if not bare_hand_followup or current_verbs & TOOL_WORK_VERBS:
+        return label
+
+    place_clause = f"place {tool} on ground with {hand}"
+    return _cap_clauses_simple(f"{place_clause}, {label}")
+
+
+def _prefer_align_over_cut_sandwich(
+    label: str,
+    previous_label: str | None,
+    next_label: str | None,
+) -> str:
+    """Scissors segments between hold-only neighbors are alignment, not cutting."""
+    if not previous_label or not next_label:
+        return label
+    if not re.search(r"\bcut\s+paper\b", label, re.IGNORECASE):
+        return label
+
+    def hold_scissors_only(text: str) -> bool:
+        blob = text.lower()
+        return "hold scissors" in blob and "cut" not in blob
+
+    if hold_scissors_only(previous_label) and hold_scissors_only(next_label):
+        return "hold scissors with right hand, align papers with both hands"
+    return label
+
+
+def _draft_requires_both_hands(draft_text: str, label: str) -> bool:
+    """True when the Atlas draft explicitly tags both hands on a two-handed action."""
+    if "both hands" not in (draft_text or "").lower():
+        return False
+    for clause in split_actions(label):
+        if "both hands" not in clause.lower():
+            continue
+        verb = _leading_verb(clause)
+        if verb in TWO_HANDED_VERBS:
+            return True
+        if re.search(r"\b(?:rake|broom|hoe|shovel|mop|hose)\s+in\s+both\s+hands\b", clause, re.I):
+            return True
+    return False
+
+
 def _split_false_both_hands(label: str) -> str:
     """Split hold + work when a single both-hands clause hides bimanual roles."""
     clauses = split_actions(label)
@@ -281,9 +489,17 @@ def _ensure_offhand_hold(label: str) -> str:
     return label
 
 
-def _fix_hand_attribution(label: str, motion: HandMotionProfile | None) -> str:
+def _fix_hand_attribution(
+    label: str,
+    motion: HandMotionProfile | None,
+    *,
+    draft_text: str = "",
+) -> str:
     """Correct false both-hands tags using motion asymmetry and bimanual splits."""
     if not label or label == "No Action":
+        return label
+
+    if _draft_requires_both_hands(draft_text, label):
         return label
 
     split = _split_false_both_hands(label)
@@ -310,6 +526,11 @@ def _fix_hand_attribution(label: str, motion: HandMotionProfile | None) -> str:
     def single_hand_for_both(clause: str) -> str:
         if "both hands" not in clause.lower():
             return clause
+        verb = _leading_verb(clause)
+        if verb in TWO_HANDED_VERBS:
+            return clause
+        if re.search(r"\bin\s+both\s+hands\b", clause, re.IGNORECASE):
+            return clause
         if dominant_left:
             return re.sub(r"\bboth hands\b", "left hand", clause, flags=re.IGNORECASE)
         if dominant_right:
@@ -317,6 +538,8 @@ def _fix_hand_attribution(label: str, motion: HandMotionProfile | None) -> str:
         return clause
 
     if len(clauses) == 1 and "both hands" in clauses[0].lower():
+        if _leading_verb(clauses[0]) in TWO_HANDED_VERBS:
+            return label
         retry = _split_false_both_hands(label)
         if retry != label:
             return retry
@@ -345,9 +568,11 @@ def draft_preserving_cleaner(
     draft_text: str,
     *,
     previous_label: str | None = None,
+    next_label: str | None = None,
     mp_hand_tag: str = "with right hand",
     duration_seconds: float | None = None,
     motion: HandMotionProfile | None = None,
+    clip_glossary: list[str] | None = None,
 ) -> str:
     """
     Trust the Atlas AI draft; apply only safe syntax normalization.
@@ -365,10 +590,13 @@ def draft_preserving_cleaner(
     if label == "No Action":
         return label
 
+    label = _resolve_generic_nouns(label, draft_text, clip_glossary)
     label = _normalize_hand_prepositions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
+    label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
     label = _ensure_offhand_hold(label)
-    label = _fix_hand_attribution(label, motion)
+    label = _fix_hand_attribution(label, motion, draft_text=draft_text)
+    label = _inject_tool_release(label, previous_label, clip_glossary)
     label = _infer_missing_hand_from_motion(label, mp_hand_tag)
     label = _cap_clauses_simple(label, MAX_ACTIONS_PER_LABEL)
 
@@ -382,17 +610,21 @@ def atlas_guide_cleaner(
     draft_text: str,
     *,
     previous_label: str | None = None,
+    next_label: str | None = None,
     mp_hand_tag: str = "with right hand",
     duration_seconds: float | None = None,
     motion: HandMotionProfile | None = None,
+    clip_glossary: list[str] | None = None,
 ) -> str:
     """Draft-preserving Atlas guide linter (alias for draft_preserving_cleaner)."""
     return draft_preserving_cleaner(
         draft_text,
         previous_label=previous_label,
+        next_label=next_label,
         mp_hand_tag=mp_hand_tag,
         duration_seconds=duration_seconds,
         motion=motion,
+        clip_glossary=clip_glossary,
     )
 
 
@@ -417,13 +649,17 @@ def generate_label_hybrid(
     """Guide-compliant label from Atlas draft + optional MediaPipe hand fallback."""
     draft_label = usable_draft(draft_label)
     previous_label = usable_draft(previous_label)
+    next_label = usable_draft(next_label)
     _ = (
-        next_label,
         frame_timestamps,
         frames_have_video,
         global_context,
         segment_start_seconds,
     )
+
+    clip_glossary: list[str] = []
+    if global_context and getattr(global_context, "objects", None):
+        clip_glossary = list(global_context.objects)
 
     if not draft_label:
         return "No Action"
@@ -442,15 +678,17 @@ def generate_label_hybrid(
     return draft_preserving_cleaner(
         draft_label,
         previous_label=previous_label,
+        next_label=next_label,
         mp_hand_tag=resolve_hand_tag(draft_label, mp_hand),
         duration_seconds=duration_seconds,
         motion=motion,
+        clip_glossary=clip_glossary or None,
     )
 
 
 def build_draft_global_context(segment_drafts: list[str]) -> GlobalVideoContext:
-    """Guide mode uses per-segment drafts only — no cross-clip LLM glossary."""
-    return GlobalVideoContext(objects=tuple())
+    """Build clip glossary from all segment drafts (specific tools, not generic 'tool')."""
+    return GlobalVideoContext(objects=tuple(_extract_glossary_from_drafts(segment_drafts)))
 
 
 # Back-compat alias from earlier iteration

@@ -50,7 +50,10 @@ No API key needed.
 | Draft verbs | Keeps `smooth` and other imperatives; does not rewrite to `smoothen` |
 | Off-hand stabilize | Adds `hold [object] in left hand` when draft names one working hand on cloth/dish work |
 | Plural nouns | Keeps `papers` when draft or prior segment uses plural |
-| Hand attribution | Splits false `both hands` bimanual clauses; motion corrects single-hand dominance |
+| Hand attribution | Splits false `both hands` bimanual clauses; never downgrades draft `both hands` on rake/sweep/gather |
+| Generic nouns | Replaces `tool`/`object`/`item` with clip glossary or verb hints (`dig`→`hoe`) |
+| Tool release | After `dig with hoe`, prepends `place hoe on ground` before `gather soil` |
+| Scissors alignment | Cut sandwiched between hold-only scissors neighbors → `align papers with both hands` |
 | No articles / digits | Strips `the`, `a`, `an`; spells out numbers |
 | Banned verbs | `adjust`→`shift`, `grab`→`pick up` |
 | Plural tools | `scissors`, `tongs`, `pliers` always plural |
