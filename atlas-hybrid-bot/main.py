@@ -24,7 +24,7 @@ from label_pipeline import (
     atlas_guide_cleaner,
     build_draft_global_context,
     generate_label_hybrid,
-    normalize_episode_wiping_verbs,
+    normalize_episode_sequence,
     resolve_hand_tag,
 )
 
@@ -182,7 +182,7 @@ def process_live_task(
             previous_label = label
 
         if pending_labels:
-            normalized = normalize_episode_wiping_verbs(
+            normalized = normalize_episode_sequence(
                 [label for _, label, _ in pending_labels]
             )
             for (segment, _, should_fill), final_label in zip(

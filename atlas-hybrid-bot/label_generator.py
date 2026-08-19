@@ -477,7 +477,9 @@ def _clause_object_noun(clause: str) -> str:
     ).strip()
     obj = re.sub(
         r"\s+(?:on|in|into|onto|from)\s+"
-        r"(?:table|toolbox|ground|floor|shelf|counter|bin|bucket|lawn)\b.*$",
+        r"(?:table|toolbox|ground|floor|shelf|counter|bin|bucket|lawn|"
+        r"refrigerator|fridge|stack|basin|basket|box|drawer|cabinet|"
+        r"oven|microwave|rack|chair)\b.*$",
         "",
         obj,
         flags=re.IGNORECASE,
@@ -2235,9 +2237,26 @@ def apply_state_continuity(label: str, previous_label: str | None) -> str:
         verb = _leading_verb(clause)
         obj = _clause_object_noun(clause)
         if verb == "pick up" and obj and obj.lower() in prev_held:
-            clause = re.sub(r"^pick up\b", "hold", clause, count=1, flags=re.IGNORECASE)
+            # Discrete transfer windows (pick up + place of the same item type,
+            # e.g. eggs into a fridge) genuinely re-pick each segment.
+            if not _is_discrete_transfer_clause(label, obj):
+                clause = re.sub(
+                    r"^pick up\b", "hold", clause, count=1, flags=re.IGNORECASE
+                )
         updated.append(clause)
     return ", ".join(updated)
+
+
+def _is_discrete_transfer_clause(label: str, obj: str) -> bool:
+    """True when the same label also places/sets/puts the picked-up object."""
+    target = obj.lower()
+    for clause in split_actions(label):
+        if _leading_verb(clause) not in {"place", "set", "put"}:
+            continue
+        placed = _clause_object_noun(clause).lower()
+        if placed and (placed == target or placed in target or target in placed):
+            return True
+    return False
 
 
 def align_verb_state(

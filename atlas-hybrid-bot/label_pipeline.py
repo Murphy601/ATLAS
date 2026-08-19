@@ -176,13 +176,33 @@ _FILL_SOURCE_PATTERN = re.compile(
 )
 
 
+_LOCATION_TAIL = re.compile(
+    r"\s+((?:on|in|into|onto)\s+(?!left\b|right\b|both\b)[a-z][a-z\s]*?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _split_object_and_location(obj: str) -> tuple[str, str | None]:
+    """Split a trailing location phrase off an object ('garment on stack')."""
+    text = obj.strip()
+    match = _LOCATION_TAIL.search(text)
+    if not match:
+        return text, None
+    noun = text[: match.start()].strip(" ,")
+    if not noun:
+        return text, None
+    return noun, " ".join(match.group(1).split())
+
+
 def _expand_pick_up_and_place(text: str) -> str:
     """pick up and place wrench with right hand → two valid Atlas clauses."""
     match = _PICK_UP_AND_PLACE.search(text)
     if match:
         obj = match.group(1).strip()
         hand = match.group(2)
-        expanded = f"pick up {obj} with {hand}, place {obj} on table with {hand}"
+        noun, target = _split_object_and_location(obj)
+        target = target or "on table"
+        expanded = f"pick up {noun} with {hand}, place {noun} {target} with {hand}"
         return text[: match.start()] + expanded + text[match.end() :]
     return text
 
@@ -193,7 +213,9 @@ def _repair_malformed_pick_up_place(text: str) -> str:
     if match:
         obj = match.group(1).strip()
         hand = match.group(2)
-        repaired = f"pick up {obj} with {hand}, place {obj} on table with {hand}"
+        noun, target = _split_object_and_location(obj)
+        target = target or "on table"
+        repaired = f"pick up {noun} with {hand}, place {noun} {target} with {hand}"
         return text[: match.start()] + repaired + text[match.end() :]
     return text
 
@@ -1002,20 +1024,90 @@ def _is_terminal_wipe_segment(
 def reorder_dual_hand_clauses(label: str) -> str:
     """
     Ensures stabilizing hold/rotate clauses precede manipulation wipe/clean/cut clauses.
+    Tool-based continuous actions (iron, scrub, mop, polish) are left untouched.
     Example: 'wipe shoe sole with cloth in right hand, hold shoe with left hand'
           -> 'hold shoe with left hand, wipe shoe sole with cloth in right hand'
     """
     if not label or label == "No Action":
         return label
-    pattern = (
-        r"^(wipe|clean|cut|scrub|polish)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
-    )
+    pattern = r"^(wipe|clean|cut)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
     match = re.match(pattern, label.strip(), flags=re.IGNORECASE)
     if match:
         manipulation_clause = f"{match.group(1)} {match.group(2)}"
         holding_clause = f"{match.group(3)} {match.group(4)}"
         return f"{holding_clause}, {manipulation_clause}"
     return label
+
+
+# Specific placement targets that override a hallucinated default 'on table'.
+_SPECIFIC_PLACE_TARGETS = re.compile(
+    r"\b(on stack|on counter|on shelf|in shelf|in basin|in basket|in box|"
+    r"in drawer|in cabinet|in refrigerator(?:\s+shelf)?|in fridge|"
+    r"into refrigerator|into fridge)\b",
+    re.IGNORECASE,
+)
+
+_PLACE_HAND_THEN_TARGET = re.compile(
+    r"^(place|set|put)\s+(.+?)\s+with\s+(both hands|right hand|left hand)\s+"
+    r"((?:on|in|into|onto)\s+.+)$",
+    re.IGNORECASE,
+)
+
+
+def normalize_pick_and_place(label: str) -> str:
+    """
+    Cleans compound pick-and-place actions and removes conflicting target locations.
+    Example: 'place green garment on table with both hands on stack'
+          -> 'place green garment on stack with both hands'
+    Also reorders 'place X with hand on target' -> 'place X on target with hand'.
+    """
+    if not label or label == "No Action":
+        return label
+    clauses = split_actions(label)
+    fixed: list[str] = []
+    for clause in clauses:
+        piece = clause.strip()
+        if (
+            re.search(r"\bon table\b", piece, re.IGNORECASE)
+            and _SPECIFIC_PLACE_TARGETS.search(piece)
+        ):
+            piece = re.sub(r"\s*\bon table\b", "", piece, flags=re.IGNORECASE)
+        match = _PLACE_HAND_THEN_TARGET.match(piece)
+        if match:
+            verb, obj, hand, target = match.groups()
+            piece = (
+                f"{verb.lower()} {obj.strip()} {target.strip()} "
+                f"with {hand.lower()}"
+            )
+        fixed.append(" ".join(piece.split()))
+    return ", ".join(fixed)
+
+
+def sanitize_tool_actions(label: str) -> str:
+    """
+    Prevents invalid clause injection/reordering on tool-based continuous actions
+    (iron, mop, scrub, brush): strips trailing smoothing clauses the draft
+    never contained and never splits tool actions into fabricated hold clauses.
+    """
+    if not label or label == "No Action":
+        return label
+    if not re.search(r"\b(iron|mop|scrub|brush)\b", label, re.IGNORECASE):
+        return label
+    clauses = split_actions(label)
+    if len(clauses) < 2:
+        return label
+    kept = [
+        clause
+        for clause in clauses
+        if not re.match(
+            r"^smooth(?:en)?\s+[\w\s]+?\s+with\s+(?:left|right)\s+hand\s*$",
+            clause.strip(),
+            re.IGNORECASE,
+        )
+    ]
+    if not kept:
+        return label
+    return ", ".join(kept)
 
 
 def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
@@ -1053,6 +1145,17 @@ def normalize_episode_wiping_verbs(segment_labels: list[str]) -> list[str]:
             label = _upgrade_hold_to_rotate_in_wipe_label(label)
         processed.append(label)
     return processed
+
+
+def normalize_episode_sequence(segment_labels: list[str]) -> list[str]:
+    """
+    Applies multi-segment rules strictly based on action verb type:
+    - Continuous tasks (wipe): Seg 1 'hold', Seg 2..N-1 'rotate', Seg N 'hold'
+    - Discrete transfer tasks (pick up/place): preserve 'pick up' on every segment
+    - Every segment: clean up pick-and-place locations and preposition order
+    """
+    cleaned = [normalize_pick_and_place(lbl or "") for lbl in segment_labels]
+    return normalize_episode_wiping_verbs(cleaned)
 
 
 def adjust_wiping_rotation_by_segment_index(
@@ -1749,6 +1852,14 @@ def _split_false_both_hands(label: str) -> str:
     return label
 
 
+_TOOL_INSTRUMENT_IN_HAND = re.compile(
+    r"\bwith\s+(?:iron|mop|brush|hand broom|broom|squeegee|hoe|rake|shovel|"
+    r"spatula|sandpaper|wrench|screwdriver|hammer)\s+in\s+"
+    r"(?:left|right|both)\s+hands?\b",
+    re.IGNORECASE,
+)
+
+
 def _ensure_offhand_hold(label: str) -> str:
     """Add stabilize clause when draft names one working hand on cloth/dish work."""
     clauses = split_actions(label)
@@ -1756,6 +1867,10 @@ def _ensure_offhand_hold(label: str) -> str:
         return label
     clause = clauses[0]
     if HOLD_CLAUSE_PATTERN.search(clause) or "both hands" in clause.lower():
+        return label
+    # Tool-based continuous actions (iron, mop, scrub with brush, ...) occupy the
+    # working hand with the instrument — never fabricate an offhand hold for them.
+    if _TOOL_INSTRUMENT_IN_HAND.search(clause):
         return label
     verb = _leading_verb(clause)
     uses_right = re.search(r"\b(?:in|with) right hand\b", clause, re.IGNORECASE)
@@ -1770,6 +1885,7 @@ def _ensure_offhand_hold(label: str) -> str:
         verb in CLOTH_WORK_VERBS
         and _is_cloth_clause(clause)
         and not PLACE_LOCATION_PATTERN.search(clause)
+        and re.search(r"\b(?:cloth|towel|rag)\b", clause, re.IGNORECASE)
     ):
         obj = _clause_object_phrase(clause) or "cloth"
         if uses_right and not uses_left:
@@ -1959,6 +2075,8 @@ def draft_preserving_cleaner(
     label = _complete_hose_set_pickup_can(
         label, previous_label, next_label, clip_draft_blob
     )
+    label = normalize_pick_and_place(label)
+    label = sanitize_tool_actions(label)
 
     return label
 

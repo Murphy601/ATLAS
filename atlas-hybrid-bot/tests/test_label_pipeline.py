@@ -681,3 +681,86 @@ def test_place_hand_inherited_after_pass_for_wrench():
         previous_label="pass wrench from left hand to right hand",
     )
     assert out.lower() == "place wrench on table with right hand"
+
+
+def test_normalize_pick_and_place_removes_conflicting_table_location():
+    from label_pipeline import normalize_pick_and_place
+
+    out = normalize_pick_and_place(
+        "pick up green garment with left hand, "
+        "place green garment on table with both hands on stack"
+    )
+    assert "on table" not in out.lower()
+    assert "place green garment on stack with both hands" in out.lower()
+    assert "pick up green garment with left hand" in out.lower()
+
+
+def test_pick_up_and_place_expansion_preserves_explicit_target():
+    out = atlas_guide_cleaner("pick up and place garment on stack with both hands")
+    assert "place garment on stack with both hands" in out.lower()
+    assert "on table" not in out.lower()
+
+
+def test_discrete_egg_transfer_keeps_pick_up_across_segments():
+    previous = (
+        "pick up egg with right hand, place egg in refrigerator shelf with right hand"
+    )
+    out = atlas_guide_cleaner(
+        "pick up egg with right hand, place egg in refrigerator shelf with right hand",
+        previous_label=previous,
+    )
+    assert "pick up egg" in out.lower()
+    assert "hold egg" not in out.lower()
+
+
+def test_pick_up_to_hold_still_fires_for_continuous_repeat():
+    out = atlas_guide_cleaner(
+        "pick up wrench with right hand",
+        previous_label="pick up wrench with right hand",
+    )
+    assert "hold wrench" in out.lower()
+
+
+def test_tool_actions_do_not_get_fabricated_offhand_hold():
+    out = atlas_guide_cleaner("iron shirt with iron in right hand")
+    assert out.lower() == "iron shirt with iron in right hand"
+    assert "hold shirt" not in out.lower()
+
+    out = atlas_guide_cleaner("scrub pot with brush in right hand")
+    assert out.lower() == "scrub pot with brush in right hand"
+    assert "hold pot" not in out.lower()
+
+
+def test_sanitize_tool_actions_strips_injected_smooth_clause():
+    from label_pipeline import sanitize_tool_actions
+
+    out = sanitize_tool_actions(
+        "iron garment with iron in right hand, smooth garment with left hand"
+    )
+    assert out.lower() == "iron garment with iron in right hand"
+
+
+def test_scrub_label_clause_order_not_reordered():
+    draft = "scrub pot with brush in right hand, hold pot with left hand"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == draft.lower()
+
+
+def test_normalize_episode_sequence_preserves_pick_up_in_transfer_clips():
+    from label_pipeline import normalize_episode_sequence
+
+    draft = "pick up egg with right hand, place egg in refrigerator shelf with right hand"
+    out = normalize_episode_sequence([draft, draft, draft, draft])
+    assert all("pick up egg" in label.lower() for label in out)
+    assert all("place egg in refrigerator shelf" in label.lower() for label in out)
+
+
+def test_normalize_episode_sequence_still_rotates_middle_wipe_segments():
+    from label_pipeline import normalize_episode_sequence
+
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    out = normalize_episode_sequence([draft, draft, draft, draft])
+    assert out[0].lower() == draft.lower()
+    assert out[1].lower().startswith("rotate glass cup")
+    assert out[2].lower().startswith("rotate glass cup")
+    assert out[3].lower() == draft.lower()
