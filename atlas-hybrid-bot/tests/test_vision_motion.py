@@ -186,14 +186,14 @@ def test_surface_wipe_ignores_exchange_at_segment_two_seek_noise():
     assert all(label.lower() == "wipe shelf with cloth in right hand" for label in out)
 
 
-def test_single_hand_tracking_uses_draft_hand_no_false_exchange():
-    """Regression: peakR=0 must not invent a hand exchange from noise."""
+def test_single_hand_tracking_uses_motion_hand_not_draft():
+    """When only left wrist is tracked (peakR=0), wipe with left not draft right."""
     draft = "reposition socks on shelf with right hand"
     profiles = [
         HandMotionProfile(
-            peak_left=0.083,
+            peak_left=0.063,
             peak_right=0.0,
-            angular_left=0.683,
+            angular_left=1.365,
             angular_right=0.0,
             v_left=0.05,
             v_right=0.0,
@@ -204,7 +204,7 @@ def test_single_hand_tracking_uses_draft_hand_no_false_exchange():
         for _ in range(4)
     ]
     out = apply_clip_motion_enrichment([draft] * 4, profiles)
-    assert all(label.lower() == "wipe shelf with cloth in right hand" for label in out)
+    assert all(label.lower() == "wipe shelf with cloth in left hand" for label in out)
 
 
 def test_motion_enrichment_skips_when_no_wipe_signal():

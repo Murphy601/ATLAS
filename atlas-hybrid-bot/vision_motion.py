@@ -247,6 +247,35 @@ def _clip_draft_hand(labels: list[str]) -> str:
     return "right hand"
 
 
+def _resolve_surface_wipe_hand(
+    motion_profiles: list[HandMotionProfile | None],
+    clip_draft_hand: str,
+    *,
+    threshold: float = DEFAULT_MOTION_THRESHOLD,
+) -> tuple[str, str]:
+    """
+    Pick the wiping hand for surface labels.
+
+    When MediaPipe only ever tracks one wrist, trust that side over the AI draft
+    (draft often says the wrong hand on ego clips). When both wrists appear,
+    keep the draft hand to avoid seek-fallback flip-flops.
+    """
+    saw_left = False
+    saw_right = False
+    for motion in motion_profiles:
+        if motion is None or motion.frames_analyzed < 3:
+            continue
+        if motion.start_left_contact:
+            saw_left = True
+        if motion.start_right_contact:
+            saw_right = True
+    if saw_left and not saw_right:
+        return "left hand", "motion"
+    if saw_right and not saw_left:
+        return "right hand", "motion"
+    return clip_draft_hand, "draft"
+
+
 def _segments_with_both_hands(
     motion_profiles: list[HandMotionProfile | None],
 ) -> int:
@@ -376,14 +405,20 @@ def apply_clip_motion_enrichment(
 
     clip_draft_hand = _clip_draft_hand(segment_labels)
 
-    # Surface wiping: lock to the draft hand unless a late, stable exchange is seen.
+    # Surface wiping: one stable hand for the whole clip unless a late exchange.
     if target_kind == "surface" and exchange_idx is None:
-        locked = build_surface_wipe_label(target, clip_draft_hand)
+        wipe_hand, hand_source = _resolve_surface_wipe_hand(profiles, clip_draft_hand)
+        locked = build_surface_wipe_label(target, wipe_hand)
         if any((label or "").lower() != locked.lower() for label in segment_labels):
+            hand_note = (
+                f"{wipe_hand} ({hand_source}, draft={clip_draft_hand})"
+                if hand_source == "motion" and wipe_hand != clip_draft_hand
+                else wipe_hand
+            )
             print(
                 f"[Hybrid]: Vision motion enrichment "
                 f"(wipe_conf={wipe_conf:.2f}, exchange_seg=None, "
-                f"target={target}[surface], hand={clip_draft_hand}): '{locked}'"
+                f"target={target}[surface], hand={hand_note}): '{locked}'"
             )
         return [locked] * len(segment_labels)
 
