@@ -426,6 +426,19 @@ def enforce_glass_cup_consistency(
     clip_draft_blob: str | None = None,
 ) -> str:
     """glass jar → glass cup; split both-hands cloth wipe into hold + wipe."""
+    return fix_glass_cleaning_syntax_and_nouns(
+        label,
+        previous_label=previous_label,
+        clip_draft_blob=clip_draft_blob,
+    )
+
+
+def fix_glass_cleaning_syntax_and_nouns(
+    label: str,
+    previous_label: str | None = None,
+    clip_draft_blob: str | None = None,
+) -> str:
+    """Fix glass jar drift and decompress both-hands wipes into hold + wipe."""
     if not label or label == "No Action":
         return label
     context = " ".join(
@@ -435,19 +448,47 @@ def enforce_glass_cup_consistency(
     if re.search(r"\bglass cup\b", context, re.IGNORECASE):
         updated = re.sub(r"\bglass jar\b", "glass cup", updated, flags=re.IGNORECASE)
 
+    updated = re.sub(
+        r"\bwipe glass cup with cloth in both hands\b",
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand",
+        updated,
+        flags=re.IGNORECASE,
+    )
+
     clauses = split_actions(updated)
     if len(clauses) == 1:
         clause = clauses[0]
         if (
             _leading_verb(clause) == "wipe"
             and re.search(r"\bglass cup\b", clause, re.IGNORECASE)
-            and re.search(r"\bcloth in both hands\b", clause, re.IGNORECASE)
+            and "both hands" in clause.lower()
         ):
             return (
                 "hold glass cup with left hand, "
                 "wipe glass cup with cloth in right hand"
             )
     return updated
+
+
+def _continuous_glass_wipe_context(
+    previous_label: str | None,
+    clip_draft_blob: str | None = None,
+) -> bool:
+    """True when the prior segment was part of an ongoing glass-cup wipe sequence."""
+    prev = previous_label or ""
+    if re.search(r"\bwipe glass cup with cloth\b", prev, re.IGNORECASE):
+        return True
+    if re.search(
+        r"\b(?:hold|rotate) glass cup with left hand\b", prev, re.IGNORECASE
+    ) and re.search(r"\bwipe glass cup\b", prev, re.IGNORECASE):
+        return True
+    blob = clip_draft_blob or ""
+    return bool(
+        re.search(r"\bglass cup\b", blob, re.IGNORECASE)
+        and re.search(r"\bwipe\b", blob, re.IGNORECASE)
+        and prev
+        and re.search(r"\b(?:hold|rotate|wipe) glass cup\b", prev, re.IGNORECASE)
+    )
 
 
 SHORT_SEWING_TAIL_MAX_SECONDS = 2.0
@@ -820,13 +861,44 @@ def _objects_match_simple(a: str, b: str) -> bool:
 def dynamic_verb_hold_to_rotate(
     label: str,
     previous_label: str | None,
-    next_label: str | None,
+    next_label: str | None = None,
     motion: HandMotionProfile | None = None,
+    clip_draft_blob: str | None = None,
+    draft_text: str = "",
 ) -> str:
     """
     hold + wipe on a glass cup during continuous cleaning → rotate (not static hold).
+    Single-clause hold glass cup during ongoing wipe → rotate only.
     """
+    if not label or label == "No Action":
+        return label
+    if not re.search(r"\b(?:glass cup|glass jar|glass)\b", label, re.IGNORECASE):
+        return label
+    if re.search(
+        r"\bwipe\s+(?:glass cup|glass jar)\s+with cloth in both hands\b",
+        draft_text,
+        re.IGNORECASE,
+    ):
+        return label
+
+    ongoing_wipe = _continuous_glass_wipe_context(previous_label, clip_draft_blob)
+    should_rotate = ongoing_wipe
+    if motion and motion.v_left > 0.015 and motion.v_right > 0.015:
+        should_rotate = True
+    if not should_rotate:
+        return label
+
+    label = fix_glass_cleaning_syntax_and_nouns(
+        label, previous_label, clip_draft_blob
+    )
     clauses = split_actions(label)
+
+    if len(clauses) == 1:
+        clause = clauses[0].strip()
+        if re.match(r"^hold glass cup with left hand\s*$", clause, re.IGNORECASE):
+            return "rotate glass cup with left hand"
+        return label
+
     if len(clauses) != 2:
         return label
     if _leading_verb(clauses[0]) != "hold" or _leading_verb(clauses[1]) != "wipe":
@@ -836,18 +908,6 @@ def dynamic_verb_hold_to_rotate(
     if not _objects_match_simple(hold_obj, wipe_obj):
         return label
     if not re.search(r"\b(?:glass cup|glass)\b", label, re.IGNORECASE):
-        return label
-
-    previous = previous_label or ""
-    should_rotate = bool(
-        previous
-        and re.search(r"\bwipe\b", previous, re.IGNORECASE)
-        and re.search(r"\b(?:glass cup|glass)\b", previous, re.IGNORECASE)
-    )
-    if motion and motion.v_left > 0.015 and motion.v_right > 0.015:
-        should_rotate = True
-
-    if not should_rotate:
         return label
 
     rotated_first = re.sub(
@@ -1418,8 +1478,16 @@ def draft_preserving_cleaner(
     label = _apply_plural_nouns(label, draft_text, previous_label)
     label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
     label = _prefer_pull_over_insert_after_pull(label, previous_label)
+    label = fix_glass_cleaning_syntax_and_nouns(
+        label, previous_label, clip_draft_blob
+    )
     label = dynamic_verb_hold_to_rotate(
-        label, previous_label, next_label, motion
+        label,
+        previous_label,
+        next_label,
+        motion,
+        clip_draft_blob,
+        draft_text,
     )
     label = enforce_glass_cup_consistency(
         label, previous_label, clip_draft_blob

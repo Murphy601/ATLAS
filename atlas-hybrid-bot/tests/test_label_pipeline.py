@@ -340,6 +340,33 @@ def test_glass_hold_becomes_rotate_after_wipe_segment():
     assert "wipe glass cup with cloth in right hand" in out.lower()
 
 
+def test_glass_single_hold_becomes_rotate_during_continuous_wipe():
+    previous = (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    out = atlas_guide_cleaner(
+        "hold glass cup with left hand",
+        previous_label=previous,
+        clip_draft_blob="glass cup wipe cloth",
+    )
+    assert out.lower() == "rotate glass cup with left hand"
+
+
+def test_glass_hold_wipe_becomes_rotate_after_first_wipe_segment():
+    previous = (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    out = atlas_guide_cleaner(
+        draft,
+        previous_label=previous,
+        clip_draft_blob="glass cup wipe cloth",
+    )
+    assert out.lower() == (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+
+
 def test_kitchen_bottle_pickup_injects_pass():
     draft = "open refrigerator door with right hand, pick up bottle with right hand"
     out = atlas_guide_cleaner(
