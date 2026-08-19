@@ -1060,21 +1060,45 @@ def _is_terminal_wipe_segment(
     return segment_index in {0, total_segments - 1}
 
 
-def reorder_dual_hand_clauses(label: str) -> str:
+# Verbs where clause order is chronological (place then pick up) — never swap.
+_SEQUENTIAL_FIRST_VERBS = frozenset(
+    {"place", "set", "put", "pick up", "pass", "gather", "open", "close", "walk"}
+)
+
+
+def reorder_atlas_clauses(label: str) -> str:
     """
-    Ensures stabilizing hold/rotate clauses precede manipulation clauses for
-    continuous dual-hand work (wipe/scrub/clean/cut/sand/polish).
-    Iron/mop single-tool labels are handled by sanitize_grooming_and_tool_actions.
+    Flip dual-hand actions so holding/stabilizing comes first.
+
+    'strip blue wire with pliers in right hand, hold wire with left hand'
+    -> 'hold wire with left hand, strip blue wire with pliers in right hand'
+
+    Sequential actions (place then pick up) keep chronological order.
     """
     if not label or label == "No Action":
         return label
-    pattern = r"^(wipe|scrub|clean|cut|sand|polish|rub)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
-    match = re.match(pattern, label.strip(), flags=re.IGNORECASE)
-    if match:
-        manipulation_clause = f"{match.group(1)} {match.group(2)}"
-        holding_clause = f"{match.group(3)} {match.group(4)}"
-        return f"{holding_clause}, {manipulation_clause}"
-    return label
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+
+    first, second = clauses[0].strip(), clauses[1].strip()
+    first_verb = _leading_verb(first)
+    second_verb = _leading_verb(second)
+    hold_verbs = {"hold", "rotate"}
+
+    if first_verb in hold_verbs and second_verb not in hold_verbs:
+        return label
+    if second_verb not in hold_verbs:
+        return label
+    if first_verb in _SEQUENTIAL_FIRST_VERBS:
+        return label
+
+    return f"{second}, {first}"
+
+
+def reorder_dual_hand_clauses(label: str) -> str:
+    """Alias: stabilizing hold/rotate must precede manipulation clauses."""
+    return reorder_atlas_clauses(label)
 
 
 # Specific placement targets that override a hallucinated default 'on table'.

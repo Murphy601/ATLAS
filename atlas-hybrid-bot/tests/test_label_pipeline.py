@@ -473,6 +473,7 @@ def test_no_duplicate_hand_on_strip_clause():
     )
     assert "in right hand with" not in out.lower()
     assert "pliers in right hand" in out.lower()
+    assert out.lower().startswith("hold blue wire with left hand")
 
 
 def test_pass_syntax_preserved():
@@ -687,13 +688,31 @@ def test_glass_jar_wipe_both_hands_splits_hold_wipe():
 
 
 def test_reorder_dual_hand_clauses_shoe_wiping():
-    from label_pipeline import reorder_dual_hand_clauses
+    from label_pipeline import reorder_atlas_clauses, reorder_dual_hand_clauses
 
     draft = "wipe shoe sole with cloth in right hand, hold shoe with left hand"
     out = reorder_dual_hand_clauses(draft)
     assert out.lower() == (
         "hold shoe with left hand, wipe shoe sole with cloth in right hand"
     )
+    assert reorder_atlas_clauses(draft).lower() == out.lower()
+
+
+def test_reorder_atlas_clauses_strip_wire_hold_first():
+    from label_pipeline import reorder_atlas_clauses
+
+    draft = "strip blue wire with pliers in right hand, hold wire with left hand"
+    out = reorder_atlas_clauses(draft)
+    assert out.lower() == (
+        "hold wire with left hand, strip blue wire with pliers in right hand"
+    )
+
+
+def test_reorder_atlas_clauses_keeps_place_then_pickup_chronology():
+    from label_pipeline import reorder_atlas_clauses
+
+    draft = "place bucket on floor with left hand, pick up hoe with right hand"
+    assert reorder_atlas_clauses(draft).lower() == draft.lower()
 
 
 def test_normalize_episode_wiping_verbs_four_segment_glass():
