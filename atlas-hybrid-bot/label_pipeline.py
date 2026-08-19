@@ -140,14 +140,6 @@ KNOWN_CLIP_TOOLS = (
 
 _HAND_TAG = r"(?:left hand|right hand|both hands)"
 _NAVIGATION_VERBS = frozenset({"walk", "walking", "navigate", "navigating", "look", "looking"})
-_DUAL_PICKUP_LEFT_RIGHT = re.compile(
-    r"\bpick up (.+?) with left hand,\s*pick up \1 with right hand\b",
-    re.IGNORECASE,
-)
-_DUAL_PICKUP_RIGHT_LEFT = re.compile(
-    r"\bpick up (.+?) with right hand,\s*pick up \1 with left hand\b",
-    re.IGNORECASE,
-)
 _NAVIGATION_CLAUSE = re.compile(
     r"^(?:walk(?:ing)?(?:\s+to\s+\S+(?:\s+\S+)*)?|navigate(?:\s+to\s+\S+(?:\s+\S+)*)?)$",
     re.IGNORECASE,
@@ -262,15 +254,6 @@ def _normalize_draft_separators(text: str) -> str:
     text = re.sub(r"\s*,\s*", ", ", text)
     text = _repair_malformed_pick_up_place(text)
     return " ".join(text.split()).strip(" ,")
-
-
-def _collapse_simultaneous_pickups(label: str) -> str:
-    """pick up X with left hand, pick up X with right hand -> pick up X with both hands."""
-    if not label:
-        return label
-    updated = _DUAL_PICKUP_LEFT_RIGHT.sub(r"pick up \1 with both hands", label)
-    updated = _DUAL_PICKUP_RIGHT_LEFT.sub(r"pick up \1 with both hands", updated)
-    return updated
 
 
 def _strip_navigation_clauses(label: str) -> str:
@@ -1312,8 +1295,8 @@ def normalize_episode_sequence(
 
 def normalize_refrigerator_organizing_episode(segment_labels: list[str]) -> list[str]:
     """
-    Refrigerator clips: pick up container with both hands, then hold + reposition
-    while organizing, place container only on the final segment.
+    Refrigerator clips: dual pick-up (one container per hand), hold + reposition
+    while organizing, place on the final segment.
     """
     if len(segment_labels) < 2:
         return segment_labels
@@ -2240,7 +2223,6 @@ def draft_preserving_cleaner(
         return "No Action"
 
     label = _normalize_draft_separators(label)
-    label = _collapse_simultaneous_pickups(label)
     label = _strip_navigation_clauses(label)
     label = _apply_safe_syntax_fixes(label)
     if label == "No Action":
