@@ -1238,24 +1238,82 @@ def _inject_tool_release(
     return _cap_clauses_simple(f"{place_clause}, {label}")
 
 
+def correct_cutting_vs_alignment(
+    label: str,
+    previous_label: str | None = None,
+    next_label: str | None = None,
+    motion: HandMotionProfile | None = None,
+) -> str:
+    """
+    cut papers with scissors while adjusting edges → hold scissors, align papers.
+    Passive scissors grip + dual-hand paper motion is alignment, not cutting.
+    """
+    if not label or label == "No Action":
+        return label
+    if not re.search(r"\bcut papers?\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\bscissors\b", label, re.IGNORECASE):
+        return label
+
+    def hold_scissors_only(text: str | None) -> bool:
+        if not text:
+            return False
+        blob = text.lower()
+        return "hold scissors" in blob and "cut" not in blob
+
+    def prior_scissors_hold(text: str | None) -> bool:
+        if not text:
+            return False
+        return bool(re.search(r"\bhold scissors\b", text, re.IGNORECASE)) and not re.search(
+            r"\bcut\b", text, re.IGNORECASE
+        )
+
+    sandwich = (
+        previous_label
+        and next_label
+        and hold_scissors_only(previous_label)
+        and hold_scissors_only(next_label)
+    )
+    after_scissors_hold = prior_scissors_hold(previous_label)
+
+    if sandwich or after_scissors_hold:
+        return "hold scissors with right hand, align papers with both hands"
+
+    return label
+
+
+def enforce_scissors_alignment_syntax(label: str) -> str:
+    """hold scissors clause must precede align papers per ATLAS reference grammar."""
+    if not label or label == "No Action":
+        return label
+    updated = re.sub(
+        r"align papers with both hands,\s*hold scissors with right hand",
+        "hold scissors with right hand, align papers with both hands",
+        label,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"hold papers with left hand,\s*align papers with both hands",
+        "hold scissors with right hand, align papers with both hands",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    return updated
+
+
 def _prefer_align_over_cut_sandwich(
     label: str,
     previous_label: str | None,
     next_label: str | None,
+    motion: HandMotionProfile | None = None,
 ) -> str:
     """Scissors segments between hold-only neighbors are alignment, not cutting."""
-    if not previous_label or not next_label:
-        return label
-    if not re.search(r"\bcut\s+paper\b", label, re.IGNORECASE):
-        return label
-
-    def hold_scissors_only(text: str) -> bool:
-        blob = text.lower()
-        return "hold scissors" in blob and "cut" not in blob
-
-    if hold_scissors_only(previous_label) and hold_scissors_only(next_label):
-        return "hold scissors with right hand, align papers with both hands"
-    return label
+    return correct_cutting_vs_alignment(
+        label,
+        previous_label=previous_label,
+        next_label=next_label,
+        motion=motion,
+    )
 
 
 def _draft_requires_both_hands(draft_text: str, label: str) -> bool:
@@ -1476,7 +1534,10 @@ def draft_preserving_cleaner(
     label = _normalize_hand_prepositions(label)
     label = consolidate_hose_actions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
-    label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
+    label = _prefer_align_over_cut_sandwich(
+        label, previous_label, next_label, motion
+    )
+    label = enforce_scissors_alignment_syntax(label)
     label = _prefer_pull_over_insert_after_pull(label, previous_label)
     label = fix_glass_cleaning_syntax_and_nouns(
         label, previous_label, clip_draft_blob

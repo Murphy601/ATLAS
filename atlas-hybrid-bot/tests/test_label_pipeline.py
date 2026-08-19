@@ -236,6 +236,34 @@ def test_cut_demoted_to_align_when_scissors_sandwiched():
     assert "cut paper" not in out.lower()
 
 
+def test_cut_papers_becomes_align_after_scissors_hold():
+    out = atlas_guide_cleaner(
+        "hold papers with left hand, cut papers with scissors in right hand",
+        previous_label="hold paper with left hand, hold scissors with right hand",
+    )
+    assert out.lower() == (
+        "hold scissors with right hand, align papers with both hands"
+    )
+
+
+def test_real_cut_preserved_when_prior_was_cutting():
+    out = atlas_guide_cleaner(
+        "hold paper with left hand, cut paper with scissors in right hand",
+        previous_label="hold paper with left hand, cut paper with scissors in right hand",
+    )
+    assert "cut paper" in out.lower()
+    assert "align papers" not in out.lower()
+
+
+def test_scissors_alignment_clause_order():
+    out = atlas_guide_cleaner(
+        "align papers with both hands, hold scissors with right hand"
+    )
+    assert out.lower() == (
+        "hold scissors with right hand, align papers with both hands"
+    )
+
+
 def test_pick_up_and_place_expands_to_two_clauses():
     out = atlas_guide_cleaner("pick up and place wrench with right hand")
     assert "pick up wrench with right hand" in out.lower()
