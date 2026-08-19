@@ -523,6 +523,34 @@ def test_simplify_kitchen_nouns():
     assert "pick up bottle with right hand" in out.lower()
 
 
+def test_simplify_object_nouns_orange_snack_bag():
+    from label_pipeline import simplify_object_nouns
+
+    assert simplify_object_nouns("pick up orange snack bag with right hand").lower() == (
+        "pick up bag with right hand"
+    )
+    assert simplify_object_nouns("place orange snack bag on counter with left hand").lower() == (
+        "place bag on counter with left hand"
+    )
+
+
+def test_normalize_handover_sequence_injects_pass_and_fixes_place_hand():
+    from label_pipeline import normalize_handover_sequence
+
+    labels = [
+        "pick up bottle with right hand",
+        "place bottle on counter with right hand",
+        "No Action",
+        "place orange snack bag on counter with right hand",
+    ]
+    out = normalize_handover_sequence(labels)
+    assert out[0].lower() == (
+        "pick up bottle with right hand, pass bottle from right hand to left hand"
+    )
+    assert out[1].lower() == "place bottle on counter with left hand"
+    assert out[3].lower() == "place bag on counter with right hand"
+
+
 def test_simplify_blue_cable_to_blue_wire():
     out = atlas_guide_cleaner("strip blue cable with pliers in right hand")
     assert "blue wire" in out.lower()

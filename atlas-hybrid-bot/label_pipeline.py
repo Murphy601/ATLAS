@@ -246,6 +246,16 @@ _HAND_TRANSFER_TO = re.compile(
     re.IGNORECASE,
 )
 
+_HANDOVER_PASS = re.compile(
+    r"pass\s+(.+?)\s+from\s+(left|right)\s+hand\s+to\s+(left|right)\s+hand",
+    re.IGNORECASE,
+)
+
+_EXTRA_OBJECT_NOUN_STRIPPERS: tuple[tuple[str, str], ...] = (
+    (r"\borange red snack bag\b", "bag"),
+    (r"\bred bottle\b", "bottle"),
+)
+
 
 def fix_pick_and_place_grammar(label: str) -> str:
     """
@@ -664,9 +674,22 @@ def enforce_canonical_atlas_nouns(label: str) -> str:
     return updated
 
 
+def simplify_object_nouns(label: str) -> str:
+    """
+    Simplify overly descriptive object names to canonical base nouns.
+    Example: orange snack bag -> bag
+    """
+    if not label or label == "No Action":
+        return label
+    updated = enforce_canonical_atlas_nouns(label)
+    for pattern, replacement in _EXTRA_OBJECT_NOUN_STRIPPERS:
+        updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    return updated
+
+
 def _simplify_atlas_nouns(label: str) -> str:
     """Strip over-specific visual modifiers down to ATLAS core object terms."""
-    return enforce_canonical_atlas_nouns(label)
+    return simplify_object_nouns(label)
 
 
 def _labels_match(left: str | None, right: str | None) -> bool:
@@ -1333,6 +1356,140 @@ def _upgrade_hold_to_rotate_in_wipe_label(
     return updated
 
 
+def _align_place_clauses_to_hand(label: str, hand: str) -> str:
+    """Set placement-clause hand tags to the hand currently holding the object."""
+    clauses = split_actions(label)
+    if not clauses:
+        return label
+    fixed: list[str] = []
+    for clause in clauses:
+        piece = clause.strip()
+        if _leading_verb(piece) in {"place", "set", "put"}:
+            piece = re.sub(
+                r"\b(?:with|in)\s+(?:left|right)\s+hand\b",
+                f"with {hand} hand",
+                piece,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+        fixed.append(piece)
+    return ", ".join(fixed)
+
+
+def _infer_handover_destination(
+    label: str,
+    next_label: str,
+    pick_hand: str,
+    place_hand: str,
+) -> str:
+    """Guess the receiving hand when placement cues or kitchen objects imply a pass."""
+    if place_hand and place_hand != pick_hand:
+        return place_hand
+    blob = f"{label} {next_label}".lower()
+    if pick_hand == "right hand" and re.search(
+        r"\b(?:bottle|(?:snack )?bag|sachet)\b", blob
+    ):
+        return "left hand"
+    if pick_hand == "left hand" and re.search(
+        r"\b(?:bottle|(?:snack )?bag|sachet)\b", blob
+    ):
+        return "right hand"
+    return ""
+
+
+def _inject_missing_handover_pass(label: str, next_label: str | None) -> str:
+    """Insert pass when a pick-up segment precedes placement on the other hand."""
+    if not label or not next_label or label == "No Action":
+        return label
+    if re.search(r"\bpass\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\bpick up\b", label, re.IGNORECASE):
+        return label
+    if not re.search(r"\b(?:place|set)\b", next_label, re.IGNORECASE):
+        return label
+
+    clauses = split_actions(label)
+    pick_index = -1
+    pick_hand = ""
+    pick_obj = ""
+    for index, clause in enumerate(clauses):
+        if _leading_verb(clause) == "pick up":
+            pick_hand = _clause_hand(clause)
+            pick_obj = _clause_object_phrase(clause)
+            pick_index = index
+
+    if pick_index < 0 or not pick_hand:
+        return label
+
+    place_hand = ""
+    for clause in split_actions(next_label):
+        if _leading_verb(clause) in {"place", "set", "put"}:
+            place_hand = _clause_hand(clause)
+            if not pick_obj:
+                pick_obj = _clause_object_phrase(clause)
+            break
+    if not place_hand:
+        place_hand = _clause_hand(next_label)
+
+    dest_hand = _infer_handover_destination(label, next_label, pick_hand, place_hand)
+    if not dest_hand or dest_hand == pick_hand:
+        return label
+
+    if not pick_obj:
+        blob = f"{label} {next_label}".lower()
+        if "bottle" in blob:
+            pick_obj = "bottle"
+        elif "sachet" in blob:
+            pick_obj = "sachet"
+        elif re.search(r"\b(?:snack )?bag\b", blob):
+            pick_obj = "bag"
+        else:
+            return label
+
+    pick_obj = simplify_object_nouns(pick_obj)
+    pass_clause = f"pass {pick_obj} from {pick_hand} to {dest_hand}"
+    new_clauses = clauses[: pick_index + 1] + [pass_clause] + clauses[pick_index + 1 :]
+    return ", ".join(new_clauses)
+
+
+def normalize_handover_sequence(segment_labels: list[str]) -> list[str]:
+    """
+    Enforces hand state tracking across sequential segments.
+    Injects missing pass clauses and aligns placement hands after handovers.
+    """
+    if not segment_labels:
+        return segment_labels
+
+    with_passes: list[str] = []
+    for index, label in enumerate(segment_labels):
+        label = (label or "").strip()
+        next_label = segment_labels[index + 1] if index + 1 < len(segment_labels) else None
+        if label and label != "No Action":
+            label = _inject_missing_handover_pass(label, next_label)
+        with_passes.append(label)
+
+    processed: list[str] = []
+    active_hand: str | None = None
+
+    for label in with_passes:
+        label = (label or "").strip()
+        if not label or label == "No Action":
+            processed.append(label)
+            continue
+
+        if active_hand and re.search(r"\b(?:place|set)\b", label, re.IGNORECASE):
+            label = _align_place_clauses_to_hand(label, active_hand)
+            active_hand = None
+
+        handover_match = _HANDOVER_PASS.search(label)
+        if handover_match:
+            active_hand = handover_match.group(3).lower()
+
+        processed.append(simplify_object_nouns(label))
+
+    return processed
+
+
 def normalize_episode_wiping_verbs(
     segment_labels: list[str],
     motion_profiles: list[HandMotionProfile | None] | None = None,
@@ -1373,9 +1530,12 @@ def normalize_episode_sequence(
     - Every segment: clean up pick-and-place locations and preposition order
     """
     cleaned = [
-        fix_pick_and_place_grammar(normalize_pick_and_place(lbl or ""))
+        simplify_object_nouns(
+            fix_pick_and_place_grammar(normalize_pick_and_place(lbl or ""))
+        )
         for lbl in segment_labels
     ]
+    cleaned = normalize_handover_sequence(cleaned)
     cleaned = apply_clip_motion_enrichment(cleaned, motion_profiles)
     cleaned = apply_clip_hand_consensus(cleaned, motion_profiles)
     cleaned = normalize_refrigerator_organizing_episode(cleaned)
@@ -2507,6 +2667,7 @@ def generate_label_hybrid(
     )
     label = fix_pick_and_place_grammar(label)
     label = normalize_hand_transfer(label)
+    label = simplify_object_nouns(label)
     return apply_vision_hand_corrections(label, motion)
 
 
