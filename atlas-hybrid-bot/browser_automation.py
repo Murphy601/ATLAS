@@ -17,6 +17,27 @@ from config import (
     SELECTORS,
 )
 
+
+def patch_playwright_frame_listener(page) -> None:
+    """
+    Suppress non-fatal ValueError when Playwright fires _on_frame_detached
+    on frames already removed during fast DOM navigation between clips.
+    """
+    if page is None:
+        return
+    original = getattr(page, "_on_frame_detached", None)
+    if original is None or getattr(page, "_frame_detach_patched", False):
+        return
+
+    def safe_on_frame_detached(frame):
+        try:
+            original(frame)
+        except ValueError:
+            pass
+
+    page._on_frame_detached = safe_on_frame_detached
+    page._frame_detach_patched = True
+
 MAX_LABEL_LENGTH = 2000
 DEBUG_FRAMES_DIR = Path("debug_frames")
 ORIGINAL_DRAFTS_DIR = Path("original_drafts")
@@ -171,6 +192,7 @@ class VideoBrowserBot:
             if self.browser_context.pages
             else self.browser_context.new_page()
         )
+        patch_playwright_frame_listener(self.page)
         print(f"[Browser Bot]: Navigating to {url}...")
         # Do not wait for networkidle: Cloudflare challenges keep the network busy.
         self.page.goto(url, wait_until="domcontentloaded")

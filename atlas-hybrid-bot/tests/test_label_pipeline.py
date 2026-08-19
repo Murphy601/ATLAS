@@ -624,3 +624,60 @@ def test_glass_jar_wipe_both_hands_splits_hold_wipe():
     assert out.lower() == (
         "hold glass cup with left hand, wipe glass cup with cloth in right hand"
     )
+
+
+def test_reorder_dual_hand_clauses_shoe_wiping():
+    from label_pipeline import reorder_dual_hand_clauses
+
+    draft = "wipe shoe sole with cloth in right hand, hold shoe with left hand"
+    out = reorder_dual_hand_clauses(draft)
+    assert out.lower() == (
+        "hold shoe with left hand, wipe shoe sole with cloth in right hand"
+    )
+
+
+def test_normalize_episode_wiping_verbs_four_segment_glass():
+    from label_pipeline import normalize_episode_wiping_verbs
+
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    labels = [draft, draft, draft, draft]
+    out = normalize_episode_wiping_verbs(labels)
+    assert out[0].lower() == draft.lower()
+    assert out[1].lower().startswith("rotate glass cup")
+    assert out[2].lower().startswith("rotate glass cup")
+    assert out[3].lower() == draft.lower()
+
+
+def test_enforce_canonical_atlas_nouns():
+    from label_pipeline import enforce_canonical_atlas_nouns
+
+    assert enforce_canonical_atlas_nouns("pick up syrup bottle with right hand").lower() == (
+        "pick up bottle with right hand"
+    )
+    assert enforce_canonical_atlas_nouns("hold glass jar with left hand").lower() == (
+        "hold glass cup with left hand"
+    )
+
+
+def test_resolve_hand_transfer_sequence():
+    from label_pipeline import resolve_hand_transfer_sequence
+
+    out = resolve_hand_transfer_sequence(
+        "left hand",
+        "right hand",
+        "wrench",
+        "place",
+        "table",
+    )
+    assert out.lower() == (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
+
+
+def test_place_hand_inherited_after_pass_for_wrench():
+    out = atlas_guide_cleaner(
+        "place wrench on table with left hand",
+        previous_label="pass wrench from left hand to right hand",
+    )
+    assert out.lower() == "place wrench on table with right hand"

@@ -154,7 +154,10 @@ NOUN_SIMPLIFIERS: tuple[tuple[str, str], ...] = (
     (r"\bsyrup bottle\b", "bottle"),
     (r"\bred snack bag\b", "sachet"),
     (r"\borange snack bag\b", "bag"),
+    (r"\bglass jar\b", "glass cup"),
 )
+
+CANONICAL_NOUN_MAP: tuple[tuple[str, str], ...] = NOUN_SIMPLIFIERS
 
 _STRIP_NOUN_SIMPLIFIERS: tuple[tuple[str, str], ...] = (
     (r"\bblue cable\b", "blue wire"),
@@ -533,14 +536,19 @@ def limit_actions_by_duration(
     return updated.strip(" ,")
 
 
-def _simplify_atlas_nouns(label: str) -> str:
-    """Strip over-specific visual modifiers down to ATLAS core object terms."""
+def enforce_canonical_atlas_nouns(label: str) -> str:
+    """Strip non-standard modifiers and map entity names to canonical ATLAS nouns."""
     if not label or label == "No Action":
         return label
     updated = label
-    for pattern, replacement in NOUN_SIMPLIFIERS:
+    for pattern, replacement in CANONICAL_NOUN_MAP:
         updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
     return updated
+
+
+def _simplify_atlas_nouns(label: str) -> str:
+    """Strip over-specific visual modifiers down to ATLAS core object terms."""
+    return enforce_canonical_atlas_nouns(label)
 
 
 def _labels_match(left: str | None, right: str | None) -> bool:
@@ -841,6 +849,27 @@ def _normalize_pass_syntax(label: str) -> str:
     return ", ".join(normalized) if normalized else label
 
 
+def resolve_hand_transfer_sequence(
+    prev_hand: str,
+    curr_hand: str,
+    obj_name: str,
+    action_type: str,
+    target_surface: str = "table",
+) -> str:
+    """
+    Forces the explicit hold → pass → action chain when hand custody shifts
+    before placement (or other terminal action).
+    """
+    if prev_hand and curr_hand and prev_hand != curr_hand:
+        return (
+            f"hold {obj_name} with {prev_hand}, "
+            f"pass {obj_name} from {prev_hand} to {curr_hand}, "
+            f"{action_type} {obj_name} on {target_surface} with {curr_hand}"
+        )
+    hand = curr_hand or prev_hand or "right hand"
+    return f"{action_type} {obj_name} on {target_surface} with {hand}"
+
+
 def format_hand_pass_sequence(
     initial_hand: str,
     final_hand: str,
@@ -849,10 +878,8 @@ def format_hand_pass_sequence(
 ) -> str:
     """Format hold → pass → place chain for cross-hand object transfers."""
     if initial_hand != final_hand:
-        return (
-            f"hold {obj_name} with {initial_hand}, "
-            f"pass {obj_name} from {initial_hand} to {final_hand}, "
-            f"place {obj_name} on {target_surface} with {final_hand}"
+        return resolve_hand_transfer_sequence(
+            initial_hand, final_hand, obj_name, "place", target_surface
         )
     return (
         f"pick up {obj_name} with {final_hand}, "
@@ -972,18 +999,31 @@ def _is_terminal_wipe_segment(
     return segment_index in {0, total_segments - 1}
 
 
-def adjust_wiping_rotation_by_segment_index(
-    label: str,
-    segment_index: int | None = None,
-    total_segments: int | None = None,
-) -> str:
-    """Middle segments in multi-window wiping use rotate; first/last keep hold."""
-    if not _is_middle_wipe_segment(segment_index, total_segments):
+def reorder_dual_hand_clauses(label: str) -> str:
+    """
+    Ensures stabilizing hold/rotate clauses precede manipulation wipe/clean/cut clauses.
+    Example: 'wipe shoe sole with cloth in right hand, hold shoe with left hand'
+          -> 'hold shoe with left hand, wipe shoe sole with cloth in right hand'
+    """
+    if not label or label == "No Action":
         return label
-    if not re.search(r"\bwipe\b", label, re.IGNORECASE):
+    pattern = (
+        r"^(wipe|clean|cut|scrub|polish)\s+(.+?),\s*(hold|rotate)\s+(.+)$"
+    )
+    match = re.match(pattern, label.strip(), flags=re.IGNORECASE)
+    if match:
+        manipulation_clause = f"{match.group(1)} {match.group(2)}"
+        holding_clause = f"{match.group(3)} {match.group(4)}"
+        return f"{holding_clause}, {manipulation_clause}"
+    return label
+
+
+def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
+    """Convert stabilizing hold clauses to rotate during active wipe windows."""
+    if not label or not re.search(r"\bwipe\b", label, re.IGNORECASE):
         return label
     updated = re.sub(
-        r"\bhold\s+(glass cup|glass jar|glass)\s+with\s+(left hand|right hand)\b",
+        r"\bhold\s+([\w\s]+?)\s+with\s+(left hand|right hand)\b",
         r"rotate \1 with \2",
         label,
         flags=re.IGNORECASE,
@@ -992,9 +1032,41 @@ def adjust_wiping_rotation_by_segment_index(
     if len(parts) >= 2 and _leading_verb(parts[0]) == "hold":
         parts[0] = re.sub(r"^hold\b", "rotate", parts[0], count=1, flags=re.IGNORECASE)
         updated = ", ".join(parts)
-    elif len(parts) == 1 and re.match(r"^hold glass cup with left hand\s*$", parts[0], re.I):
-        updated = "rotate glass cup with left hand"
     return updated
+
+
+def normalize_episode_wiping_verbs(segment_labels: list[str]) -> list[str]:
+    """
+    Applies ATLAS multi-segment wiping rules across an entire clip:
+    - Seg 1 & Seg N: keep hold on the stabilized object
+    - Seg 2 to N-1: upgrade hold to rotate during wipe windows
+    - Dual-hand labels: stabilizing clause must precede manipulation clause
+    """
+    total = len(segment_labels)
+    if total < 3:
+        return [reorder_dual_hand_clauses(lbl or "") for lbl in segment_labels]
+
+    processed: list[str] = []
+    for idx, label in enumerate(segment_labels):
+        label = reorder_dual_hand_clauses(label or "")
+        if 0 < idx < (total - 1) and label and re.search(r"\bwipe\b", label, re.I):
+            label = _upgrade_hold_to_rotate_in_wipe_label(label)
+        processed.append(label)
+    return processed
+
+
+def adjust_wiping_rotation_by_segment_index(
+    label: str,
+    segment_index: int | None = None,
+    total_segments: int | None = None,
+) -> str:
+    """Middle segments in multi-window wiping use rotate; first/last keep hold."""
+    label = reorder_dual_hand_clauses(label)
+    if not _is_middle_wipe_segment(segment_index, total_segments):
+        return label
+    if not re.search(r"\bwipe\b", label, re.IGNORECASE):
+        return label
+    return _upgrade_hold_to_rotate_in_wipe_label(label)
 
 
 def format_hand_transfer(object_noun: str, from_hand: str, to_hand: str) -> str:
@@ -1168,8 +1240,6 @@ def _align_place_hand_after_pass(
     dest = match.group(2).lower()
     clauses = split_actions(label)
     if len(clauses) != 1 or _leading_verb(clauses[0]) not in {"place", "set"}:
-        return label
-    if not re.search(r"\b(?:bottle|bag|sachet)\b", clauses[0], re.IGNORECASE):
         return label
     fixed = re.sub(
         r"\b(?:with|in) (?:left|right) hand\b",
@@ -1847,6 +1917,7 @@ def draft_preserving_cleaner(
     label = fix_glass_cleaning_syntax_and_nouns(
         label, previous_label, clip_draft_blob
     )
+    label = reorder_dual_hand_clauses(label)
     label = dynamic_verb_hold_to_rotate(
         label,
         previous_label,

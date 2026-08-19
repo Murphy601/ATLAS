@@ -7,6 +7,24 @@ from browser_automation import VideoBrowserBot, frame_in_segment_window, sample_
 FIXTURE = Path(__file__).parent / "fixtures" / "annotation_portal.html"
 
 
+def test_patch_playwright_frame_listener_swallows_value_error():
+    from browser_automation import patch_playwright_frame_listener
+
+    class FakeFrame:
+        pass
+
+    class FakePage:
+        def __init__(self):
+            self._frame_detach_patched = False
+
+        def _on_frame_detached(self, frame):
+            raise ValueError("list.remove(x): x not in list")
+
+    page = FakePage()
+    patch_playwright_frame_listener(page)
+    page._on_frame_detached(FakeFrame())  # should not raise
+
+
 def test_open_work_queue_from_assessment_landing_clicks_practice(tmp_path):
     bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
     try:

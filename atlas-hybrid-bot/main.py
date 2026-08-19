@@ -24,6 +24,7 @@ from label_pipeline import (
     atlas_guide_cleaner,
     build_draft_global_context,
     generate_label_hybrid,
+    normalize_episode_wiping_verbs,
     resolve_hand_tag,
 )
 
@@ -71,6 +72,7 @@ def process_live_task(
     pipeline = AtlasHybridPipeline()
     processed_any = False
     previous_label = None
+    pending_labels: list[tuple[SegmentRow, str, bool]] = []
 
     try:
         for index, segment in enumerate(segments):
@@ -151,6 +153,7 @@ def process_live_task(
             print(f"Generated Label: '{label}'")
 
             processed_any = True
+            should_fill = True
             if label == "No Action" and draft:
                 kept = atlas_guide_cleaner(
                     draft,
@@ -168,23 +171,34 @@ def process_live_task(
                     f"'{kept}' instead of No Action."
                 )
                 if kept != "No Action":
-                    bot.fill_segment_label(
-                        segment.number,
-                        kept,
-                        start_seconds=segment.start_seconds,
-                    )
-                    previous_label = kept
+                    label = kept
                 else:
+                    should_fill = False
                     previous_label = segment.draft_label
-                continue
+                    pending_labels.append((segment, label, should_fill))
+                    continue
 
-            bot.fill_segment_label(
-                segment.number,
-                label,
-                start_seconds=segment.start_seconds,
-            )
+            pending_labels.append((segment, label, should_fill))
             previous_label = label
-            time.sleep(0.4)
+
+        if pending_labels:
+            normalized = normalize_episode_wiping_verbs(
+                [label for _, label, _ in pending_labels]
+            )
+            for (segment, _, should_fill), final_label in zip(
+                pending_labels, normalized
+            ):
+                if not should_fill:
+                    continue
+                print(
+                    f"[Hybrid]: Filling Segment {segment.number}: '{final_label}'"
+                )
+                bot.fill_segment_label(
+                    segment.number,
+                    final_label,
+                    start_seconds=segment.start_seconds,
+                )
+                time.sleep(0.4)
     finally:
         pipeline.close()
 
