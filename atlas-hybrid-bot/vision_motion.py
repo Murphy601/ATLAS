@@ -13,7 +13,6 @@ from hybrid_annotator import (
     _infer_hand_roles,
     infer_clip_hand_roles,
 )
-from label_generator import split_actions
 
 if TYPE_CHECKING:
     pass
@@ -31,9 +30,12 @@ _MISLABELLED_MANIPULATION = re.compile(
     r"^(reposition|adjust|organize|arrange|straighten|move)\s+",
     re.IGNORECASE,
 )
-_MANIPULATION_OBJECT = re.compile(
+_MANIPULATION_ON_SURFACE = re.compile(
     r"^(?:reposition|adjust|organize|arrange|straighten|move)\s+"
-    r"(.+?)\s+(?:on|in|into|at)\s+.+?\s+with\s+(left hand|right hand)\s*$",
+    r"(.+?)\s+(?:on|in|into|at)\s+((?:[\w-]+\s+)*(?:"
+    r"shelf|wardrobe|counter|table|desk|door|wall|refrigerator|cabinet|drawer|closet|"
+    r"floor|ground|surface|rack"
+    r"))\s+with\s+(left hand|right hand)\s*$",
     re.IGNORECASE,
 )
 _SIMPLE_OBJECT_HAND = re.compile(
@@ -44,28 +46,88 @@ _SIMPLE_OBJECT_HAND = re.compile(
 _DRAFT_HAND = re.compile(r"\bwith\s+(left hand|right hand)\b", re.IGNORECASE)
 _WIPE_LABEL = re.compile(r"\b(?:wipe|scrub|clean|wash|dry|polish|rub)\b", re.IGNORECASE)
 
+# Small items in a reposition draft are often misidentified; the surface is the wipe target.
+_SURFACE_WIPE_ITEMS = frozenset(
+    {
+        "sock",
+        "socks",
+        "item",
+        "items",
+        "thing",
+        "things",
+        "object",
+        "objects",
+        "clothes",
+        "clothing",
+        "garment",
+        "garments",
+        "towel",
+        "towels",
+        "cloth",
+        "package",
+        "box",
+        "container",
+    }
+)
+
 
 def _other_hand(hand: str) -> str:
     return "left hand" if hand == "right hand" else "right hand"
 
 
-def extract_manipulation_object(label: str) -> str | None:
-    """Parse object noun from reposition/adjust-style single-clause labels."""
+def _normalize_surface(surface: str) -> str:
+    text = " ".join(surface.lower().split())
+    if text.startswith("refrigerator "):
+        return text
+    return text.split()[-1] if text else surface
+
+
+def extract_wipe_target(label: str) -> tuple[str, str]:
+    """
+    Parse wipe target from reposition-style labels.
+
+    Returns (noun, kind) where kind is 'surface' or 'object'.
+    'reposition socks on shelf' → wipe the shelf, not the socks.
+    """
     if not label:
-        return None
+        return "", "object"
     text = label.strip()
-    match = _MANIPULATION_OBJECT.match(text)
+    match = _MANIPULATION_ON_SURFACE.match(text)
     if match:
-        return match.group(1).strip()
+        item = match.group(1).strip().lower()
+        surface = _normalize_surface(match.group(2).strip())
+        if item in _SURFACE_WIPE_ITEMS:
+            return surface, "surface"
+        return item, "object"
     match = _SIMPLE_OBJECT_HAND.match(text)
     if match:
-        return match.group(1).strip()
-    return None
+        return match.group(1).strip(), "object"
+    return "", "object"
+
+
+def extract_manipulation_object(label: str) -> str | None:
+    """Back-compat: returns wipe target noun regardless of kind."""
+    target, _kind = extract_wipe_target(label)
+    return target or None
 
 
 def _draft_work_hand(label: str) -> str | None:
     match = _DRAFT_HAND.search(label or "")
     return match.group(1).lower() if match else None
+
+
+def _both_hands_tracked_in_clip(
+    motion_profiles: list[HandMotionProfile | None],
+) -> bool:
+    tracked = 0
+    for motion in motion_profiles:
+        if motion is None or motion.frames_analyzed < 3:
+            continue
+        if motion.start_left_contact:
+            tracked |= 1
+        if motion.start_right_contact:
+            tracked |= 2
+    return tracked == 3
 
 
 def infer_segment_work_hands(
@@ -77,6 +139,9 @@ def infer_segment_work_hands(
     hands: list[str | None] = []
     for motion in motion_profiles:
         if motion is None or motion.frames_analyzed < 3:
+            hands.append(None)
+            continue
+        if not (motion.start_left_contact and motion.start_right_contact):
             hands.append(None)
             continue
         work, _stab, conf = _infer_hand_roles(
@@ -125,10 +190,6 @@ def motion_indicates_wiping(
     *,
     threshold: float = DEFAULT_MOTION_THRESHOLD,
 ) -> tuple[bool, str | None, str | None, float]:
-    """
-    True when wrist motion looks like bimanual wiping/scrubbing rather than
-    a one-shot reposition.
-    """
     work, stab, conf = infer_clip_hand_roles(motion_profiles, threshold)
     if work and stab and conf >= _MIN_WIPE_CONFIDENCE:
         return True, work, stab, conf
@@ -150,8 +211,41 @@ def motion_indicates_wiping(
     return False, None, None, 0.0
 
 
-def _find_hand_exchange_index(work_hands: list[str | None]) -> int | None:
+def _segment_shows_wipe_activity(
+    motion: HandMotionProfile | None,
+    *,
+    threshold: float = DEFAULT_MOTION_THRESHOLD,
+) -> bool:
+    """True when one wrist shows repetitive wipe/scrub motion."""
+    if motion is None or motion.frames_analyzed < 3:
+        return False
+    min_act = threshold * 1.8
+    act_left = _hand_activity_score(motion.peak_left, motion.angular_left)
+    act_right = _hand_activity_score(motion.peak_right, motion.angular_right)
+    return max(act_left, act_right) >= min_act
+
+
+def _clip_shows_wipe_activity(
+    motion_profiles: list[HandMotionProfile | None],
+    *,
+    threshold: float = DEFAULT_MOTION_THRESHOLD,
+) -> bool:
+    is_wiping, _, _, _ = motion_indicates_wiping(motion_profiles, threshold=threshold)
+    if is_wiping:
+        return True
+    return any(
+        _segment_shows_wipe_activity(motion, threshold=threshold)
+        for motion in motion_profiles
+    )
+
+
+def _find_hand_exchange_index(
+    work_hands: list[str | None],
+    motion_profiles: list[HandMotionProfile | None],
+) -> int | None:
     """First segment index where the active tool hand changes."""
+    if not _both_hands_tracked_in_clip(motion_profiles):
+        return None
     for index in range(1, len(work_hands)):
         prev, curr = work_hands[index - 1], work_hands[index]
         if prev and curr and prev != curr:
@@ -159,11 +253,22 @@ def _find_hand_exchange_index(work_hands: list[str | None]) -> int | None:
     return None
 
 
-def build_bimanual_wipe_label(obj: str, work_hand: str, stabilize_hand: str) -> str:
+def build_object_wipe_label(obj: str, work_hand: str, stabilize_hand: str) -> str:
     return f"hold {obj} with {stabilize_hand}, wipe {obj} with cloth in {work_hand}"
 
 
-def build_exchange_segment_label(
+def build_surface_wipe_label(surface: str, work_hand: str) -> str:
+    return f"wipe {surface} with cloth in {work_hand}"
+
+
+def build_cloth_exchange_label(surface: str, from_hand: str, to_hand: str) -> str:
+    return (
+        f"pass cloth from {from_hand} to {to_hand}, "
+        f"wipe {surface} with cloth in {to_hand}"
+    )
+
+
+def build_object_cloth_exchange_label(
     obj: str,
     from_hand: str,
     to_hand: str,
@@ -171,9 +276,25 @@ def build_exchange_segment_label(
     stabilize = _other_hand(from_hand)
     return (
         f"hold {obj} with {stabilize}, "
-        f"pass {obj} from {from_hand} to {to_hand}, "
+        f"pass cloth from {from_hand} to {to_hand}, "
         f"wipe {obj} with cloth in {to_hand}"
     )
+
+
+def build_bimanual_wipe_label(obj: str, work_hand: str, stabilize_hand: str) -> str:
+    return build_object_wipe_label(obj, work_hand, stabilize_hand)
+
+
+def build_exchange_segment_label(
+    obj: str,
+    from_hand: str,
+    to_hand: str,
+    *,
+    target_kind: str = "object",
+) -> str:
+    if target_kind == "surface":
+        return build_cloth_exchange_label(obj, from_hand, to_hand)
+    return build_object_cloth_exchange_label(obj, from_hand, to_hand)
 
 
 def _labels_need_motion_enrichment(labels: list[str]) -> bool:
@@ -182,6 +303,14 @@ def _labels_need_motion_enrichment(labels: list[str]) -> bool:
     if any(_WIPE_LABEL.search(lbl or "") for lbl in labels):
         return any(_MISLABELLED_MANIPULATION.search(lbl or "") for lbl in labels)
     return all(_MISLABELLED_MANIPULATION.search(lbl or "") for lbl in labels)
+
+
+def _resolve_wipe_target(labels: list[str]) -> tuple[str, str]:
+    for label in labels:
+        target, kind = extract_wipe_target(label or "")
+        if target:
+            return target, kind
+    return "", "object"
 
 
 def apply_clip_motion_enrichment(
@@ -199,45 +328,68 @@ def apply_clip_motion_enrichment(
     if not _labels_need_motion_enrichment(segment_labels):
         return segment_labels
 
-    is_wiping, clip_work, clip_stab, wipe_conf = motion_indicates_wiping(profiles)
-    work_hands = _fill_work_hands(infer_segment_work_hands(profiles), segment_labels)
-    exchange_idx = _find_hand_exchange_index(work_hands)
-
-    if not is_wiping and exchange_idx is None:
+    target, target_kind = _resolve_wipe_target(segment_labels)
+    if not target:
         return segment_labels
 
-    obj = extract_manipulation_object(segment_labels[0] or "")
-    if not obj:
-        for label in segment_labels:
-            obj = extract_manipulation_object(label or "")
-            if obj:
-                break
-    if not obj:
+    is_wiping, clip_work, clip_stab, wipe_conf = motion_indicates_wiping(profiles)
+    work_hands = _fill_work_hands(infer_segment_work_hands(profiles), segment_labels)
+    exchange_idx = _find_hand_exchange_index(work_hands, profiles)
+    has_wipe_motion = is_wiping or _clip_shows_wipe_activity(profiles)
+
+    if not has_wipe_motion and exchange_idx is None:
         return segment_labels
 
     updated: list[str] = []
     for index, label in enumerate(segment_labels):
-        if exchange_idx is not None:
-            if index < exchange_idx:
-                work = work_hands[index] or work_hands[exchange_idx - 1] or "right hand"
-                updated.append(build_bimanual_wipe_label(obj, work, _other_hand(work)))
-            elif index == exchange_idx:
-                from_hand = work_hands[exchange_idx - 1] or "right hand"
-                to_hand = work_hands[exchange_idx] or _other_hand(from_hand)
-                updated.append(build_exchange_segment_label(obj, from_hand, to_hand))
+        draft_hand = _draft_work_hand(label or "") or "right hand"
+
+        if target_kind == "surface":
+            if exchange_idx is not None:
+                if index < exchange_idx:
+                    work = work_hands[index] or work_hands[exchange_idx - 1] or draft_hand
+                    updated.append(build_surface_wipe_label(target, work))
+                elif index == exchange_idx:
+                    from_hand = work_hands[exchange_idx - 1] or draft_hand
+                    to_hand = work_hands[exchange_idx] or _other_hand(from_hand)
+                    updated.append(
+                        build_cloth_exchange_label(target, from_hand, to_hand)
+                    )
+                else:
+                    work = work_hands[index] or work_hands[exchange_idx] or draft_hand
+                    updated.append(build_surface_wipe_label(target, work))
             else:
-                work = work_hands[index] or work_hands[exchange_idx] or "left hand"
-                updated.append(build_bimanual_wipe_label(obj, work, _other_hand(work)))
+                work = clip_work or work_hands[index] or draft_hand
+                updated.append(build_surface_wipe_label(target, work))
+        elif exchange_idx is not None:
+            if index < exchange_idx:
+                work = work_hands[index] or work_hands[exchange_idx - 1] or draft_hand
+                updated.append(
+                    build_object_wipe_label(target, work, _other_hand(work))
+                )
+            elif index == exchange_idx:
+                from_hand = work_hands[exchange_idx - 1] or draft_hand
+                to_hand = work_hands[exchange_idx] or _other_hand(from_hand)
+                updated.append(
+                    build_object_cloth_exchange_label(target, from_hand, to_hand)
+                )
+            else:
+                work = work_hands[index] or work_hands[exchange_idx] or draft_hand
+                updated.append(
+                    build_object_wipe_label(target, work, _other_hand(work))
+                )
         elif clip_work and clip_stab:
-            updated.append(build_bimanual_wipe_label(obj, clip_work, clip_stab))
+            updated.append(build_object_wipe_label(target, clip_work, clip_stab))
         else:
-            work = work_hands[index] or _draft_work_hand(label or "") or "right hand"
-            updated.append(build_bimanual_wipe_label(obj, work, _other_hand(work)))
+            work = work_hands[index] or draft_hand
+            updated.append(
+                build_object_wipe_label(target, work, _other_hand(work))
+            )
 
     if any(a.lower() != b.lower() for a, b in zip(updated, segment_labels)):
         print(
             f"[Hybrid]: Vision motion enrichment "
             f"(wipe_conf={wipe_conf:.2f}, exchange_seg={exchange_idx}, "
-            f"obj={obj}): '{updated[0]}'"
+            f"target={target}[{target_kind}]): '{updated[0]}'"
         )
     return updated
