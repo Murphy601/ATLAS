@@ -374,7 +374,7 @@ def _standardize_context_nouns(
         updated = re.sub(r"\binsert needle\b", "insert sewing needle", updated, flags=re.IGNORECASE)
         updated = re.sub(
             r"\bpull thread through patch\b",
-            "pull sewing needle through patch",
+            "pull sewing needle",
             updated,
             flags=re.IGNORECASE,
         )
@@ -386,6 +386,99 @@ def _standardize_context_nouns(
         )
 
     return updated
+
+
+def standardize_sewing_targets(label: str) -> str:
+    """Normalize sewing clauses to ATLAS core targets (cap, not through patch)."""
+    if not label or label == "No Action":
+        return label
+    updated = label
+    updated = re.sub(
+        r"\bpull sewing needle through patch with right hand\b",
+        "pull sewing needle with right hand",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"\bpull sewing needle through patch\b",
+        "pull sewing needle",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"\breposition patch on cap with both hands\b",
+        "insert sewing needle into cap with right hand",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    updated = re.sub(
+        r"\binsert sewing needle into patch\b",
+        "insert sewing needle into cap",
+        updated,
+        flags=re.IGNORECASE,
+    )
+    return updated
+
+
+def enforce_glass_cup_consistency(
+    label: str,
+    previous_label: str | None = None,
+    clip_draft_blob: str | None = None,
+) -> str:
+    """glass jar → glass cup; split both-hands cloth wipe into hold + wipe."""
+    if not label or label == "No Action":
+        return label
+    context = " ".join(
+        part for part in (label, previous_label, clip_draft_blob) if part
+    )
+    updated = re.sub(r"\bglass jar\b", "glass cup", label, flags=re.IGNORECASE)
+    if re.search(r"\bglass cup\b", context, re.IGNORECASE):
+        updated = re.sub(r"\bglass jar\b", "glass cup", updated, flags=re.IGNORECASE)
+
+    clauses = split_actions(updated)
+    if len(clauses) == 1:
+        clause = clauses[0]
+        if (
+            _leading_verb(clause) == "wipe"
+            and re.search(r"\bglass cup\b", clause, re.IGNORECASE)
+            and re.search(r"\bcloth in both hands\b", clause, re.IGNORECASE)
+        ):
+            return (
+                "hold glass cup with left hand, "
+                "wipe glass cup with cloth in right hand"
+            )
+    return updated
+
+
+SHORT_SEWING_TAIL_MAX_SECONDS = 2.0
+
+
+def limit_actions_by_duration(
+    label: str,
+    duration_seconds: float | None,
+) -> str:
+    """Drop trailing insert on short sewing tail windows (pull-only, not re-insert)."""
+    if not label or label == "No Action":
+        return label
+    if duration_seconds is None or duration_seconds >= SHORT_SEWING_TAIL_MAX_SECONDS:
+        return label
+    if not re.search(r"\b(?:cap|sewing needle)\b", label, re.IGNORECASE):
+        return label
+
+    updated = re.sub(
+        r",\s*insert sewing needle into cap with right hand\s*$",
+        "",
+        label,
+        flags=re.IGNORECASE,
+    )
+    clauses = split_actions(updated)
+    if (
+        len(clauses) > 2
+        and _leading_verb(clauses[-1]) == "insert"
+        and re.search(r"\bsewing needle\b", clauses[-1], re.IGNORECASE)
+    ):
+        updated = ", ".join(clauses[:-1])
+    return updated.strip(" ,")
 
 
 def _simplify_atlas_nouns(label: str) -> str:
@@ -843,11 +936,21 @@ def _align_place_hand_after_pass(
     return fixed
 
 
-def _expand_sewing_stitch_cycle(label: str, clip_draft_blob: str | None) -> str:
+def _expand_sewing_stitch_cycle(
+    label: str,
+    clip_draft_blob: str | None,
+    duration_seconds: float | None = None,
+) -> str:
     """
     Sewing stitch windows need pull then insert (3 actions), not collapsed insert-only.
+    Skip on short tail windows where only pull-through occurs.
     """
     if not label or label == "No Action":
+        return label
+    if (
+        duration_seconds is not None
+        and duration_seconds < SHORT_SEWING_TAIL_MAX_SECONDS
+    ):
         return label
     blob = f"{label} {clip_draft_blob or ''}".lower()
     if not re.search(r"\b(?:cap|patch|thread|sew|sewing needle)\b", blob):
@@ -914,10 +1017,12 @@ def _prefer_pull_over_insert_after_pull(
     prev = previous_label.lower()
     if "pull thread" not in prev and "pull sewing needle" not in prev:
         return label
-    if not re.search(r"\binsert sewing needle into patch\b", label, re.IGNORECASE):
+    if not re.search(
+        r"\binsert sewing needle into (?:patch|cap)\b", label, re.IGNORECASE
+    ):
         return label
     return re.sub(
-        r"\binsert sewing needle into patch with right hand\b",
+        r"\binsert sewing needle into (?:patch|cap) with right hand\b",
         "pull sewing needle with right hand",
         label,
         flags=re.IGNORECASE,
@@ -1294,6 +1399,7 @@ def draft_preserving_cleaner(
     label = _standardize_context_nouns(
         label, draft_text, clip_glossary, clip_draft_blob
     )
+    label = standardize_sewing_targets(label)
     label = _simplify_atlas_nouns(label)
     label = standardize_atlas_vocab(
         label,
@@ -1305,7 +1411,8 @@ def draft_preserving_cleaner(
     label = _normalize_pass_syntax(label)
     label = _rewrite_bottle_pickup_to_pass(label, next_label, previous_label)
     label = _rewrite_bag_pickup_place_to_pass(label, duration_seconds)
-    label = _expand_sewing_stitch_cycle(label, clip_draft_blob)
+    label = _expand_sewing_stitch_cycle(label, clip_draft_blob, duration_seconds)
+    label = standardize_sewing_targets(label)
     label = _normalize_hand_prepositions(label)
     label = consolidate_hose_actions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
@@ -1313,6 +1420,9 @@ def draft_preserving_cleaner(
     label = _prefer_pull_over_insert_after_pull(label, previous_label)
     label = dynamic_verb_hold_to_rotate(
         label, previous_label, next_label, motion
+    )
+    label = enforce_glass_cup_consistency(
+        label, previous_label, clip_draft_blob
     )
     label = _ensure_offhand_hold(label)
     label = _fix_hand_attribution(label, motion, draft_text=draft_text)
@@ -1325,6 +1435,7 @@ def draft_preserving_cleaner(
     label = _clean_duplicate_hands(label)
     label = _rewrite_wire_fold_segment(label, previous_label, draft_text)
     label = _append_end_of_window_pickup(label, next_label, draft_text)
+    label = limit_actions_by_duration(label, duration_seconds)
     label = _cap_clauses_simple(label, MAX_ACTIONS_PER_LABEL)
 
     if previous_label:

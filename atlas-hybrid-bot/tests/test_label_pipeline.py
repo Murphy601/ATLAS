@@ -439,3 +439,45 @@ def test_set_hose_hold_can_becomes_pickup():
     assert out.lower() == (
         "set hose on ground with left hand, pick up watering can with right hand"
     )
+
+
+def test_short_sewing_tail_drops_trailing_insert():
+    draft = (
+        "hold cap with left hand, pull sewing needle with right hand, "
+        "insert sewing needle into cap with right hand"
+    )
+    out = atlas_guide_cleaner(draft, duration_seconds=1.4)
+    assert out.lower() == (
+        "hold cap with left hand, pull sewing needle with right hand"
+    )
+
+
+def test_sewing_targets_drop_through_patch():
+    out = atlas_guide_cleaner(
+        "hold cap with left hand, pull sewing needle through patch with right hand",
+        clip_draft_blob="hold cap sewing needle patch",
+    )
+    assert out.lower() == (
+        "hold cap with left hand, pull sewing needle with right hand"
+    )
+
+
+def test_reposition_patch_becomes_insert_needle():
+    out = atlas_guide_cleaner(
+        "reposition patch on cap with both hands",
+        clip_draft_blob="hold cap sewing needle patch",
+    )
+    assert out.lower() == "insert sewing needle into cap with right hand"
+
+
+def test_glass_jar_wipe_both_hands_splits_hold_wipe():
+    out = atlas_guide_cleaner(
+        "wipe glass jar with cloth in both hands",
+        previous_label=(
+            "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+        ),
+        clip_draft_blob="glass cup wipe cloth",
+    )
+    assert out.lower() == (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
