@@ -18,8 +18,9 @@ from config import (
 )
 from frame_extractor import extract_frames_from_video, format_timestamp
 from hybrid_annotator import AtlasHybridPipeline
-from label_generator import apply_context_fixes, rewrite_generic_animal_draft, usable_draft
-from label_pipeline import build_draft_global_context, generate_label_hybrid
+from frame_utils import frames_from_base64_list
+from label_generator import usable_draft
+from label_pipeline import generate_label_hybrid, minimal_atlas_cleaner, resolve_hand_tag
 
 load_dotenv()
 
@@ -58,20 +59,9 @@ def process_live_task(
         segments = remember(segments)
 
     if global_context is None:
-        draft_hints = [
-            usable_draft(segment.draft_label) or ""
-            for segment in segments
-        ]
-        global_context = build_draft_global_context(
-            [draft for draft in draft_hints if draft]
-        )
-        if global_context.objects:
-            print(
-                "[Hybrid]: Draft glossary (no LLM): "
-                + ", ".join(global_context.objects)
-            )
+        pass  # minimalist mode: no cross-clip glossary rewriting
 
-    print(f"\n[Hybrid]: Correcting {len(segments)} segment labels (MediaPipe + regex)...")
+    print(f"\n[Hybrid]: Correcting {len(segments)} segment labels (minimal draft cleaner)...")
     pipeline = AtlasHybridPipeline()
     processed_any = False
     previous_label = None
@@ -124,41 +114,35 @@ def process_live_task(
             except Exception as exc:
                 print(
                     f"[Hybrid]: Segment {segment.number} error: {exc}. "
-                    "Using regex-only draft cleanup."
+                    "Using minimal draft cleaner."
                 )
-                from label_pipeline import finalize_hybrid_label
-
                 label = "No Action"
                 if draft:
+                    frame_arrays = frames_from_base64_list(
+                        [frame[1] for frame in chunk]
+                    ) if chunk else []
                     motion = pipeline.analyze_frame_motion_from_memory(
-                        [],
+                        frame_arrays,
                         draft_label=draft,
                     )
-                    label = pipeline.lint_atlas_syntax(
-                        draft,
-                        duration,
-                        motion.detected_hand,
-                    )
-                    label = finalize_hybrid_label(
-                        label,
-                        draft,
-                        previous_label,
-                        duration,
-                        global_context,
-                    )
+                    hand = resolve_hand_tag(draft, motion.detected_hand)
+                    label = minimal_atlas_cleaner(draft, hand)
 
             print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
             print(f"Generated Label: '{label}'")
 
             processed_any = True
             if label == "No Action" and draft:
-                kept = apply_context_fixes(
-                    rewrite_generic_animal_draft(draft),
+                motion = pipeline.analyze_frame_motion_from_memory(
+                    [],
+                    draft_label=draft,
+                )
+                kept = minimal_atlas_cleaner(
                     draft,
-                    previous_label,
+                    resolve_hand_tag(draft, motion.detected_hand),
                 )
                 print(
-                    "[Hybrid]: No deterministic label; keeping rewritten draft "
+                    "[Hybrid]: Keeping minimally cleaned draft "
                     f"'{kept}' instead of No Action."
                 )
                 if kept != "No Action":

@@ -1,64 +1,117 @@
-"""Hybrid label generation: MediaPipe hands + Atlas draft surgery + regex (no LLM)."""
+"""Minimalist Atlas label pipeline — preserve draft meaning, fix grammar, append hand tag."""
 
 from __future__ import annotations
 
-from frame_sampling import analyze_segment_motion, prepare_segment_frames
+import re
+
 from frame_utils import frames_from_base64_list
-from hybrid_annotator import AtlasHybridPipeline
-from label_generator import (
-    GlobalVideoContext,
-    analyze_global_video_context,
-    apply_context_fixes,
-    apply_state_continuity,
-    apply_verb_state_from_frames,
-    draft_object_phrases,
-    enforce_segment_action_limit,
-    lint_atlas_syntax,
-    sanitize_label,
-    usable_draft,
+from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
+from label_generator import usable_draft
+
+# Imperative grammar only — never change verb meaning (no pick up → hold).
+_ING_TO_IMPERATIVE = (
+    ("picking up", "pick up"),
+    ("putting down", "put down"),
+    ("holding", "hold"),
+    ("scrubbing", "scrub"),
+    ("wiping", "wipe"),
+    ("washing", "wash"),
+    ("placing", "place"),
+    ("sweeping", "sweep"),
+    ("digging", "dig"),
+    ("passing", "pass"),
+    ("tightening", "tighten"),
+    ("trimming", "trim"),
+    ("stirring", "stir"),
+    ("mixing", "mix"),
+    ("folding", "fold"),
+    ("ironing", "iron"),
+    ("pouring", "pour"),
+    ("scooping", "scoop"),
+    ("lifting", "lift"),
+    ("grabbing", "grab"),
+    ("moving", "move"),
+    ("opening", "open"),
+    ("closing", "close"),
+    ("turning", "turn"),
+    ("pushing", "push"),
+    ("pulling", "pull"),
+    ("pressing", "press"),
+    ("squeezing", "squeeze"),
+    ("kneading", "knead"),
+    ("scrapping", "scrape"),
+    ("scraping", "scrape"),
+    ("raking", "rake"),
+    ("mopping", "mop"),
+    ("brushing", "brush"),
+    ("sanding", "sand"),
+    ("hammering", "hammer"),
+    ("drilling", "drill"),
+    ("cutting", "cut"),
+    ("chopping", "chop"),
+    ("peeling", "peel"),
+    ("inserting", "insert"),
+    ("removing", "remove"),
+    ("emptying", "empty"),
+    ("filling", "fill"),
+    ("watering", "water"),
+    ("spraying", "spray"),
+    ("drying", "dry"),
+    ("polishing", "polish"),
+    ("aligning", "align"),
+    ("rotating", "rotate"),
+    ("twisting", "twist"),
+    ("pinching", "pinch"),
+    ("gripping", "grip"),
+    ("carrying", "carry"),
+    ("lowering", "lower"),
+    ("raising", "raise"),
+    ("stacking", "stack"),
+    ("unfolding", "unfold"),
+    ("folding", "fold"),
+    ("working", "work"),
+)
+
+_HAND_TAG_PATTERN = re.compile(
+    r"\s+(?:with|in)\s+(?:left|right|both)\s+hands?\b",
+    re.IGNORECASE,
 )
 
 
-def build_draft_global_context(segment_drafts: list[str]) -> GlobalVideoContext:
-    """Pass 1 without LLM — object glossary from Atlas row drafts only."""
-    return analyze_global_video_context([], segment_drafts=segment_drafts)
-
-
-def finalize_hybrid_label(
-    label: str,
-    draft_label: str | None = None,
-    previous_label: str | None = None,
-    duration_seconds: float | None = None,
-    global_context: GlobalVideoContext | None = None,
-    motion_profile=None,
-) -> str:
-    """Post-process hybrid output without draft noun lock (lexicon already applied)."""
-    if not label or label == "No Action":
+def minimal_atlas_cleaner(draft_text: str, mp_hand_tag: str = "with right hand") -> str:
+    """
+    Do-no-harm cleaner: keep draft nouns/verbs, fix -ing grammar, one clause only,
+    strip old hand tags, append hand attribution once.
+    """
+    label = (draft_text or "").strip()
+    if not label or label.casefold() == "no action":
         return label
-    updated = apply_state_continuity(label, previous_label)
-    updated = apply_verb_state_from_frames(updated, motion_profile)
-    if global_context and global_context.objects:
-        from label_generator import FORBIDDEN_GENERIC_OBJECTS
-        import re
 
-        for phrase in global_context.objects:
-            for forbidden in FORBIDDEN_GENERIC_OBJECTS:
-                updated = re.sub(
-                    rf"\b{re.escape(forbidden)}\b",
-                    phrase,
-                    updated,
-                    count=1,
-                    flags=re.IGNORECASE,
-                )
-    updated = lint_atlas_syntax(updated)
-    updated = sanitize_label(updated)
-    updated = apply_context_fixes(
-        updated,
-        draft_label,
-        previous_label,
-        duration_seconds=duration_seconds,
-    )
-    return enforce_segment_action_limit(updated, duration_seconds)
+    for src, dst in _ING_TO_IMPERATIVE:
+        label = re.sub(rf"\b{re.escape(src)}\b", dst, label, flags=re.IGNORECASE)
+
+    label = re.sub(r"\s+(and|then)\s+", ", ", label, flags=re.IGNORECASE)
+    label = re.sub(r"\s+,\s+", ", ", label)
+    label = " ".join(label.split())
+
+    clauses = [part.strip() for part in label.split(",") if part.strip()]
+    label = clauses[0] if clauses else label
+
+    label = _HAND_TAG_PATTERN.sub("", label)
+    label = " ".join(label.split()).strip(" ,")
+
+    hand = mp_hand_tag.strip()
+    if not hand.startswith("with "):
+        hand = f"with {hand}"
+    return f"{label} {hand}".strip()
+
+
+def resolve_hand_tag(draft_label: str, mp_hand_tag: str) -> str:
+    """Prefer explicit hand in the Atlas draft; MediaPipe is fallback only."""
+    draft_hand = _hand_tag_from_draft(draft_label)
+    if draft_hand:
+        return draft_hand
+    return mp_hand_tag or "with right hand"
 
 
 def generate_label_hybrid(
@@ -71,49 +124,40 @@ def generate_label_hybrid(
     frame_timestamps: list[float] | None = None,
     frames_have_video: bool = False,
     next_label: str | None = None,
-    global_context: GlobalVideoContext | None = None,
+    global_context=None,
     segment_start_seconds: float | None = None,
 ) -> str:
-    """Deterministic Atlas label from captured frames + AI draft (no vision LLM)."""
+    """Minimal label from Atlas draft + optional MediaPipe hand tag (no LLM)."""
     draft_label = usable_draft(draft_label)
-    previous_label = usable_draft(previous_label)
-    _ = (next_label, frames_have_video)
+    _ = (
+        previous_label,
+        next_label,
+        duration_seconds,
+        frame_timestamps,
+        frames_have_video,
+        global_context,
+        segment_start_seconds,
+    )
 
     if not draft_label:
         return "No Action"
 
-    start_seconds = segment_start_seconds
-    if start_seconds is None and frame_timestamps:
-        start_seconds = min(frame_timestamps)
-    start_seconds = start_seconds or 0.0
+    mp_hand = "with right hand"
+    if base64_frames:
+        frame_arrays = frames_from_base64_list(base64_frames)
+        if frame_arrays:
+            motion = pipeline.analyze_frame_motion_from_memory(
+                frame_arrays,
+                draft_label=draft_label,
+            )
+            mp_hand = motion.detected_hand
 
-    motion_profile = analyze_segment_motion(base64_frames, frame_timestamps)
-    prepared_frames, _prepared_times = prepare_segment_frames(
-        base64_frames,
-        frame_timestamps,
-        duration_seconds=duration_seconds,
-        start_seconds=start_seconds,
-        motion_profile=motion_profile,
-    )
-    frame_arrays = frames_from_base64_list(prepared_frames or base64_frames)
-    end_sec = start_seconds + (duration_seconds or 3.0)
+    hand_tag = resolve_hand_tag(draft_label, mp_hand)
+    return minimal_atlas_cleaner(draft_label, hand_tag)
 
-    objects = draft_object_phrases(draft_label)
-    target_object = objects[0] if objects else None
 
-    hybrid_label = pipeline.process_frame_batch(
-        frame_arrays,
-        start_sec=start_seconds,
-        end_sec=end_sec,
-        draft_label=draft_label,
-        target_object=target_object,
-    )
+def build_draft_global_context(segment_drafts: list[str]):
+    """No-op for minimalist mode — kept for API compatibility with main.py."""
+    from label_generator import GlobalVideoContext
 
-    return finalize_hybrid_label(
-        hybrid_label,
-        draft_label,
-        previous_label,
-        duration_seconds,
-        global_context,
-        motion_profile,
-    )
+    return GlobalVideoContext(objects=tuple())

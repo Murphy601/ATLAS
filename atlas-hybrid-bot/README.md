@@ -1,6 +1,6 @@
 # Atlas Hybrid Bot
 
-**Full browser automation + non-LLM labeling** for Atlas Capture: Playwright opens Atlas, watches segment clips, captures frames, and fills labels using **MediaPipe hand tracking**, **cross-segment state memory**, and the **same deterministic post-processing** as the LLM bot — **without any OpenRouter / vision API calls**.
+**Full browser automation + minimalist labeling** for Atlas Capture: preserves the Atlas AI draft, fixes grammar only, keeps **one action per segment**, and appends hand tags — **no LLM, no verb rewriting, no extra clauses**.
 
 Sibling project: [`video-labeling-bot/`](../video-labeling-bot/README.md) (same browser flow, but uses vision LLMs).
 
@@ -22,9 +22,8 @@ This will:
 2. Navigate to **Practice assessment** (or graded, via `--mode`)
 3. Play each segment clip at 1× speed and capture frames
 4. Read the **Atlas AI draft** from each row input
-5. Run **MediaPipe** wrist velocity → hand tag
-6. Apply **regex linter**, draft noun lock, verb-state, duration caps (from `label_generator.py`)
-7. Fill each segment label and wait for you to review/submit
+5. **Minimal cleaner**: `-ing`→imperative, first clause only, hand tag (draft hand preferred)
+6. Fill each segment label and wait for you to review/submit
 
 No API key needed.
 
@@ -47,8 +46,8 @@ No API key needed.
 main.py
   └─ VideoBrowserBot (browser_automation.py)  ← Playwright, capture, fill, submit
   └─ generate_label_hybrid (label_pipeline.py)
-       ├─ AtlasHybridPipeline (hybrid_annotator.py)  ← MediaPipe + state memory
-       └─ finalize_pipeline_label (label_generator.py)  ← draft surgery, lint, caps
+       ├─ minimal_atlas_cleaner  ← grammar + one clause + hand tag
+       └─ MediaPipe (optional)   ← hand tag fallback only
 ```
 
 ## Env
