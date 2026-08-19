@@ -85,6 +85,17 @@ TWO_HANDED_VERBS = frozenset(
 
 FORBIDDEN_GENERIC_NOUNS = frozenset({"tool", "object", "thing", "item", "utensil"})
 
+_CLIP_SPECIFIC_TOOLS = re.compile(
+    r"\b(hoe|rake|shovel|spade|trowel|broom|hand broom|brush|mop|wrench|"
+    r"scissors|knife|pliers|shears|spatula)\b",
+    re.IGNORECASE,
+)
+
+GENERIC_NOUN_MAP: tuple[tuple[str, str], ...] = (
+    (r"\butensil\b", "spoon"),
+    (r"\bcontainer\b", "bucket"),
+)
+
 VERB_DEFAULT_TOOL: dict[str, str] = {
     "dig": "hoe",
     "rake": "rake",
@@ -1134,23 +1145,134 @@ def _extract_glossary_from_drafts(drafts: list[str]) -> list[str]:
     return found
 
 
+def _resolved_tool_from_episode(blob: str) -> str | None:
+    match = _CLIP_SPECIFIC_TOOLS.search(blob or "")
+    return match.group(1).lower() if match else None
+
+
+def backpropagate_specific_nouns(
+    label: str,
+    segment_labels: list[str] | None = None,
+    *,
+    clip_draft_blob: str | None = None,
+    clip_glossary: list[str] | None = None,
+    draft_text: str = "",
+) -> str:
+    """
+    Replace generic fallbacks (tool, container) with specific nouns found
+    anywhere in the clip episode drafts.
+    """
+    if not label or label == "No Action":
+        return label
+    parts = list(segment_labels or [])
+    if clip_draft_blob:
+        parts.append(clip_draft_blob)
+    if draft_text:
+        parts.append(draft_text)
+    if clip_glossary:
+        parts.extend(clip_glossary)
+    blob = " ".join(parts)
+
+    updated = label
+    resolved_tool = _resolved_tool_from_episode(blob)
+    if resolved_tool:
+        updated = re.sub(r"\btool\b", resolved_tool, updated, flags=re.IGNORECASE)
+    for pattern, replacement in GENERIC_NOUN_MAP:
+        if re.search(pattern, updated, re.IGNORECASE) and (
+            re.search(re.escape(replacement), blob, re.IGNORECASE)
+            or replacement in blob.lower()
+        ):
+            updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    return updated
+
+
+def correct_container_action(
+    label: str,
+    *,
+    motion: HandMotionProfile | None = None,
+    next_label: str | None = None,
+    clip_draft_blob: str | None = None,
+) -> str:
+    """
+    pick up bucket → place bucket on floor when downward motion or hoe-setup context
+    indicates a release onto the surface, not a lift.
+    """
+    if not label or label == "No Action":
+        return label
+    if not re.search(r"\bpick up bucket\b", label, re.IGNORECASE):
+        return label
+
+    bbox_vy = 0.0
+    if motion:
+        bbox_vy = max(motion.vy_left, motion.vy_right)
+
+    context = " ".join(part for part in (clip_draft_blob, next_label) if part)
+    reaches_surface = bool(
+        (motion and motion.frames_analyzed >= 2)
+        or re.search(r"\bplace bucket on (?:floor|ground)\b", context, re.IGNORECASE)
+        or re.search(r"\b(?:pick up hoe|dig soil)\b", context, re.IGNORECASE)
+    )
+
+    def replace_pickup_bucket(clause: str) -> str:
+        hand = _clause_hand(clause) or "left hand"
+        return f"place bucket on floor with {hand}"
+
+    if bbox_vy > 0 and reaches_surface:
+        clauses = split_actions(label)
+        return ", ".join(
+            replace_pickup_bucket(clause)
+            if re.search(r"\bpick up bucket\b", clause, re.IGNORECASE)
+            else clause
+            for clause in clauses
+        )
+
+    if reaches_surface and re.search(r"\bpick up hoe\b", context, re.IGNORECASE):
+        clauses = split_actions(label)
+        if len(clauses) == 1 and re.search(r"\bpick up bucket\b", clauses[0], re.I):
+            bucket_hand = _clause_hand(clauses[0]) or "left hand"
+            hoe_hand = "right hand" if bucket_hand == "left hand" else "left hand"
+            match = re.search(
+                r"pick up hoe with (left hand|right hand)",
+                context,
+                re.IGNORECASE,
+            )
+            if match:
+                hoe_hand = match.group(1).lower()
+            return (
+                f"place bucket on floor with {bucket_hand}, "
+                f"pick up hoe with {hoe_hand}"
+            )
+
+    return label
+
+
 def _resolve_generic_nouns(
     label: str,
     draft_text: str,
     clip_glossary: list[str] | None,
+    clip_draft_blob: str | None = None,
 ) -> str:
     """Replace audit-failing generic nouns (tool, object) with clip-specific names."""
     if not label or label == "No Action":
         return label
+
+    updated = backpropagate_specific_nouns(
+        label,
+        clip_draft_blob=clip_draft_blob,
+        clip_glossary=clip_glossary,
+        draft_text=draft_text,
+    )
     if not re.search(
         r"\b(?:" + "|".join(re.escape(word) for word in FORBIDDEN_GENERIC_NOUNS) + r")\b",
-        label,
+        updated,
         re.IGNORECASE,
     ):
-        return label
+        return updated
 
     glossary = list(clip_glossary or [])
     glossary.extend(_extract_glossary_from_drafts([draft_text]))
+    if clip_draft_blob:
+        glossary.extend(_extract_glossary_from_drafts([clip_draft_blob]))
     seen: set[str] = set()
     unique_glossary: list[str] = []
     for noun in glossary:
@@ -1159,7 +1281,6 @@ def _resolve_generic_nouns(
             seen.add(key)
             unique_glossary.append(noun)
 
-    updated = label
     for generic in FORBIDDEN_GENERIC_NOUNS:
         if not re.search(rf"\b{re.escape(generic)}\b", updated, re.IGNORECASE):
             continue
@@ -1173,7 +1294,9 @@ def _resolve_generic_nouns(
                 if replacement:
                     break
         if replacement:
-            updated = re.sub(rf"\b{re.escape(generic)}\b", replacement, updated, flags=re.IGNORECASE)
+            updated = re.sub(
+                rf"\b{re.escape(generic)}\b", replacement, updated, flags=re.IGNORECASE
+            )
     return updated
 
 
@@ -1513,7 +1636,7 @@ def draft_preserving_cleaner(
     if label == "No Action":
         return label
 
-    label = _resolve_generic_nouns(label, draft_text, clip_glossary)
+    label = _resolve_generic_nouns(label, draft_text, clip_glossary, clip_draft_blob)
     label = _standardize_context_nouns(
         label, draft_text, clip_glossary, clip_draft_blob
     )
@@ -1529,6 +1652,12 @@ def draft_preserving_cleaner(
     label = _normalize_pass_syntax(label)
     label = _rewrite_bottle_pickup_to_pass(label, next_label, previous_label)
     label = _rewrite_bag_pickup_place_to_pass(label, duration_seconds)
+    label = correct_container_action(
+        label,
+        motion=motion,
+        next_label=next_label,
+        clip_draft_blob=clip_draft_blob,
+    )
     label = _expand_sewing_stitch_cycle(label, clip_draft_blob, duration_seconds)
     label = standardize_sewing_targets(label)
     label = _normalize_hand_prepositions(label)

@@ -70,6 +70,8 @@ class SegmentStateMemory:
 class HandMotionProfile:
     v_left: float = 0.0
     v_right: float = 0.0
+    vy_left: float = 0.0
+    vy_right: float = 0.0
     detected_hand: str = "with right hand"
     start_left_contact: bool = False
     start_right_contact: bool = False
@@ -139,6 +141,8 @@ class AtlasHybridPipeline:
 
         v_left = _mean_wrist_velocity(left_positions)
         v_right = _mean_wrist_velocity(right_positions)
+        vy_left = _mean_wrist_vertical_delta(left_positions)
+        vy_right = _mean_wrist_vertical_delta(right_positions)
         detected = _hand_from_velocities(v_left, v_right, self.motion_threshold)
         draft_hand = _hand_tag_from_draft(draft_label)
         if draft_hand and v_left <= self.motion_threshold and v_right <= self.motion_threshold:
@@ -148,6 +152,8 @@ class AtlasHybridPipeline:
         return HandMotionProfile(
             v_left=v_left,
             v_right=v_right,
+            vy_left=vy_left,
+            vy_right=vy_right,
             detected_hand=detected,
             start_left_contact=start_left,
             start_right_contact=start_right,
@@ -342,6 +348,19 @@ def _mean_wrist_velocity(positions: list[tuple[float, float] | None]) -> float:
         distances.append(float(np.sqrt(dx * dx + dy * dy)))
         prev = pos
     return float(np.mean(distances)) if distances else 0.0
+
+
+def _mean_wrist_vertical_delta(positions: list[tuple[float, float] | None]) -> float:
+    """Mean vertical wrist delta; positive values indicate downward motion in frame space."""
+    valid = [pos for pos in positions if pos is not None]
+    if len(valid) < 2:
+        return 0.0
+    deltas: list[float] = []
+    prev = valid[0]
+    for pos in valid[1:]:
+        deltas.append(float(pos[1] - prev[1]))
+        prev = pos
+    return float(np.mean(deltas)) if deltas else 0.0
 
 
 def _hand_tag_from_draft(draft: str | None) -> str | None:

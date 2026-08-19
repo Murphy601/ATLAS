@@ -217,6 +217,41 @@ def test_generic_tool_resolved_to_hoe_for_dig():
     assert re.search(r"\btool\b", out.lower()) is None
 
 
+def test_tool_backpropagates_from_later_segment_drafts():
+    out = atlas_guide_cleaner(
+        "dig soil with tool in right hand",
+        clip_draft_blob=(
+            "place bucket on floor with left hand | "
+            "pick up hoe with right hand | dig soil with hoe in right hand"
+        ),
+    )
+    assert "dig soil with hoe in right hand" in out.lower()
+    assert re.search(r"\btool\b", out.lower()) is None
+
+
+def test_pick_up_bucket_becomes_place_with_downward_motion():
+    from hybrid_annotator import HandMotionProfile
+
+    motion = HandMotionProfile(vy_left=0.02, vy_right=0.0, frames_analyzed=4)
+    out = atlas_guide_cleaner(
+        "pick up bucket with left hand",
+        motion=motion,
+        clip_draft_blob="place bucket on floor pick up hoe dig soil with hoe",
+    )
+    assert out.lower() == "place bucket on floor with left hand"
+
+
+def test_pick_up_bucket_becomes_place_before_hoe_setup():
+    out = atlas_guide_cleaner(
+        "pick up bucket with left hand",
+        next_label="pick up hoe with right hand",
+        clip_draft_blob="place bucket on floor with left hand, pick up hoe with right hand",
+    )
+    assert out.lower() == (
+        "place bucket on floor with left hand, pick up hoe with right hand"
+    )
+
+
 def test_inject_place_hoe_before_gather():
     out = atlas_guide_cleaner(
         "gather soil with both hands",
