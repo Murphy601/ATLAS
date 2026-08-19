@@ -1151,10 +1151,48 @@ def sanitize_grooming_and_tool_actions(label: str) -> str:
 
 _CONTINUOUS_MANIPULATION = re.compile(r"\b(?:wipe|sand|polish)\b", re.IGNORECASE)
 
+_ROTATE_MIN_STABILIZER_VELOCITY = 0.015
 
-def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
+
+def _stabilizer_hand_velocity(
+    label: str,
+    motion: HandMotionProfile | None,
+) -> float | None:
+    """Wrist velocity of the hand named in the hold clause (None when untracked)."""
+    if motion is None:
+        return None
+    match = re.search(
+        r"\bhold\s+.+?\s+with\s+(left hand|right hand)\b", label, re.IGNORECASE
+    )
+    if not match:
+        return None
+    hand = match.group(1).lower()
+    return motion.v_left if hand == "left hand" else motion.v_right
+
+
+def _should_upgrade_hold_to_rotate(
+    label: str,
+    motion: HandMotionProfile | None,
+) -> bool:
+    """
+    Rotate is only claimed when the stabilizing wrist visibly moves the object.
+    A static off-hand means the person is just holding — writing 'rotate' then
+    is a fabricated action. Without tracking data, never claim rotation.
+    """
+    velocity = _stabilizer_hand_velocity(label, motion)
+    if velocity is None:
+        return False
+    return velocity > _ROTATE_MIN_STABILIZER_VELOCITY
+
+
+def _upgrade_hold_to_rotate_in_wipe_label(
+    label: str,
+    motion: HandMotionProfile | None = None,
+) -> str:
     """Convert stabilizing hold clauses to rotate during continuous work windows."""
     if not label or not _CONTINUOUS_MANIPULATION.search(label):
+        return label
+    if not _should_upgrade_hold_to_rotate(label, motion):
         return label
     updated = re.sub(
         r"\bhold\s+([\w\s]+?)\s+with\s+(left hand|right hand)\b",
@@ -1169,12 +1207,16 @@ def _upgrade_hold_to_rotate_in_wipe_label(label: str) -> str:
     return updated
 
 
-def normalize_episode_wiping_verbs(segment_labels: list[str]) -> list[str]:
+def normalize_episode_wiping_verbs(
+    segment_labels: list[str],
+    motion_profiles: list[HandMotionProfile | None] | None = None,
+) -> list[str]:
     """
     Applies ATLAS multi-segment rules across an entire clip for continuous
     manipulation tasks (wipe, sand, polish):
     - Seg 1 & Seg N: keep hold on the stabilized object
-    - Seg 2 to N-1: upgrade hold to rotate during work windows
+    - Seg 2 to N-1: upgrade hold to rotate only when the stabilizing wrist
+      actually moves (motion-gated; static hold stays hold)
     - Dual-hand labels: stabilizing clause must precede manipulation clause
     """
     total = len(segment_labels)
@@ -1184,35 +1226,44 @@ def normalize_episode_wiping_verbs(segment_labels: list[str]) -> list[str]:
     processed: list[str] = []
     for idx, label in enumerate(segment_labels):
         label = reorder_dual_hand_clauses(label or "")
+        motion = None
+        if motion_profiles is not None and idx < len(motion_profiles):
+            motion = motion_profiles[idx]
         if 0 < idx < (total - 1) and label and _CONTINUOUS_MANIPULATION.search(label):
-            label = _upgrade_hold_to_rotate_in_wipe_label(label)
+            label = _upgrade_hold_to_rotate_in_wipe_label(label, motion)
         processed.append(label)
     return processed
 
 
-def normalize_episode_sequence(segment_labels: list[str]) -> list[str]:
+def normalize_episode_sequence(
+    segment_labels: list[str],
+    motion_profiles: list[HandMotionProfile | None] | None = None,
+) -> list[str]:
     """
     Applies multi-segment rules strictly based on action verb type:
-    - Continuous tasks (wipe): Seg 1 'hold', Seg 2..N-1 'rotate', Seg N 'hold'
+    - Continuous tasks (wipe/sand/polish): Seg 1 'hold', Seg 2..N-1 'rotate'
+      only when the stabilizing hand visibly moves, Seg N 'hold'
     - Discrete transfer tasks (pick up/place): preserve 'pick up' on every segment
     - Every segment: clean up pick-and-place locations and preposition order
     """
     cleaned = [normalize_pick_and_place(lbl or "") for lbl in segment_labels]
-    return normalize_episode_wiping_verbs(cleaned)
+    return normalize_episode_wiping_verbs(cleaned, motion_profiles)
 
 
 def adjust_wiping_rotation_by_segment_index(
     label: str,
     segment_index: int | None = None,
     total_segments: int | None = None,
+    motion: HandMotionProfile | None = None,
 ) -> str:
-    """Middle segments in multi-window wiping use rotate; first/last keep hold."""
+    """Middle segments in multi-window wiping use rotate when the stabilizing
+    wrist visibly moves; first/last (and static holds) keep hold."""
     label = reorder_dual_hand_clauses(label)
     if not _is_middle_wipe_segment(segment_index, total_segments):
         return label
     if not re.search(r"\bwipe\b", label, re.IGNORECASE):
         return label
-    return _upgrade_hold_to_rotate_in_wipe_label(label)
+    return _upgrade_hold_to_rotate_in_wipe_label(label, motion)
 
 
 def format_hand_transfer(object_noun: str, from_hand: str, to_hand: str) -> str:
@@ -1282,18 +1333,18 @@ def dynamic_verb_hold_to_rotate(
             ),
             segment_index,
             total_segments,
+            motion,
         )
 
-    ongoing_wipe = _continuous_glass_wipe_context(previous_label, clip_draft_blob)
-    should_rotate = ongoing_wipe
-    if motion and motion.v_left > 0.015 and motion.v_right > 0.015:
-        should_rotate = True
-    if not should_rotate:
-        return label
-
-    label = fix_glass_cleaning_syntax_and_nouns(
+    fixed = fix_glass_cleaning_syntax_and_nouns(
         label, previous_label, clip_draft_blob
     )
+    # Only claim rotation when the stabilizing wrist measurably moves;
+    # a static off-hand is a hold, not a rotate.
+    if not _should_upgrade_hold_to_rotate(fixed, motion):
+        return label
+
+    label = fixed
     clauses = split_actions(label)
 
     if len(clauses) == 1:
@@ -2247,6 +2298,7 @@ def generate_label_hybrid(
     segment_start_seconds: float | None = None,
     segment_index: int | None = None,
     total_segments: int | None = None,
+    motion: HandMotionProfile | None = None,
 ) -> str:
     """Guide-compliant label from Atlas draft + optional MediaPipe hand fallback."""
     draft_label = usable_draft(draft_label)
@@ -2266,16 +2318,16 @@ def generate_label_hybrid(
     if not draft_label:
         return "No Action"
 
-    motion = None
     mp_hand = "with right hand"
-    if base64_frames:
+    if motion is None and base64_frames:
         frame_arrays = frames_from_base64_list(base64_frames)
         if frame_arrays:
             motion = pipeline.analyze_frame_motion_from_memory(
                 frame_arrays,
                 draft_label=draft_label,
             )
-            mp_hand = motion.detected_hand
+    if motion is not None:
+        mp_hand = motion.detected_hand
 
     return draft_preserving_cleaner(
         draft_label,

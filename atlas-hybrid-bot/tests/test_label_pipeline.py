@@ -323,6 +323,32 @@ def test_wrench_left_pickup_right_place_inserts_pass():
     )
 
 
+def _rotating_left_hand_motion():
+    """Stabilizing (left) wrist visibly turning the object; right wrist wiping."""
+    from hybrid_annotator import HandMotionProfile
+
+    return HandMotionProfile(
+        v_left=0.05,
+        v_right=0.04,
+        frames_analyzed=6,
+        start_left_contact=True,
+        start_right_contact=True,
+    )
+
+
+def _static_left_hand_motion():
+    """Left wrist pinned while the right hand works (no rotation happening)."""
+    from hybrid_annotator import HandMotionProfile
+
+    return HandMotionProfile(
+        v_left=0.003,
+        v_right=0.05,
+        frames_analyzed=6,
+        start_left_contact=True,
+        start_right_contact=True,
+    )
+
+
 def test_middle_glass_wipe_segment_uses_rotate():
     draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
     out = atlas_guide_cleaner(
@@ -330,9 +356,24 @@ def test_middle_glass_wipe_segment_uses_rotate():
         segment_index=1,
         total_segments=4,
         clip_draft_blob="glass cup wipe cloth",
+        motion=_rotating_left_hand_motion(),
     )
     assert out.lower() == (
         "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+
+
+def test_middle_glass_wipe_segment_keeps_hold_when_hand_static():
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    out = atlas_guide_cleaner(
+        draft,
+        segment_index=1,
+        total_segments=4,
+        clip_draft_blob="glass cup wipe cloth",
+        motion=_static_left_hand_motion(),
+    )
+    assert out.lower() == (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
     )
 
 
@@ -452,7 +493,9 @@ def test_glass_hold_becomes_rotate_after_wipe_segment():
     previous = (
         "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
     )
-    out = atlas_guide_cleaner(draft, previous_label=previous)
+    out = atlas_guide_cleaner(
+        draft, previous_label=previous, motion=_rotating_left_hand_motion()
+    )
     assert out.lower().startswith("rotate glass cup")
     assert "wipe glass cup with cloth in right hand" in out.lower()
 
@@ -465,6 +508,7 @@ def test_glass_single_hold_becomes_rotate_during_continuous_wipe():
         "hold glass cup with left hand",
         previous_label=previous,
         clip_draft_blob="glass cup wipe cloth",
+        motion=_rotating_left_hand_motion(),
     )
     assert out.lower() == "rotate glass cup with left hand"
 
@@ -478,6 +522,7 @@ def test_glass_hold_wipe_becomes_rotate_after_first_wipe_segment():
         draft,
         previous_label=previous,
         clip_draft_blob="glass cup wipe cloth",
+        motion=_rotating_left_hand_motion(),
     )
     assert out.lower() == (
         "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
@@ -642,7 +687,8 @@ def test_normalize_episode_wiping_verbs_four_segment_glass():
 
     draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
     labels = [draft, draft, draft, draft]
-    out = normalize_episode_wiping_verbs(labels)
+    motion = [_rotating_left_hand_motion() for _ in labels]
+    out = normalize_episode_wiping_verbs(labels, motion)
     assert out[0].lower() == draft.lower()
     assert out[1].lower().startswith("rotate glass cup")
     assert out[2].lower().startswith("rotate glass cup")
@@ -760,11 +806,30 @@ def test_normalize_episode_sequence_still_rotates_middle_wipe_segments():
     from label_pipeline import normalize_episode_sequence
 
     draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
-    out = normalize_episode_sequence([draft, draft, draft, draft])
+    motion = [_rotating_left_hand_motion() for _ in range(4)]
+    out = normalize_episode_sequence([draft, draft, draft, draft], motion)
     assert out[0].lower() == draft.lower()
     assert out[1].lower().startswith("rotate glass cup")
     assert out[2].lower().startswith("rotate glass cup")
     assert out[3].lower() == draft.lower()
+
+
+def test_plate_wiping_keeps_hold_when_stabilizer_never_rotates():
+    """Regression: plate clip showed no rotation — rotate must not be fabricated."""
+    from label_pipeline import normalize_episode_sequence
+
+    draft = "hold plate with left hand, wipe plate with cloth in right hand"
+    motion = [_static_left_hand_motion() for _ in range(4)]
+    out = normalize_episode_sequence([draft, draft, draft, draft], motion)
+    assert all(label.lower() == draft.lower() for label in out)
+
+
+def test_episode_rotate_defaults_to_hold_without_motion_data():
+    from label_pipeline import normalize_episode_sequence
+
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    out = normalize_episode_sequence([draft, draft, draft, draft])
+    assert all(label.lower() == draft.lower() for label in out)
 
 
 def test_mop_floor_tool_action_stays_single_clause():
@@ -828,7 +893,8 @@ def test_sand_episode_rotates_middle_segments():
     from label_pipeline import normalize_episode_sequence
 
     draft = "sand wooden disc with sandpaper in right hand, hold wooden disc with left hand"
-    out = normalize_episode_sequence([draft] * 4)
+    motion = [_rotating_left_hand_motion() for _ in range(4)]
+    out = normalize_episode_sequence([draft] * 4, motion)
     assert out[0].lower() == (
         "hold wooden disc with left hand, "
         "sand wooden disc with sandpaper in right hand"

@@ -73,6 +73,7 @@ def process_live_task(
     processed_any = False
     previous_label = None
     pending_labels: list[tuple[SegmentRow, str, bool]] = []
+    motion_profiles: list = []
 
     try:
         for index, segment in enumerate(segments):
@@ -106,6 +107,19 @@ def process_live_task(
             elif draft:
                 print(f"[Hybrid]: AI draft: '{draft}'")
 
+            motion = None
+            frame_arrays = (
+                frames_from_base64_list([frame[1] for frame in chunk]) if chunk else []
+            )
+            if frame_arrays:
+                try:
+                    motion = pipeline.analyze_frame_motion_from_memory(
+                        frame_arrays,
+                        draft_label=draft,
+                    )
+                except Exception:
+                    motion = None
+
             try:
                 label = generate_label_hybrid(
                     [frame[1] for frame in chunk],
@@ -120,6 +134,7 @@ def process_live_task(
                     segment_start_seconds=segment.start_seconds,
                     segment_index=index,
                     total_segments=len(segments),
+                    motion=motion,
                 )
             except Exception as exc:
                 print(
@@ -128,13 +143,11 @@ def process_live_task(
                 )
                 label = "No Action"
                 if draft:
-                    frame_arrays = frames_from_base64_list(
-                        [frame[1] for frame in chunk]
-                    ) if chunk else []
-                    motion = pipeline.analyze_frame_motion_from_memory(
-                        frame_arrays,
-                        draft_label=draft,
-                    )
+                    if motion is None:
+                        motion = pipeline.analyze_frame_motion_from_memory(
+                            frame_arrays,
+                            draft_label=draft,
+                        )
                     hand = resolve_hand_tag(draft, motion.detected_hand)
                     label = atlas_guide_cleaner(
                         draft,
@@ -176,14 +189,17 @@ def process_live_task(
                     should_fill = False
                     previous_label = segment.draft_label
                     pending_labels.append((segment, label, should_fill))
+                    motion_profiles.append(motion)
                     continue
 
             pending_labels.append((segment, label, should_fill))
+            motion_profiles.append(motion)
             previous_label = label
 
         if pending_labels:
             normalized = normalize_episode_sequence(
-                [label for _, label, _ in pending_labels]
+                [label for _, label, _ in pending_labels],
+                motion_profiles,
             )
             for (segment, _, should_fill), final_label in zip(
                 pending_labels, normalized
