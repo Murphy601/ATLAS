@@ -116,6 +116,8 @@ def process_live_task(
                     next_label=next_draft,
                     global_context=global_context,
                     segment_start_seconds=segment.start_seconds,
+                    segment_index=index,
+                    total_segments=len(segments),
                 )
             except Exception as exc:
                 print(
@@ -141,6 +143,8 @@ def process_live_task(
                         motion=motion,
                         clip_glossary=list(global_context.objects),
                         clip_draft_blob=global_context.raw_summary,
+                        segment_index=index,
+                        total_segments=len(segments),
                     )
 
             print(f"\n--- Segment {segment.number} [{start_str} -> {end_str}] ---")
@@ -156,6 +160,8 @@ def process_live_task(
                     duration_seconds=duration,
                     clip_glossary=list(global_context.objects),
                     clip_draft_blob=global_context.raw_summary,
+                    segment_index=index,
+                    total_segments=len(segments),
                 )
                 print(
                     "[Hybrid]: Keeping guide-cleaned draft "

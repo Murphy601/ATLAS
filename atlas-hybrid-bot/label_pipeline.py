@@ -841,6 +841,162 @@ def _normalize_pass_syntax(label: str) -> str:
     return ", ".join(normalized) if normalized else label
 
 
+def format_hand_pass_sequence(
+    initial_hand: str,
+    final_hand: str,
+    obj_name: str,
+    target_surface: str,
+) -> str:
+    """Format hold → pass → place chain for cross-hand object transfers."""
+    if initial_hand != final_hand:
+        return (
+            f"hold {obj_name} with {initial_hand}, "
+            f"pass {obj_name} from {initial_hand} to {final_hand}, "
+            f"place {obj_name} on {target_surface} with {final_hand}"
+        )
+    return (
+        f"pick up {obj_name} with {final_hand}, "
+        f"place {obj_name} on {target_surface} with {final_hand}"
+    )
+
+
+def _place_surface(clause: str) -> str:
+    match = re.search(
+        r"\b(?:place|set)\s+\S+(?:\s+\S+)*?\s+on\s+"
+        r"(table|floor|ground|counter|shelf|desk|toolbox)\b",
+        clause or "",
+        re.IGNORECASE,
+    )
+    return match.group(1).lower() if match else "table"
+
+
+def _wrench_transfer_context(
+    blob: str,
+    *,
+    segment_index: int | None = None,
+    total_segments: int | None = None,
+) -> bool:
+    if re.search(r"\bpass wrench from left hand to right hand\b", blob, re.IGNORECASE):
+        return True
+    if re.search(r"\bhold wrench with left hand\b", blob, re.IGNORECASE):
+        return True
+    if (
+        segment_index == 0
+        and total_segments is not None
+        and total_segments >= 3
+        and re.search(r"\bwrench\b", blob, re.IGNORECASE)
+    ):
+        return True
+    return False
+
+
+def resolve_hand_pass_sequence(
+    label: str,
+    *,
+    clip_draft_blob: str | None = None,
+    draft_text: str = "",
+    segment_index: int | None = None,
+    total_segments: int | None = None,
+) -> str:
+    """Inject hold → pass → place when an object changes hands before placement."""
+    if not label or label == "No Action":
+        return label
+    if re.search(r"\bpass\b", label, re.IGNORECASE):
+        return label
+
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return label
+    first, second = clauses[0], clauses[1]
+    if _leading_verb(first) not in {"pick up", "hold"}:
+        return label
+    if _leading_verb(second) not in {"place", "set"}:
+        return label
+
+    obj = _clause_object_phrase(first) or _clause_object_phrase(second)
+    if not obj or not _objects_match_simple(
+        _clause_object_phrase(first), _clause_object_phrase(second)
+    ):
+        return label
+
+    first_hand = _clause_hand(first)
+    second_hand = _clause_hand(second)
+    surface = _place_surface(second)
+    blob = " ".join(part for part in (clip_draft_blob, draft_text) if part)
+
+    if re.search(r"\bfrom toolbox\b", label, re.IGNORECASE):
+        return label
+
+    if (
+        first_hand in {"left hand", "right hand"}
+        and second_hand in {"left hand", "right hand"}
+        and first_hand != second_hand
+    ):
+        return format_hand_pass_sequence(first_hand, second_hand, obj, surface)
+
+    if (
+        re.search(r"\bwrench\b", label, re.IGNORECASE)
+        and re.search(r"\bplace wrench on table\b", label, re.IGNORECASE)
+        and first_hand == second_hand
+        and _wrench_transfer_context(
+            blob,
+            segment_index=segment_index,
+            total_segments=total_segments,
+        )
+    ):
+        dest = second_hand or "right hand"
+        origin = "left hand" if dest == "right hand" else "right hand"
+        return format_hand_pass_sequence(origin, dest, "wrench", surface)
+
+    return label
+
+
+def _is_middle_wipe_segment(
+    segment_index: int | None,
+    total_segments: int | None,
+) -> bool:
+    return (
+        segment_index is not None
+        and total_segments is not None
+        and total_segments >= 3
+        and 0 < segment_index < total_segments - 1
+    )
+
+
+def _is_terminal_wipe_segment(
+    segment_index: int | None,
+    total_segments: int | None,
+) -> bool:
+    if segment_index is None or total_segments is None or total_segments < 3:
+        return False
+    return segment_index in {0, total_segments - 1}
+
+
+def adjust_wiping_rotation_by_segment_index(
+    label: str,
+    segment_index: int | None = None,
+    total_segments: int | None = None,
+) -> str:
+    """Middle segments in multi-window wiping use rotate; first/last keep hold."""
+    if not _is_middle_wipe_segment(segment_index, total_segments):
+        return label
+    if not re.search(r"\bwipe\b", label, re.IGNORECASE):
+        return label
+    updated = re.sub(
+        r"\bhold\s+(glass cup|glass jar|glass)\s+with\s+(left hand|right hand)\b",
+        r"rotate \1 with \2",
+        label,
+        flags=re.IGNORECASE,
+    )
+    parts = split_actions(updated)
+    if len(parts) >= 2 and _leading_verb(parts[0]) == "hold":
+        parts[0] = re.sub(r"^hold\b", "rotate", parts[0], count=1, flags=re.IGNORECASE)
+        updated = ", ".join(parts)
+    elif len(parts) == 1 and re.match(r"^hold glass cup with left hand\s*$", parts[0], re.I):
+        updated = "rotate glass cup with left hand"
+    return updated
+
+
 def format_hand_transfer(object_noun: str, from_hand: str, to_hand: str) -> str:
     """Standard ATLAS hand-over syntax."""
     return f"pass {object_noun} from {from_hand} to {to_hand}"
@@ -876,10 +1032,12 @@ def dynamic_verb_hold_to_rotate(
     motion: HandMotionProfile | None = None,
     clip_draft_blob: str | None = None,
     draft_text: str = "",
+    segment_index: int | None = None,
+    total_segments: int | None = None,
 ) -> str:
     """
     hold + wipe on a glass cup during continuous cleaning → rotate (not static hold).
-    Single-clause hold glass cup during ongoing wipe → rotate only.
+    Middle segments in multi-window wipes use rotate; first/last keep hold.
     """
     if not label or label == "No Action":
         return label
@@ -891,6 +1049,22 @@ def dynamic_verb_hold_to_rotate(
         re.IGNORECASE,
     ):
         return label
+
+    if _is_terminal_wipe_segment(segment_index, total_segments) and re.search(
+        r"\bwipe\b", label, re.IGNORECASE
+    ):
+        return fix_glass_cleaning_syntax_and_nouns(
+            label, previous_label, clip_draft_blob
+        )
+
+    if _is_middle_wipe_segment(segment_index, total_segments):
+        return adjust_wiping_rotation_by_segment_index(
+            fix_glass_cleaning_syntax_and_nouns(
+                label, previous_label, clip_draft_blob
+            ),
+            segment_index,
+            total_segments,
+        )
 
     ongoing_wipe = _continuous_glass_wipe_context(previous_label, clip_draft_blob)
     should_rotate = ongoing_wipe
@@ -1620,6 +1794,8 @@ def draft_preserving_cleaner(
     motion: HandMotionProfile | None = None,
     clip_glossary: list[str] | None = None,
     clip_draft_blob: str | None = None,
+    segment_index: int | None = None,
+    total_segments: int | None = None,
 ) -> str:
     """
     Trust the Atlas AI draft; apply only safe syntax normalization.
@@ -1678,6 +1854,8 @@ def draft_preserving_cleaner(
         motion,
         clip_draft_blob,
         draft_text,
+        segment_index,
+        total_segments,
     )
     label = enforce_glass_cup_consistency(
         label, previous_label, clip_draft_blob
@@ -1688,6 +1866,13 @@ def draft_preserving_cleaner(
     label = _inject_tool_release(label, previous_label, clip_glossary)
     label = _validate_and_repair_clauses(label)
     label = _repair_malformed_pick_up_place(label)
+    label = resolve_hand_pass_sequence(
+        label,
+        clip_draft_blob=clip_draft_blob,
+        draft_text=draft_text,
+        segment_index=segment_index,
+        total_segments=total_segments,
+    )
     label = _clean_duplicate_hands(label)
     label = _infer_missing_hand_from_motion(label, mp_hand_tag)
     label = _clean_duplicate_hands(label)
@@ -1717,6 +1902,8 @@ def atlas_guide_cleaner(
     motion: HandMotionProfile | None = None,
     clip_glossary: list[str] | None = None,
     clip_draft_blob: str | None = None,
+    segment_index: int | None = None,
+    total_segments: int | None = None,
 ) -> str:
     """Draft-preserving Atlas guide linter (alias for draft_preserving_cleaner)."""
     return draft_preserving_cleaner(
@@ -1728,6 +1915,8 @@ def atlas_guide_cleaner(
         motion=motion,
         clip_glossary=clip_glossary,
         clip_draft_blob=clip_draft_blob,
+        segment_index=segment_index,
+        total_segments=total_segments,
     )
 
 
@@ -1748,6 +1937,8 @@ def generate_label_hybrid(
     next_label: str | None = None,
     global_context=None,
     segment_start_seconds: float | None = None,
+    segment_index: int | None = None,
+    total_segments: int | None = None,
 ) -> str:
     """Guide-compliant label from Atlas draft + optional MediaPipe hand fallback."""
     draft_label = usable_draft(draft_label)
@@ -1787,6 +1978,8 @@ def generate_label_hybrid(
         motion=motion,
         clip_glossary=clip_glossary or None,
         clip_draft_blob=getattr(global_context, "raw_summary", None) or None,
+        segment_index=segment_index,
+        total_segments=total_segments,
     )
 
 

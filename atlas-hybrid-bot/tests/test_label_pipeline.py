@@ -299,6 +299,59 @@ def test_scissors_alignment_clause_order():
     )
 
 
+def test_wrench_pickup_place_same_hand_becomes_pass_chain():
+    out = atlas_guide_cleaner(
+        "pick up wrench with right hand, place wrench on table with right hand",
+        segment_index=0,
+        total_segments=4,
+        clip_draft_blob="wrench | place wrench on table | hold wrench with left hand",
+    )
+    assert out.lower() == (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
+
+
+def test_wrench_left_pickup_right_place_inserts_pass():
+    out = atlas_guide_cleaner(
+        "pick up wrench with left hand, place wrench on table with right hand"
+    )
+    assert out.lower() == (
+        "hold wrench with left hand, pass wrench from left hand to right hand, "
+        "place wrench on table with right hand"
+    )
+
+
+def test_middle_glass_wipe_segment_uses_rotate():
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    out = atlas_guide_cleaner(
+        draft,
+        segment_index=1,
+        total_segments=4,
+        clip_draft_blob="glass cup wipe cloth",
+    )
+    assert out.lower() == (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+
+
+def test_last_glass_wipe_segment_keeps_hold():
+    draft = "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    previous = (
+        "rotate glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+    out = atlas_guide_cleaner(
+        draft,
+        previous_label=previous,
+        segment_index=3,
+        total_segments=4,
+        clip_draft_blob="glass cup wipe cloth",
+    )
+    assert out.lower() == (
+        "hold glass cup with left hand, wipe glass cup with cloth in right hand"
+    )
+
+
 def test_pick_up_and_place_expands_to_two_clauses():
     out = atlas_guide_cleaner("pick up and place wrench with right hand")
     assert "pick up wrench with right hand" in out.lower()
