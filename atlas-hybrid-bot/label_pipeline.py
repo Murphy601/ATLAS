@@ -23,7 +23,10 @@ from config import (
 from frame_utils import frames_from_base64_list
 from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
 from hybrid_annotator import stabilizer_rotation_sweep
-from vision_hands import apply_clip_hand_consensus, apply_vision_hand_corrections
+from vision_hands import (
+    apply_clip_hand_consensus,
+    apply_vision_hand_corrections,
+)
 from vision_motion import apply_clip_motion_enrichment
 from label_generator import (
     CLOTH_PATTERN,
@@ -36,6 +39,8 @@ from label_generator import (
     _int_to_words,
     _leading_verb,
     apply_state_continuity,
+    assessment_enrich_label,
+    preserve_draft_required_actions,
     split_actions,
     usable_draft,
 )
@@ -2390,7 +2395,7 @@ def generate_label_hybrid(
     if motion is not None:
         mp_hand = motion.detected_hand
 
-    return draft_preserving_cleaner(
+    label = draft_preserving_cleaner(
         draft_label,
         previous_label=previous_label,
         next_label=next_label,
@@ -2402,6 +2407,19 @@ def generate_label_hybrid(
         segment_index=segment_index,
         total_segments=total_segments,
     )
+    label = assessment_enrich_label(
+        label,
+        draft_label=draft_label,
+        previous_label=previous_label,
+        next_label=next_label,
+        duration_seconds=duration_seconds,
+    )
+    label = preserve_draft_required_actions(
+        label,
+        draft_label,
+        duration_seconds=duration_seconds,
+    )
+    return apply_vision_hand_corrections(label, motion)
 
 
 def build_draft_global_context(segment_drafts: list[str]) -> GlobalVideoContext:

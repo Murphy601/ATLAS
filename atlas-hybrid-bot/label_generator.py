@@ -3500,6 +3500,90 @@ def sanitize_label(text: str) -> str:
     return cleaned
 
 
+def _is_dual_pickup_label(clauses: list[str]) -> bool:
+    """Two pick-up clauses on the same object type, one per hand."""
+    pickups = [clause for clause in clauses if _leading_verb(clause) == "pick up"]
+    if len(pickups) < 2:
+        return False
+    hands = [_clause_hand(clause) for clause in pickups[:2]]
+    return (
+        hands[0] in {"left hand", "right hand"}
+        and hands[1] in {"left hand", "right hand"}
+        and hands[0] != hands[1]
+    )
+
+
+def assessment_enrich_label(
+    label: str,
+    *,
+    draft_label: str | None = None,
+    previous_label: str | None = None,
+    next_label: str | None = None,
+    duration_seconds: float | None = None,
+) -> str:
+    """Assessment-grade sanitize + context fixes (hold/pass/place, verbs, objects)."""
+    if not label or label == "No Action":
+        return label
+    original = label.strip()
+    cleaned = sanitize_label(original)
+    if cleaned == "No Action" and original.lower() != "no action":
+        cleaned = original
+    return apply_context_fixes(
+        cleaned,
+        draft_label,
+        previous_label,
+        next_label,
+        duration_seconds,
+    )
+
+
+def preserve_draft_required_actions(
+    final_label: str,
+    draft_label: str | None,
+    *,
+    duration_seconds: float | None = None,
+) -> str:
+    """
+    Restore pass/place/hold or dual-pickup chains when enrichment dropped them
+    but the Atlas draft still carries assessment-critical actions.
+    """
+    draft_raw = usable_draft(draft_label)
+    if not draft_raw or not final_label or final_label == "No Action":
+        return final_label
+
+    draft_ref = assessment_enrich_label(
+        draft_raw,
+        draft_label=draft_raw,
+        duration_seconds=duration_seconds,
+    )
+    if draft_ref == "No Action":
+        return reconcile_with_draft(final_label, draft_raw)
+
+    final_parts = split_actions(final_label)
+    draft_parts = split_actions(draft_ref)
+
+    if _is_dual_pickup_label(draft_parts) and not _is_dual_pickup_label(final_parts):
+        if any("both hands" in clause.lower() for clause in final_parts):
+            return enforce_segment_action_limit(draft_ref, duration_seconds)
+        if len(final_parts) < len(draft_parts):
+            return enforce_segment_action_limit(draft_ref, duration_seconds)
+
+    if len(draft_parts) > len(final_parts):
+        draft_verbs = {_leading_verb(part) for part in draft_parts}
+        final_verbs = {_leading_verb(part) for part in final_parts}
+        if "pass" in draft_verbs and "pass" not in final_verbs:
+            return enforce_segment_action_limit(draft_ref, duration_seconds)
+        if _has_release(draft_ref) and not _has_release(final_label):
+            return enforce_segment_action_limit(draft_ref, duration_seconds)
+        if _is_case_a_stabilize(draft_ref) and not _is_case_a_stabilize(final_label):
+            return enforce_segment_action_limit(draft_ref, duration_seconds)
+        missing = (draft_verbs & REQUIRED_EXTRA_VERBS) - final_verbs
+        if missing & {"pass", "place", "set", "gather"}:
+            return enforce_segment_action_limit(draft_ref, duration_seconds)
+
+    return reconcile_with_draft(final_label, draft_raw)
+
+
 REFUSAL_MARKERS = (
     "i cannot",
     "i can't",
