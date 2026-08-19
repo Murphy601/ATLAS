@@ -24,6 +24,7 @@ from frame_utils import frames_from_base64_list
 from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
 from hybrid_annotator import stabilizer_rotation_sweep
 from vision_hands import apply_clip_hand_consensus, apply_vision_hand_corrections
+from vision_motion import apply_clip_motion_enrichment
 from label_generator import (
     CLOTH_PATTERN,
     CLOTH_WORK_VERBS,
@@ -1233,6 +1234,7 @@ def normalize_episode_sequence(
     - Every segment: clean up pick-and-place locations and preposition order
     """
     cleaned = [normalize_pick_and_place(lbl or "") for lbl in segment_labels]
+    cleaned = apply_clip_motion_enrichment(cleaned, motion_profiles)
     cleaned = apply_clip_hand_consensus(cleaned, motion_profiles)
     return normalize_episode_wiping_verbs(cleaned, motion_profiles)
 
