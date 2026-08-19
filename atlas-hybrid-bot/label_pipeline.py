@@ -17,6 +17,7 @@ from config import (
     SLASH_PATTERN,
     VERB_CORRECTIONS,
     VERB_REPLACEMENTS,
+    FILL_SOURCE_TOOLS,
 )
 from frame_utils import frames_from_base64_list
 from hybrid_annotator import AtlasHybridPipeline, _hand_tag_from_draft
@@ -153,6 +154,11 @@ _STRIP_NOUN_SIMPLIFIERS: tuple[tuple[str, str], ...] = (
 _WIRE_FOLD_GOLD = (
     "hold shears with right hand, twist blue cable with both hands, "
     "fold blue cable with both hands"
+)
+
+_FILL_SOURCE_PATTERN = re.compile(
+    rf"\bfill\s+(.+?)\s+with\s+({'|'.join(FILL_SOURCE_TOOLS)})\b",
+    re.IGNORECASE,
 )
 
 
@@ -465,6 +471,127 @@ def _append_end_of_window_pickup(
         ):
             return f"{label}, pick up {tool} with right hand"
     return label
+
+
+def enforce_fill_substance_noun(label: str) -> str:
+    """fill [container] with hose → fill [container] with water with hose."""
+    if not label or label == "No Action":
+        return label
+    if not re.search(r"\bfill\b", label, re.IGNORECASE):
+        return label
+    if re.search(r"\bwith water\b", label, re.IGNORECASE):
+        return label
+    return _FILL_SOURCE_PATTERN.sub(r"fill \1 with water with \2", label)
+
+
+def consolidate_hose_actions(label: str) -> str:
+    """
+    Collapse split hose + hold-watering-can labels into one both-hands hose action.
+    """
+    if not label or label == "No Action":
+        return label
+    clauses = split_actions(label)
+    if len(clauses) != 2:
+        return enforce_fill_substance_noun(label)
+
+    work_idx = hold_idx = None
+    for index, clause in enumerate(clauses):
+        verb = _leading_verb(clause)
+        if verb == "hold":
+            hold_idx = index
+        elif verb in {"water", "fill"}:
+            work_idx = index
+
+    if work_idx is None or hold_idx is None:
+        return enforce_fill_substance_noun(label)
+
+    work = clauses[work_idx]
+    hold = clauses[hold_idx]
+    if not re.search(r"\bhose\b", work, re.IGNORECASE):
+        return enforce_fill_substance_noun(label)
+    if not re.search(r"\bwatering can\b", hold, re.IGNORECASE):
+        return enforce_fill_substance_noun(label)
+
+    collapsed = re.sub(
+        r"with hose in (?:left|right) hand",
+        "with hose in both hands",
+        work,
+        flags=re.IGNORECASE,
+    )
+    collapsed = re.sub(
+        r"\bin (?:left|right) hand\b",
+        "in both hands",
+        collapsed,
+        flags=re.IGNORECASE,
+    )
+    return enforce_fill_substance_noun(collapsed)
+
+
+def _complete_hose_set_pickup_can(
+    label: str,
+    previous_label: str | None,
+    next_label: str | None = None,
+    clip_draft_blob: str | None = None,
+) -> str:
+    """set hose on ground + pick up watering can at the tail of the window."""
+    if not label or label == "No Action":
+        return label
+    parts = split_actions(label)
+    if not parts or len(parts) >= MAX_ACTIONS_PER_LABEL:
+        return label
+    if any(_leading_verb(part) == "pick up" for part in parts):
+        return label
+
+    set_clause = next(
+        (
+            part
+            for part in parts
+            if _leading_verb(part) in {"set", "place"}
+            and re.search(r"\bhose\b", part, re.IGNORECASE)
+        ),
+        None,
+    )
+    hold_can = next(
+        (
+            part
+            for part in parts
+            if _leading_verb(part) == "hold"
+            and re.search(r"\bwatering can\b", part, re.IGNORECASE)
+        ),
+        None,
+    )
+    if set_clause and hold_can:
+        pickup = re.sub(r"^hold\b", "pick up", hold_can, count=1, flags=re.IGNORECASE)
+        other_parts = [part for part in parts if part not in {set_clause, hold_can}]
+        if other_parts:
+            return ", ".join([*other_parts, set_clause, pickup])
+        return f"{set_clause}, {pickup}"
+
+    if not set_clause:
+        return label
+
+    context = " ".join(
+        part
+        for part in (previous_label, next_label, clip_draft_blob, label)
+        if part
+    )
+    if not re.search(r"watering can", context, re.IGNORECASE):
+        return label
+    if re.search(r"watering can", label, re.IGNORECASE):
+        return label
+
+    set_hand = _clause_hand(set_clause)
+    other = "right hand" if set_hand == "left hand" else "left hand"
+    if set_hand == "both hands":
+        set_clause = re.sub(
+            r"\bboth hands\b", "left hand", set_clause, flags=re.IGNORECASE
+        )
+        parts = [
+            set_clause if _leading_verb(part) in {"set", "place"} else part
+            for part in parts
+        ]
+        other = "right hand"
+    return f"{', '.join(parts)}, pick up watering can with {other}"
 
 
 def _rewrite_wire_fold_segment(
@@ -1180,6 +1307,7 @@ def draft_preserving_cleaner(
     label = _rewrite_bag_pickup_place_to_pass(label, duration_seconds)
     label = _expand_sewing_stitch_cycle(label, clip_draft_blob)
     label = _normalize_hand_prepositions(label)
+    label = consolidate_hose_actions(label)
     label = _apply_plural_nouns(label, draft_text, previous_label)
     label = _prefer_align_over_cut_sandwich(label, previous_label, next_label)
     label = _prefer_pull_over_insert_after_pull(label, previous_label)
@@ -1203,6 +1331,9 @@ def draft_preserving_cleaner(
         label = apply_state_continuity(label, previous_label)
 
     label = _align_place_hand_after_pass(label, previous_label)
+    label = _complete_hose_set_pickup_can(
+        label, previous_label, next_label, clip_draft_blob
+    )
 
     return label
 

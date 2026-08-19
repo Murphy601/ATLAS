@@ -400,3 +400,42 @@ def test_wire_fold_rewrites_pickup_hold_to_shears_twist_fold():
         "hold shears with right hand, twist blue cable with both hands, "
         "fold blue cable with both hands"
     )
+
+
+def test_hose_water_plant_collapses_to_both_hands():
+    draft = (
+        "water plant in bucket with hose in left hand, "
+        "hold watering can with right hand"
+    )
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == "water plant in bucket with hose in both hands"
+
+
+def test_hose_fill_collapses_with_water_substance():
+    draft = (
+        "fill watering can with hose in left hand, "
+        "hold watering can with right hand"
+    )
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == "fill watering can with water with hose in both hands"
+
+
+def test_set_hose_appends_watering_can_pickup():
+    previous = "fill watering can with water with hose in both hands"
+    out = atlas_guide_cleaner(
+        "set hose on ground with left hand",
+        previous_label=previous,
+    )
+    assert out.lower() == (
+        "set hose on ground with left hand, pick up watering can with right hand"
+    )
+
+
+def test_set_hose_hold_can_becomes_pickup():
+    out = atlas_guide_cleaner(
+        "set hose on ground with left hand, hold watering can with right hand",
+        previous_label="fill watering can with water with hose in both hands",
+    )
+    assert out.lower() == (
+        "set hose on ground with left hand, pick up watering can with right hand"
+    )
