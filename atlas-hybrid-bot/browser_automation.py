@@ -45,7 +45,10 @@ ORIGINAL_DRAFTS_DIR = Path("original_drafts")
 VIDEO_CONTENT_SCORE_MIN = 22.0
 VISION_JPEG_MAX_SIDE = 768
 SEEK_SETTLE_HEADED = 0.8
-SEEK_SETTLE_HEADLESS = 0.05
+SEEK_SETTLE_HEADLESS = 0.3
+# Extra settle after readyState >= 2 so the decoder presents the seeked frame
+# before canvas pixels are read (avoids stale transition frames).
+POST_SEEK_DECODE_SETTLE = 0.5
 WINDOW_SLACK_SECONDS = 0.6
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["training_home"]}, '
@@ -970,7 +973,7 @@ class VideoBrowserBot:
         )
         time.sleep(SEEK_SETTLE_HEADLESS if self.headless else SEEK_SETTLE_HEADED)
 
-    def _wait_for_decoded_frame(self, timeout: float = 1.2) -> bool:
+    def _wait_for_decoded_frame(self, timeout: float = 2.0) -> bool:
         deadline = time.time() + timeout
         while time.time() < deadline:
             ready = self.page.evaluate(
@@ -980,10 +983,10 @@ class VideoBrowserBot:
                 }"""
             )
             if ready:
-                time.sleep(0.5)
+                time.sleep(POST_SEEK_DECODE_SETTLE)
                 return True
             time.sleep(0.05)
-        time.sleep(0.5)
+        time.sleep(POST_SEEK_DECODE_SETTLE)
         return False
 
     def _canvas_frame_jpeg(self) -> bytes | None:
@@ -1297,6 +1300,33 @@ class VideoBrowserBot:
             )
         return frames[:MAX_FRAMES_PER_SEGMENT]
 
+    def _seek_capture_timestamps(
+        self,
+        start_seconds: float,
+        segment_duration: float,
+        interval_seconds: float,
+    ) -> list[float]:
+        """Seek-fallback sample times inset from segment edges.
+
+        Boundary frames land on cut transitions (blurred or mid hand-off); the
+        grader wants clear mid-action frames, so clamp samples slightly inside
+        the window while keeping full coverage for short segments.
+        """
+        times = sample_segment_timestamps(
+            start_seconds, segment_duration, interval_seconds
+        )
+        if segment_duration < 1.0 or len(times) < 3:
+            return times
+        inset = min(0.35, segment_duration * 0.12)
+        low = start_seconds + inset
+        high = start_seconds + segment_duration - inset
+        clamped: list[float] = []
+        for timestamp in times:
+            target = min(max(timestamp, low), high)
+            if not clamped or abs(target - clamped[-1]) > 0.04:
+                clamped.append(round(target, 3))
+        return clamped
+
     def _capture_by_seek(
         self,
         start_seconds: float,
@@ -1304,15 +1334,17 @@ class VideoBrowserBot:
         interval_seconds: float,
     ) -> list[tuple[float, str]]:
         frames: list[tuple[float, str]] = []
-        for timestamp in sample_segment_timestamps(
+        for timestamp in self._seek_capture_timestamps(
             start_seconds,
             segment_duration,
             interval_seconds,
         ):
             self._seek_video(timestamp)
+            self._wait_for_decoded_frame()
             frames.append((timestamp, self._screenshot_video_base64()))
         if not frames:
             self._seek_video(start_seconds)
+            self._wait_for_decoded_frame()
             frames.append((start_seconds, self._screenshot_video_base64()))
         return frames
 

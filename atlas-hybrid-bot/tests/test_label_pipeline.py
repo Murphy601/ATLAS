@@ -764,3 +764,20 @@ def test_normalize_episode_sequence_still_rotates_middle_wipe_segments():
     assert out[1].lower().startswith("rotate glass cup")
     assert out[2].lower().startswith("rotate glass cup")
     assert out[3].lower() == draft.lower()
+
+
+def test_mop_floor_tool_action_stays_single_clause():
+    out = atlas_guide_cleaner("mop floor with mop in right hand")
+    assert out.lower() == "mop floor with mop in right hand"
+
+
+def test_symmetrical_both_hands_scrub_preserved_with_basin():
+    draft = "scrub grey shirt with both hands in black basin"
+    out = atlas_guide_cleaner(draft)
+    assert out.lower() == draft.lower()
+
+
+def test_smooth_shirt_gets_no_fabricated_hold_clause():
+    out = atlas_guide_cleaner("smooth shirt with right hand")
+    assert out.lower() == "smooth shirt with right hand"
+    assert "hold" not in out.lower()

@@ -25,6 +25,21 @@ def test_patch_playwright_frame_listener_swallows_value_error():
     page._on_frame_detached(FakeFrame())  # should not raise
 
 
+def test_seek_capture_timestamps_inset_from_segment_edges(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    times = bot._seek_capture_timestamps(10.0, 10.0, 1.0)
+    assert times[0] > 10.0
+    assert times[-1] < 20.0
+    assert all(10.0 <= t <= 20.0 for t in times)
+    assert len(times) >= 5
+
+
+def test_seek_capture_timestamps_short_segment_untouched(tmp_path):
+    bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
+    times = bot._seek_capture_timestamps(3.0, 0.8, 0.4)
+    assert times[0] == 3.0
+
+
 def test_open_work_queue_from_assessment_landing_clicks_practice(tmp_path):
     bot = VideoBrowserBot(user_data_dir=str(tmp_path / "chrome-profile"), headless=True)
     try:
@@ -154,8 +169,9 @@ def test_capture_live_segment_frames(tmp_path):
         )
         frames = bot.capture_segment_frames(0.0, segment_duration=3.0, interval_seconds=0.5)
         times = [round(item[0], 2) for item in frames]
-        assert times[0] == 0.0
-        assert times[-1] == 3.0
+        assert all(0.0 <= t <= 3.0 for t in times)
+        # Seek-fallback samples are inset from cut-transition edges.
+        assert times[-1] - times[0] >= 1.5
         assert 5 <= len(frames) <= 10
         assert all(len(item[1]) > 100 for item in frames)
     finally:
