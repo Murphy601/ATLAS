@@ -139,6 +139,19 @@ KNOWN_CLIP_TOOLS = (
 )
 
 _HAND_TAG = r"(?:left hand|right hand|both hands)"
+_NAVIGATION_VERBS = frozenset({"walk", "walking", "navigate", "navigating", "look", "looking"})
+_DUAL_PICKUP_LEFT_RIGHT = re.compile(
+    r"\bpick up (.+?) with left hand,\s*pick up \1 with right hand\b",
+    re.IGNORECASE,
+)
+_DUAL_PICKUP_RIGHT_LEFT = re.compile(
+    r"\bpick up (.+?) with right hand,\s*pick up \1 with left hand\b",
+    re.IGNORECASE,
+)
+_NAVIGATION_CLAUSE = re.compile(
+    r"^(?:walk(?:ing)?(?:\s+to\s+\S+(?:\s+\S+)*)?|navigate(?:\s+to\s+\S+(?:\s+\S+)*)?)$",
+    re.IGNORECASE,
+)
 _PICK_UP_AND_PLACE = re.compile(
     rf"\bpick up and place\s+(.+?)\s+with\s+({_HAND_TAG})\b",
     re.IGNORECASE,
@@ -249,6 +262,40 @@ def _normalize_draft_separators(text: str) -> str:
     text = re.sub(r"\s*,\s*", ", ", text)
     text = _repair_malformed_pick_up_place(text)
     return " ".join(text.split()).strip(" ,")
+
+
+def _collapse_simultaneous_pickups(label: str) -> str:
+    """pick up X with left hand, pick up X with right hand -> pick up X with both hands."""
+    if not label:
+        return label
+    updated = _DUAL_PICKUP_LEFT_RIGHT.sub(r"pick up \1 with both hands", label)
+    updated = _DUAL_PICKUP_RIGHT_LEFT.sub(r"pick up \1 with both hands", updated)
+    return updated
+
+
+def _strip_navigation_clauses(label: str) -> str:
+    """ATLAS: never label walking/navigating."""
+    if not label or label == "No Action":
+        return label
+    kept = [
+        clause.strip()
+        for clause in split_actions(label)
+        if clause.strip()
+        and _leading_verb(clause) not in _NAVIGATION_VERBS
+        and not _NAVIGATION_CLAUSE.match(clause.strip())
+    ]
+    if not kept:
+        return label
+    return ", ".join(kept)
+
+
+def _clause_needs_hand_tag(clause: str) -> bool:
+    verb = _leading_verb(clause)
+    if verb in _NAVIGATION_VERBS:
+        return False
+    if _NAVIGATION_CLAUSE.match(clause.strip()):
+        return False
+    return True
 
 
 def _fix_tool_hand_syntax(clause: str) -> str:
@@ -1259,7 +1306,37 @@ def normalize_episode_sequence(
     cleaned = [normalize_pick_and_place(lbl or "") for lbl in segment_labels]
     cleaned = apply_clip_motion_enrichment(cleaned, motion_profiles)
     cleaned = apply_clip_hand_consensus(cleaned, motion_profiles)
+    cleaned = normalize_refrigerator_organizing_episode(cleaned)
     return normalize_episode_wiping_verbs(cleaned, motion_profiles)
+
+
+def normalize_refrigerator_organizing_episode(segment_labels: list[str]) -> list[str]:
+    """
+    Refrigerator clips: pick up container with both hands, then hold + reposition
+    while organizing, place container only on the final segment.
+    """
+    if len(segment_labels) < 2:
+        return segment_labels
+    blob = " ".join(segment_labels).lower()
+    if "refrigerator" not in blob and "fridge" not in blob:
+        return segment_labels
+    if "container" not in blob:
+        return segment_labels
+    if not any("reposition items in refrigerator" in (lbl or "").lower() for lbl in segment_labels):
+        return segment_labels
+
+    hold_reposition = (
+        "hold container with left hand, reposition items in refrigerator with right hand"
+    )
+    place_label = "place container in refrigerator with right hand"
+    updated = list(segment_labels)
+    last = len(updated) - 1
+    for index in range(1, last):
+        if "reposition items in refrigerator" in (updated[index] or "").lower():
+            updated[index] = hold_reposition
+    if "place container in refrigerator" in (updated[last] or "").lower():
+        updated[last] = place_label
+    return updated
 
 
 def adjust_wiping_rotation_by_segment_index(
@@ -1511,7 +1588,7 @@ def _validate_and_repair_clauses(label: str) -> str:
         piece = clause.strip()
         if not piece or _BARE_PICK_UP.match(piece):
             continue
-        if not _clause_has_hand_attribution(piece) and fallback_hand:
+        if not _clause_has_hand_attribution(piece) and fallback_hand and _clause_needs_hand_tag(piece):
             piece = f"{piece} with {fallback_hand}".strip()
         repaired.append(piece)
 
@@ -2163,6 +2240,8 @@ def draft_preserving_cleaner(
         return "No Action"
 
     label = _normalize_draft_separators(label)
+    label = _collapse_simultaneous_pickups(label)
+    label = _strip_navigation_clauses(label)
     label = _apply_safe_syntax_fixes(label)
     if label == "No Action":
         return label

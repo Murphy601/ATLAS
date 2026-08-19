@@ -30,12 +30,27 @@ _MISLABELLED_MANIPULATION = re.compile(
     r"^(reposition|adjust|organize|arrange|straighten|move)\s+",
     re.IGNORECASE,
 )
+_WIPE_SURFACES = (
+    "shelf",
+    "wardrobe",
+    "counter",
+    "table",
+    "desk",
+    "door",
+    "wall",
+    "floor",
+    "ground",
+    "surface",
+    "rack",
+)
+_ORGANIZE_SURFACES = frozenset(
+    {"refrigerator", "fridge", "cabinet", "drawer", "closet"}
+)
 _MANIPULATION_ON_SURFACE = re.compile(
     r"^(?:reposition|adjust|organize|arrange|straighten|move)\s+"
-    r"(.+?)\s+(?:on|in|into|at)\s+((?:[\w-]+\s+)*(?:"
-    r"shelf|wardrobe|counter|table|desk|door|wall|refrigerator|cabinet|drawer|closet|"
-    r"floor|ground|surface|rack"
-    r"))\s+with\s+(left hand|right hand)\s*$",
+    r"(.+?)\s+(?:on|in|into|at)\s+((?:[\w-]+\s+)*?(?:"
+    + "|".join(_WIPE_SURFACES + tuple(_ORGANIZE_SURFACES))
+    + r"))\s+with\s+(left hand|right hand)\s*$",
     re.IGNORECASE,
 )
 _SIMPLE_OBJECT_HAND = re.compile(
@@ -51,22 +66,10 @@ _SURFACE_WIPE_ITEMS = frozenset(
     {
         "sock",
         "socks",
-        "item",
-        "items",
-        "thing",
-        "things",
-        "object",
-        "objects",
-        "clothes",
-        "clothing",
-        "garment",
-        "garments",
+        "cloth",
         "towel",
         "towels",
-        "cloth",
         "package",
-        "box",
-        "container",
     }
 )
 
@@ -96,6 +99,8 @@ def extract_wipe_target(label: str) -> tuple[str, str]:
     if match:
         item = match.group(1).strip().lower()
         surface = _normalize_surface(match.group(2).strip())
+        if surface in _ORGANIZE_SURFACES:
+            return "", "skip"
         if item in _SURFACE_WIPE_ITEMS:
             return surface, "surface"
         return item, "object"
@@ -392,7 +397,7 @@ def apply_clip_motion_enrichment(
         return segment_labels
 
     target, target_kind = _resolve_wipe_target(segment_labels)
-    if not target:
+    if not target or target_kind == "skip":
         return segment_labels
 
     is_wiping, clip_work, clip_stab, wipe_conf = motion_indicates_wiping(profiles)

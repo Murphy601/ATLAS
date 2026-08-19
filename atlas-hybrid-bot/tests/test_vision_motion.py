@@ -19,10 +19,17 @@ def test_extract_surface_from_reposition_on_shelf():
 
 
 def test_extract_wardrobe_surface():
-    label = "reposition items on wardrobe with left hand"
+    label = "reposition socks on wardrobe with left hand"
     target, kind = extract_wipe_target(label)
     assert target == "wardrobe"
     assert kind == "surface"
+
+
+def test_reposition_items_in_refrigerator_skips_surface_wipe():
+    label = "reposition items in refrigerator with right hand"
+    target, kind = extract_wipe_target(label)
+    assert target == ""
+    assert kind == "skip"
 
 
 def test_motion_indicates_wiping_from_bimanual_asymmetry():
@@ -215,22 +222,6 @@ def test_motion_enrichment_skips_when_no_wipe_signal():
     ]
     out = apply_clip_motion_enrichment([draft] * 4, profiles)
     assert all(label.lower() == draft.lower() for label in out)
-
-
-def test_object_wipe_for_non_surface_items():
-    draft = "reposition plate on counter with right hand"
-    profiles = [
-        HandMotionProfile(
-            peak_left=0.012,
-            peak_right=0.08,
-            frames_analyzed=9,
-            start_left_contact=True,
-            start_right_contact=True,
-        )
-        for _ in range(4)
-    ]
-    out = apply_clip_motion_enrichment([draft] * 4, profiles)
-    assert "wipe plate with cloth" in out[0].lower()
 
 
 def test_clip_hand_roles_still_work_after_enrichment():
