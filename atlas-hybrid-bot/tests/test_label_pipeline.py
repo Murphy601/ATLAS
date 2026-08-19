@@ -408,17 +408,14 @@ def test_last_glass_wipe_segment_keeps_hold():
     )
 
 
-def test_pick_up_and_place_expands_to_two_clauses():
+def test_pick_up_and_place_expands_to_canonical_and_syntax():
     out = atlas_guide_cleaner("pick up and place wrench with right hand")
-    assert "pick up wrench with right hand" in out.lower()
-    assert "place wrench on table with right hand" in out.lower()
-    assert "pick up," not in out.lower()
+    assert out.lower() == "pick up wrench and place wrench on table with right hand"
 
 
 def test_malformed_pick_up_comma_place_repaired():
     out = atlas_guide_cleaner("pick up, place wrench with right hand")
-    assert "pick up wrench with right hand" in out.lower()
-    assert "place wrench on table with right hand" in out.lower()
+    assert out.lower() == "pick up wrench and place wrench on table with right hand"
 
 
 def test_pick_up_cloth_both_hands_defaults_to_left():
@@ -489,6 +486,35 @@ def test_format_hand_transfer_helper():
         format_hand_transfer("bottle", "right hand", "left hand")
         == "pass bottle from right hand to left hand"
     )
+
+
+def test_normalize_hand_transfer_rewrites_transfer_to_pass():
+    from label_pipeline import normalize_hand_transfer
+
+    assert normalize_hand_transfer("transfer wrench to right hand").lower() == (
+        "pass wrench from left hand to right hand"
+    )
+    assert normalize_hand_transfer(
+        "hold bottle with left hand, transfer bottle to right hand"
+    ).lower() == (
+        "hold bottle with left hand, pass bottle from left hand to right hand"
+    )
+
+
+def test_fix_pick_and_place_recovers_missing_object_and_joins():
+    from label_pipeline import fix_pick_and_place_grammar
+
+    out = fix_pick_and_place_grammar(
+        "pick up with right hand, place wrench on table with right hand"
+    )
+    assert out.lower() == "pick up wrench and place wrench on table with right hand"
+
+
+def test_same_hand_pick_place_uses_and_syntax():
+    out = atlas_guide_cleaner(
+        "pick up wrench with right hand, place wrench on table with right hand"
+    )
+    assert out.lower() == "pick up wrench and place wrench on table with right hand"
 
 
 def test_simplify_kitchen_nouns():

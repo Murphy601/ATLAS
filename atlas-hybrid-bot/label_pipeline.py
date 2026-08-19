@@ -36,6 +36,7 @@ from label_generator import (
     HOLD_CLAUSE_PATTERN,
     PLACE_LOCATION_PATTERN,
     WIPE_VERBS,
+    _fill_missing_clause_objects,
     _int_to_words,
     _leading_verb,
     apply_state_continuity,
@@ -232,6 +233,62 @@ def _repair_malformed_pick_up_place(text: str) -> str:
         repaired = f"pick up {noun} with {hand}, place {noun} {target} with {hand}"
         return text[: match.start()] + repaired + text[match.end() :]
     return text
+
+
+_SAME_HAND_PICK_PLACE = re.compile(
+    r"^pick up\s+(.+?)\s+with\s+(left|right)\s+hand,\s*"
+    r"place\s+\1\s+(on|in|into|onto)\s+(.+?)\s+with\s+\2\s+hand$",
+    re.IGNORECASE,
+)
+
+_HAND_TRANSFER_TO = re.compile(
+    r"(?:pass|transfer|move)\s+(.+?)\s+to\s+(left|right)\s+hand",
+    re.IGNORECASE,
+)
+
+
+def fix_pick_and_place_grammar(label: str) -> str:
+    """
+    Recover missing object nouns and join same-hand pick-and-place into ATLAS
+    canonical form: pick up X and place X on Y with [hand].
+    """
+    label = (label or "").strip()
+    if not label or label == "No Action":
+        return label
+
+    label = _fill_missing_clause_objects(label)
+
+    match = _SAME_HAND_PICK_PLACE.match(label)
+    if match:
+        obj = match.group(1).strip()
+        hand = match.group(2).lower()
+        prep = match.group(3).lower()
+        location = match.group(4).strip()
+        return f"pick up {obj} and place {obj} {prep} {location} with {hand} hand"
+
+    return label
+
+
+def normalize_hand_transfer(label: str) -> str:
+    """
+    Normalize hand-to-hand transfers to pass [object] from [hand] to [hand].
+    Example: transfer wrench to right hand -> pass wrench from left hand to right hand
+    """
+    label = (label or "").strip()
+    if not label or label == "No Action":
+        return label
+    if re.search(r"\bfrom\s+(?:left|right)\s+hand\b", label, re.IGNORECASE):
+        return label
+
+    match = _HAND_TRANSFER_TO.search(label)
+    if not match:
+        return label
+
+    obj = match.group(1).strip()
+    to_hand = match.group(2).lower()
+    from_hand = "right" if to_hand == "left" else "left"
+    replacement = f"pass {obj} from {from_hand} hand to {to_hand} hand"
+    return _HAND_TRANSFER_TO.sub(replacement, label)
 
 
 def _normalize_draft_separators(text: str) -> str:
@@ -1315,7 +1372,10 @@ def normalize_episode_sequence(
     - Discrete transfer tasks (pick up/place): preserve 'pick up' on every segment
     - Every segment: clean up pick-and-place locations and preposition order
     """
-    cleaned = [normalize_pick_and_place(lbl or "") for lbl in segment_labels]
+    cleaned = [
+        fix_pick_and_place_grammar(normalize_pick_and_place(lbl or ""))
+        for lbl in segment_labels
+    ]
     cleaned = apply_clip_motion_enrichment(cleaned, motion_profiles)
     cleaned = apply_clip_hand_consensus(cleaned, motion_profiles)
     cleaned = normalize_refrigerator_organizing_episode(cleaned)
@@ -2271,6 +2331,7 @@ def draft_preserving_cleaner(
     )
     label = fix_cloth_smoothing(label)
     label = _normalize_pass_syntax(label)
+    label = normalize_hand_transfer(label)
     label = _rewrite_bottle_pickup_to_pass(label, next_label, previous_label)
     label = _rewrite_bag_pickup_place_to_pass(label, duration_seconds)
     label = correct_container_action(
@@ -2335,6 +2396,7 @@ def draft_preserving_cleaner(
         label, previous_label, next_label, clip_draft_blob
     )
     label = normalize_pick_and_place(label)
+    label = fix_pick_and_place_grammar(label)
     label = sanitize_tool_actions(label)
     label = sanitize_grooming_and_tool_actions(label)
 
@@ -2443,6 +2505,8 @@ def generate_label_hybrid(
         draft_label,
         duration_seconds=duration_seconds,
     )
+    label = fix_pick_and_place_grammar(label)
+    label = normalize_hand_transfer(label)
     return apply_vision_hand_corrections(label, motion)
 
 
