@@ -684,6 +684,8 @@ def simplify_object_nouns(label: str) -> str:
     updated = enforce_canonical_atlas_nouns(label)
     for pattern, replacement in _EXTRA_OBJECT_NOUN_STRIPPERS:
         updated = re.sub(pattern, replacement, updated, flags=re.IGNORECASE)
+    if not re.search(r"\b(?:wrench|toolbox)\b", updated, re.IGNORECASE):
+        updated = re.sub(r"\bmetal pin\b", "pin", updated, flags=re.IGNORECASE)
     return updated
 
 
@@ -1225,6 +1227,36 @@ def normalize_pick_and_place(label: str) -> str:
     return ", ".join(fixed)
 
 
+def _strip_hallucinated_on_table(label: str) -> str:
+    """Remove default 'on table' when a more specific placement target is present."""
+    if not label or label == "No Action":
+        return label
+    if _SPECIFIC_PLACE_TARGETS.search(label):
+        return re.sub(r"\s*\bon table\b", "", label, flags=re.IGNORECASE)
+    return label
+
+
+def normalize_segment_label(label: str) -> str:
+    """
+    Applies ATLAS rule hierarchy to a single segment label:
+    base noun simplification, dual-hand hold-first ordering, redundant-hold
+    stripping on single-tool tasks, same-hand pick-and-place joining, and
+    conflicting placement-target cleanup.
+    """
+    label = (label or "").strip()
+    if not label or label == "No Action":
+        return label
+
+    label = simplify_object_nouns(label)
+    label = normalize_pick_and_place(label)
+    label = reorder_atlas_clauses(label)
+    label = fix_pick_and_place_grammar(label)
+    label = sanitize_grooming_and_tool_actions(label)
+    label = sanitize_tool_actions(label)
+    label = _strip_hallucinated_on_table(label)
+    return label
+
+
 def sanitize_tool_actions(label: str) -> str:
     """
     Prevents invalid clause injection/reordering on tool-based continuous actions
@@ -1253,7 +1285,7 @@ def sanitize_tool_actions(label: str) -> str:
 
 
 _SINGLE_TOOL_VERB_PATTERN = re.compile(
-    r"^(?:trim|cut|shear|clip|iron|mop|scrub|vacuum|sweep)\b",
+    r"^(?:trim|cut|shear|clip|iron|mop|scrub|vacuum|sweep|dig)\b",
     re.IGNORECASE,
 )
 _HOLD_STABILIZER_CLAUSE = re.compile(
@@ -1265,7 +1297,7 @@ _BIMANUAL_TOOL_INSTRUMENT = re.compile(
     re.IGNORECASE,
 )
 _STRIP_HOLD_TOOL_VERBS = frozenset(
-    {"trim", "cut", "shear", "clip", "iron", "mop", "vacuum", "sweep"}
+    {"trim", "cut", "shear", "clip", "iron", "mop", "vacuum", "sweep", "dig"}
 )
 _PRESERVE_HOLD_TOOL_VERBS = frozenset({"scrub", "wipe", "sand", "polish", "rub", "buff"})
 
@@ -1460,8 +1492,10 @@ def normalize_handover_sequence(segment_labels: list[str]) -> list[str]:
     if not segment_labels:
         return segment_labels
 
+    prepped = [normalize_segment_label(lbl or "") for lbl in segment_labels]
+
     with_passes: list[str] = []
-    for index, label in enumerate(segment_labels):
+    for index, label in enumerate(prepped):
         label = (label or "").strip()
         next_label = segment_labels[index + 1] if index + 1 < len(segment_labels) else None
         if label and label != "No Action":
@@ -1485,9 +1519,14 @@ def normalize_handover_sequence(segment_labels: list[str]) -> list[str]:
         if handover_match:
             active_hand = handover_match.group(3).lower()
 
-        processed.append(simplify_object_nouns(label))
+        processed.append(normalize_segment_label(label))
 
     return processed
+
+
+def process_multi_segment_sequence(segment_labels: list[str]) -> list[str]:
+    """Track hand custody and apply segment rules across an entire clip."""
+    return normalize_handover_sequence(segment_labels)
 
 
 def normalize_episode_wiping_verbs(
@@ -1529,13 +1568,7 @@ def normalize_episode_sequence(
     - Discrete transfer tasks (pick up/place): preserve 'pick up' on every segment
     - Every segment: clean up pick-and-place locations and preposition order
     """
-    cleaned = [
-        simplify_object_nouns(
-            fix_pick_and_place_grammar(normalize_pick_and_place(lbl or ""))
-        )
-        for lbl in segment_labels
-    ]
-    cleaned = normalize_handover_sequence(cleaned)
+    cleaned = process_multi_segment_sequence(segment_labels)
     cleaned = apply_clip_motion_enrichment(cleaned, motion_profiles)
     cleaned = apply_clip_hand_consensus(cleaned, motion_profiles)
     cleaned = normalize_refrigerator_organizing_episode(cleaned)
@@ -2555,10 +2588,8 @@ def draft_preserving_cleaner(
     label = _complete_hose_set_pickup_can(
         label, previous_label, next_label, clip_draft_blob
     )
-    label = normalize_pick_and_place(label)
-    label = fix_pick_and_place_grammar(label)
-    label = sanitize_tool_actions(label)
-    label = sanitize_grooming_and_tool_actions(label)
+    label = _inject_missing_handover_pass(label, next_label)
+    label = normalize_segment_label(label)
 
     return label
 
@@ -2665,9 +2696,11 @@ def generate_label_hybrid(
         draft_label,
         duration_seconds=duration_seconds,
     )
-    label = fix_pick_and_place_grammar(label)
+    label = _rewrite_bottle_pickup_to_pass(label, next_label, previous_label)
+    label = _inject_missing_handover_pass(label, next_label)
+    label = _align_place_hand_after_pass(label, previous_label)
+    label = normalize_segment_label(label)
     label = normalize_hand_transfer(label)
-    label = simplify_object_nouns(label)
     return apply_vision_hand_corrections(label, motion)
 
 

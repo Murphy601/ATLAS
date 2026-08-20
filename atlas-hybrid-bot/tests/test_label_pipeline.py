@@ -535,7 +535,7 @@ def test_simplify_object_nouns_orange_snack_bag():
 
 
 def test_normalize_handover_sequence_injects_pass_and_fixes_place_hand():
-    from label_pipeline import normalize_handover_sequence
+    from label_pipeline import normalize_handover_sequence, process_multi_segment_sequence
 
     labels = [
         "pick up bottle with right hand",
@@ -549,6 +549,25 @@ def test_normalize_handover_sequence_injects_pass_and_fixes_place_hand():
     )
     assert out[1].lower() == "place bottle on counter with left hand"
     assert out[3].lower() == "place bag on counter with right hand"
+    assert process_multi_segment_sequence(labels) == out
+
+
+def test_normalize_segment_label_strips_redundant_hold_on_dig():
+    from label_pipeline import normalize_segment_label
+
+    out = normalize_segment_label(
+        "hold soil with left hand, dig soil with hoe in right hand"
+    )
+    assert out.lower() == "dig soil with hoe in right hand"
+
+
+def test_normalize_segment_label_reorders_hold_first():
+    from label_pipeline import normalize_segment_label
+
+    out = normalize_segment_label(
+        "strip blue wire with pliers in right hand, hold blue wire with left hand"
+    )
+    assert out.lower().startswith("hold blue wire with left hand")
 
 
 def test_simplify_blue_cable_to_blue_wire():
