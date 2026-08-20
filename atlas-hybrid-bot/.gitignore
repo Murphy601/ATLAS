@@ -1,0 +1,10 @@
+venv/
+models/
+hand_landmarker.task
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.mp4
+!tests/fixtures/**

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Atlas Capture Fixture</title>
+  </head>
+  <body>
+    <nav>
+      <a href="#tasks" id="nav-tasks">Tasks</a>
+    </nav>
+    <aside id="training-sidebar">
+      <p>PROGRESS</p>
+      <button type="button" id="nav-practice-assessment">Practice assessment</button>
+      <button type="button" id="nav-assessment">Assessment</button>
+    </aside>
+    <section id="assessment-landing">
+      <h1>Assessment</h1>
+      <p>3 attempts, 70% to pass</p>
+    </section>
+    <section id="tasks-page" hidden>
+      <h1>Tasks</h1>
+      <p>Complete your next onboarding requirement</p>
+      <button type="button" id="continue-practice">
+        Continue Assessment Practice
+      </button>
+      <button type="button" id="review-task" hidden>Review</button>
+    </section>
+    <section id="clip-page" hidden>
+      <p id="clip-heading">Practice clip 1 of 3</p>
+      <video
+        id="player"
+        muted
+        playsinline
+        controls
+        width="320"
+        height="180"
+        src="clip-1"
+        poster="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+      ></video>
+      <form id="annotation-form">
+        <div data-segment>
+          <button type="button">Play segment 1</button>
+          <span>0:00.00—0:01.67</span>
+          <input
+            data-ph-unmask="true"
+            aria-label="Segment 1 label"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="2000"
+            data-segment-start-seconds="0"
+            data-segment-end-seconds="1.67"
+            value="pick up bucket with left hand, pick up tool with ri"
+          />
+        </div>
+        <div data-segment>
+          <button type="button">Play segment 2</button>
+          <span>0:01.67—0:11.66</span>
+          <input
+            data-ph-unmask="true"
+            aria-label="Segment 2 label"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="2000"
+            data-segment-start-seconds="1.67"
+            data-segment-end-seconds="11.66"
+            value="dig soil with tool in right hand"
+          />
+        </div>
+        <button
+          id="submit-clip"
+          data-slot="button"
+          type="submit"
+          class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-medium h-9 px-4 py-2 min-w-40 bg-[#6c5ce7] text-white hover:bg-[#5848d8]"
+        >
+          Submit practice clip
+        </button>
+      </form>
+      <p id="submitted" hidden>submitted</p>
+      <button type="button" id="next-task" hidden>Next task</button>
+    </section>
+    <script>
+      function showPracticeQueue() {
+        document.getElementById("assessment-landing").hidden = true;
+        document.getElementById("tasks-page").hidden = false;
+        document.getElementById("clip-page").hidden = true;
+      }
+      function showClipEditor() {
+        document.getElementById("assessment-landing").hidden = true;
+        document.getElementById("tasks-page").hidden = true;
+        document.getElementById("clip-page").hidden = false;
+      }
+      document.getElementById("nav-practice-assessment").addEventListener("click", showPracticeQueue);
+      document.getElementById("nav-assessment").addEventListener("click", () => {
+        document.getElementById("assessment-landing").hidden = false;
+        document.getElementById("tasks-page").hidden = true;
+        document.getElementById("clip-page").hidden = true;
+      });
+      document.getElementById("continue-practice").addEventListener("click", showClipEditor);
+      document.getElementById("review-task").addEventListener("click", showClipEditor);
+      document.getElementById("nav-tasks").addEventListener("click", (event) => {
+        event.preventDefault();
+        showPracticeQueue();
+      });
+      document.getElementById("annotation-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        document.getElementById("submitted").hidden = false;
+        document.getElementById("next-task").hidden = false;
+        document.getElementById("submit-clip").hidden = true;
+      });
+      document.getElementById("next-task").addEventListener("click", () => {
+        document.getElementById("clip-heading").textContent = "Practice clip 2 of 3";
+        document.getElementById("player").setAttribute("src", "clip-2");
+        const first = document.querySelector('input[aria-label="Segment 1 label"]');
+        const second = document.querySelector('input[aria-label="Segment 2 label"]');
+        first.value = "stir meat and onions with ladle in right hand";
+        first.setAttribute("data-segment-start-seconds", "0");
+        first.setAttribute("data-segment-end-seconds", "2.10");
+        second.value = "hold bowl with left hand";
+        second.setAttribute("data-segment-start-seconds", "2.10");
+        second.setAttribute("data-segment-end-seconds", "8.00");
+        document.getElementById("submitted").hidden = true;
+        document.getElementById("next-task").hidden = true;
+        document.getElementById("submit-clip").hidden = false;
+      });
+    </script>
+  </body>
+</html>
