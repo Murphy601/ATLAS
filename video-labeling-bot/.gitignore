@@ -1,0 +1,14 @@
+venv/
+.env
+browser_session/
+browser_session_test/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.mp4
+!tests/fixtures/**
+original_drafts/
+.DS_Store

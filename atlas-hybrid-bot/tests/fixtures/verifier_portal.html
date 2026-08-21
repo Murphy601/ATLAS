@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Atlas Verifier Fixture</title>
+  </head>
+  <body>
+    <nav>
+      <a href="#tasks" id="nav-tasks">Tasks</a>
+    </nav>
+    <aside id="training-sidebar">
+      <button type="button" id="nav-human-verifier">Human Verifier training</button>
+      <button type="button" id="nav-practice-assessment">Practice assessment</button>
+    </aside>
+    <section id="onboarding-page" hidden>
+      <h1>How it works</h1>
+      <p>Step 1 of 3</p>
+      <button type="button" id="onboarding-continue">Continue</button>
+    </section>
+    <section id="verifier-page" hidden>
+      <h1>Try it out — Multi-step Cooking</h1>
+      <p>Episode ID: test-episode-001</p>
+      <video
+        id="player"
+        muted
+        playsinline
+        controls
+        width="320"
+        height="180"
+        src="clip-1"
+      ></video>
+      <aside id="verifier-panel">
+        <h2>Verify what the hands are doing</h2>
+        <div data-verifier-clause="1">
+          <span class="clause-text">hold glass cup with left hand</span>
+          <button type="button" aria-label="Approve clause 1">Thumbs up 1</button>
+          <button type="button" aria-label="Reject clause 1">Thumbs down 1</button>
+        </div>
+        <div data-verifier-clause="2">
+          <span class="clause-text">scrub glass cup with sponge in right hand</span>
+          <button type="button" aria-label="Approve clause 2">Thumbs up 2</button>
+          <button type="button" aria-label="Reject clause 2">Thumbs down 2</button>
+        </div>
+        <p>Is any important action missing?</p>
+        <button type="button" id="missing-yes">Yes</button>
+        <button type="button" id="missing-no">No</button>
+        <button type="button" id="check-answer">Check answer</button>
+        <button type="button" id="verifier-next" hidden>Next →</button>
+        <p id="checked" hidden>checked</p>
+      </aside>
+    </section>
+    <script>
+      function showVerifier() {
+        document.getElementById("onboarding-page").hidden = true;
+        document.getElementById("verifier-page").hidden = false;
+      }
+      document.getElementById("nav-human-verifier").addEventListener("click", () => {
+        document.getElementById("onboarding-page").hidden = false;
+        document.getElementById("verifier-page").hidden = true;
+      });
+      document.getElementById("onboarding-continue").addEventListener("click", showVerifier);
+      document.getElementById("check-answer").addEventListener("click", () => {
+        document.getElementById("checked").hidden = false;
+        document.getElementById("verifier-next").hidden = false;
+      });
+      document.getElementById("verifier-next").addEventListener("click", () => {
+        document.querySelector('[data-verifier-clause="1"] .clause-text').textContent =
+          "hold container with left hand";
+        document.querySelector('[data-verifier-clause="2"] .clause-text').textContent =
+          "scoop food from container into pot with spoon in right hand";
+        document.getElementById("player").setAttribute("src", "clip-2");
+        document.getElementById("checked").hidden = true;
+        document.getElementById("verifier-next").hidden = true;
+      });
+    </script>
+  </body>
+</html>
