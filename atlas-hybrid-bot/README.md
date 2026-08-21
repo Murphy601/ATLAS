@@ -33,6 +33,7 @@ No API key needed.
 |---|---|
 | `--mode practice` | Training Practice assessment (default) |
 | `--mode assessment` | Graded 70% test |
+| `--mode verifier` | Human Verifier training (thumbs up/down per clause) |
 | `--mode auto` | Practice first, then graded |
 | `--auto-submit` | Submit without review pause |
 | `--headless` | Headless capture (needs prior login cookies) |

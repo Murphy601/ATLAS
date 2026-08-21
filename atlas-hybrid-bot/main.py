@@ -27,6 +27,11 @@ from label_pipeline import (
     normalize_episode_sequence,
     resolve_hand_tag,
 )
+from verifier_logic import (
+    decide_clause_verification,
+    decide_missing_action,
+    expected_clauses_from_label,
+)
 
 load_dotenv()
 
@@ -323,6 +328,141 @@ def _pause_for_review_then_submit(
     return "submitted"
 
 
+def process_verifier_exercise(
+    bot: VideoBrowserBot,
+    *,
+    interval_seconds: float = 1.0,
+):
+    """Watch a verifier clip, judge each description, and submit Check answer."""
+    if not bot.is_verifier_exercise():
+        print("[Hybrid]: No Human Verifier exercise open.")
+        return False
+
+    bot.prepare_video_playback()
+    clauses = bot.discover_verifier_clauses()
+    if not clauses:
+        print("[Hybrid]: No verifier clauses found on page.")
+        return False
+
+    duration = max(0.5, min(bot._video_duration() or 4.0, 30.0))
+    chunk = bot.capture_clip_frames(
+        interval_seconds=interval_seconds,
+        duration_seconds=duration,
+    )
+    draft_blob = ", ".join(clause.text for clause in clauses)
+    print(f"[Hybrid]: Verifier draft clauses: '{draft_blob}'")
+
+    pipeline = AtlasHybridPipeline()
+    expected = "No Action"
+    try:
+        if chunk:
+            expected = generate_label_hybrid(
+                [frame[1] for frame in chunk],
+                pipeline,
+                draft_label=draft_blob,
+                duration_seconds=duration,
+                frame_timestamps=[frame[0] for frame in chunk],
+                frames_have_video=bot.last_frames_have_video,
+            )
+        else:
+            expected = atlas_guide_cleaner(draft_blob, duration_seconds=duration)
+    finally:
+        pipeline.close()
+
+    print(f"[Hybrid]: Expected reference label: '{expected}'")
+    expected_clauses = expected_clauses_from_label(expected)
+    clause_texts = [clause.text for clause in clauses]
+
+    for index, clause in enumerate(clauses):
+        approve = decide_clause_verification(
+            clause.text,
+            clause_texts,
+            expected_clauses=expected_clauses,
+            index=index,
+        )
+        bot.verify_clause(clause, approve=approve)
+
+    missing = decide_missing_action(clause_texts, expected_label=expected)
+    bot.answer_missing_action(missing)
+    bot.click_check_answer()
+    return True
+
+
+def _pause_for_verifier_review(bot: VideoBrowserBot, auto_submit: bool) -> str:
+    if auto_submit:
+        bot.click_verifier_next()
+        return "submitted"
+    try:
+        input(
+            "\n[Review Mode]: Inspect verifier thumbs and missing-action choice, "
+            "then press ENTER to continue to the next clip (Ctrl+C to stop)..."
+        )
+    except EOFError:
+        print("\n[Review Mode]: No interactive stdin. Skipping advance.")
+        return "skipped"
+    bot.click_verifier_next()
+    return "submitted"
+
+
+def run_verifier_queue(
+    bot: VideoBrowserBot,
+    *,
+    interval_seconds: float = 1.0,
+    auto_submit: bool = False,
+    max_exercises: int | None = None,
+    next_timeout: float | None = None,
+):
+    exercise = 0
+    print(
+        "[Hybrid]: Human Verifier mode — watch clip, judge clauses, Check answer, Next. "
+        "Ctrl+C to stop."
+    )
+    while max_exercises is None or exercise < max_exercises:
+        if not bot.has_open_episode():
+            bot.ensure_labeling_ready(timeout=90.0)
+        if not bot.is_verifier_exercise():
+            if not bot.wait_for_new_episode("", timeout=next_timeout):
+                print("[Hybrid]: No verifier exercise opened. Stopping.")
+                return
+        fingerprint = bot.verifier_fingerprint() or bot.episode_fingerprint()
+        exercise += 1
+        print(f"\n[Hybrid]: Verifying clip {exercise}...")
+        try:
+            processed = process_verifier_exercise(bot, interval_seconds=interval_seconds)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            if _is_browser_disconnect(exc):
+                raise
+            print(f"[Hybrid]: Verifier clip {exercise} failed: {exc}")
+            processed = False
+        if not processed:
+            print("[Hybrid]: Nothing to verify. Waiting for next clip...")
+            if not bot.wait_for_new_episode(fingerprint, timeout=next_timeout):
+                return
+            exercise -= 1
+            continue
+
+        result = _pause_for_verifier_review(bot, auto_submit)
+        if result == "skipped":
+            print("[Hybrid]: Advance skipped. Waiting for next clip.")
+        else:
+            print("[Hybrid]: Advanced to next verifier clip when available.")
+
+        if max_exercises is not None and exercise >= max_exercises:
+            return
+        advanced = bot.wait_for_new_episode(fingerprint, timeout=next_timeout)
+        if not advanced:
+            print("[Hybrid]: Next verifier clip did not load. Checking Tasks...")
+            bot.open_work_queue()
+            if bot.is_verifier_exercise():
+                current = bot.verifier_fingerprint() or bot.episode_fingerprint()
+                if current != fingerprint:
+                    continue
+            print("[Hybrid]: Verifier queue idle. Stopping.")
+            return
+
+
 def run_live_queue(
     bot: VideoBrowserBot,
     segment_duration: float = 3.0,
@@ -472,9 +612,12 @@ def parse_args():
     )
     parser.add_argument(
         "--mode",
-        choices=("practice", "assessment", "auto"),
+        choices=("practice", "assessment", "auto", "verifier"),
         default=os.getenv("ATLAS_LABEL_MODE", ATLAS_LABEL_MODE),
-        help="practice = Practice assessment; assessment = graded; auto = practice then graded.",
+        help=(
+            "practice = Practice assessment; assessment = graded; "
+            "auto = practice then graded; verifier = Human Verifier training"
+        ),
     )
     parser.add_argument(
         "--headless",
@@ -544,12 +687,19 @@ def main():
             )
             _pause_for_review_then_submit(bot, auto_submit)
         else:
-            run_live_queue(
-                bot,
-                segment_duration=args.segment_duration,
-                interval_seconds=args.frame_interval,
-                auto_submit=auto_submit,
-            )
+            if args.mode == "verifier":
+                run_verifier_queue(
+                    bot,
+                    interval_seconds=args.frame_interval,
+                    auto_submit=auto_submit,
+                )
+            else:
+                run_live_queue(
+                    bot,
+                    segment_duration=args.segment_duration,
+                    interval_seconds=args.frame_interval,
+                    auto_submit=auto_submit,
+                )
 
     except KeyboardInterrupt:
         print("\n[Hybrid]: Stopped by Ctrl+C.")

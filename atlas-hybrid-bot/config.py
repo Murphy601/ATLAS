@@ -705,11 +705,49 @@ SELECTORS = {
     "submit_button": 'button:has-text("Submit practice clip"), button:has-text("Submit clip"), button:has-text("Submit episode"), button:has-text("Submit video")',
     "submit_button_generic": 'button[data-slot="button"]:has-text("Submit"), button:has-text("Complete"), button:has-text("Submit assessment")',
     "submit_btn": 'button:has-text("Submit practice clip"), button[data-slot="button"]:has-text("Submit"), button:has-text("Submit"), button:has-text("Complete"), button[type="submit"]',
+    "human_verifier_training": (
+        'a:has-text("Human Verifier training"), button:has-text("Human Verifier training"), '
+        '[role="link"]:has-text("Human Verifier training"), '
+        '[role="button"]:has-text("Human Verifier training")'
+    ),
+    "verifier_panel": (
+        'text="Verify what the hands are doing", '
+        'h1:has-text("Verify what the hands are doing"), '
+        'h2:has-text("Verify what the hands are doing"), '
+        'h3:has-text("Verify what the hands are doing")'
+    ),
+    "verifier_clause_row": "[data-verifier-clause], [data-clause-row], li[data-clause]",
+    "verifier_thumbs_up": (
+        'button[aria-label*="approve" i], button[aria-label*="thumbs up" i], '
+        'button[aria-label*="match" i], button[title*="approve" i]'
+    ),
+    "verifier_thumbs_down": (
+        'button[aria-label*="reject" i], button[aria-label*="thumbs down" i], '
+        'button[aria-label*="does not match" i], button[title*="reject" i]'
+    ),
+    "missing_action_question": 'text="Is any important action missing?"',
+    "missing_action_yes": (
+        'button:has-text("Yes"):near(:text("Is any important action missing?"))'
+    ),
+    "missing_action_no": (
+        'button:has-text("No"):near(:text("Is any important action missing?"))'
+    ),
+    "check_answer": (
+        'button:has-text("Check answer"), button:has-text("Check Answer"), '
+        'button:has-text("Submit answer")'
+    ),
+    "verifier_next": (
+        'button:has-text("Next →"), button:has-text("Next"), a:has-text("Next →")'
+    ),
+    "how_it_works_continue": (
+        'button:has-text("Continue"), button:has-text("Next"), button:has-text("Got it"), '
+        'button:has-text("Start verifying")'
+    ),
 }
 
 # Pipeline defaults (overridable via environment variables)
 DEFAULT_PORTAL_URL = os.getenv("PORTAL_URL", "https://audit.atlascapture.io/")
-# practice = training sidebar Practice assessment; assessment = graded 70% test; auto = practice first
+# practice | assessment | auto | verifier (Human Verifier training thumbs up/down UI)
 ATLAS_LABEL_MODE = os.getenv("ATLAS_LABEL_MODE", "practice").strip().lower()
 DEFAULT_SEGMENT_DURATION = float(os.getenv("SEGMENT_DURATION", "3.0"))
 DEFAULT_FRAME_INTERVAL = float(os.getenv("FRAME_INTERVAL", "0.5"))

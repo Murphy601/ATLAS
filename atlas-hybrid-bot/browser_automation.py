@@ -53,7 +53,8 @@ WINDOW_SLACK_SECONDS = 0.6
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["training_home"]}, '
     f'{SELECTORS["continue_practice"]}, {SELECTORS["practice_assessment"]}, '
-    f'{SELECTORS["segment_input"]}'
+    f'{SELECTORS["segment_input"]}, {SELECTORS["verifier_panel"]}, '
+    f'{SELECTORS["human_verifier_training"]}'
 )
 
 
@@ -109,6 +110,13 @@ class SegmentRow:
         if self.end_seconds is None:
             return 3.0
         return max(0.2, self.end_seconds - self.start_seconds)
+
+
+@dataclass(frozen=True)
+class VerifierClauseRow:
+    index: int
+    text: str
+    row_selector: str = ""
 
 
 class VideoBrowserBot:
@@ -214,10 +222,12 @@ class VideoBrowserBot:
         except PlaywrightTimeoutError:
             print("[Browser Bot]: Still on login or unknown page. Continuing...")
         if not self.ensure_labeling_ready(timeout=float(timeout)):
-            print(
-                "[Browser Bot]: Labeling editor not ready yet. "
-                "Open Practice assessment from the training sidebar, then retry."
+            hint = (
+                "Open Human Verifier training from the training sidebar, then Continue."
+                if ATLAS_LABEL_MODE == "verifier"
+                else "Open Practice assessment or Human Verifier training from the training sidebar, then Continue."
             )
+            print(f"[Browser Bot]: Labeling editor not ready yet. {hint}")
 
     def segment_count(self) -> int:
         """Count visible Atlas segment label inputs (0 on Assessment landing pages)."""
@@ -253,9 +263,41 @@ class VideoBrowserBot:
     def _has_visible_segments(self) -> bool:
         return self.segment_count() > 0
 
+    def is_verifier_exercise(self) -> bool:
+        """True when the Human Verifier thumbs up/down panel is visible."""
+        try:
+            panel = self.page.locator(SELECTORS["verifier_panel"]).first
+            if panel.count() > 0 and panel.is_visible():
+                return True
+        except Exception:
+            pass
+        try:
+            return bool(
+                self.page.evaluate(
+                    """() => {
+                        const body = document.body ? document.body.innerText : '';
+                        return /verify what the hands are doing/i.test(body)
+                            && /important action missing/i.test(body);
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
     def has_open_episode(self) -> bool:
-        """True when a practice clip or live episode editor has segment rows."""
-        return self._has_visible_segments()
+        """True when a practice clip editor or verifier exercise is open."""
+        return self._has_visible_segments() or self.is_verifier_exercise()
+
+    def verifier_clause_count(self) -> int:
+        return len(self.discover_verifier_clauses())
+
+    def _wait_for_verifier_rows(self, timeout: float = 20.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.is_verifier_exercise() and self.verifier_clause_count() > 0:
+                return True
+            time.sleep(0.4)
+        return False
 
     def _wait_for_segment_rows(self, timeout: float = 20.0) -> bool:
         deadline = time.time() + timeout
@@ -353,8 +395,42 @@ class VideoBrowserBot:
             return True
         return False
 
+    def _open_verifier_training_flow(self) -> bool:
+        """Human Verifier training: sidebar entry → onboarding → first exercise."""
+        if self._click_first_visible(SELECTORS["human_verifier_training"]):
+            print("[Browser Bot]: Opened Human Verifier training.")
+            time.sleep(1.0)
+        elif self._click_training_step("Human Verifier training"):
+            print("[Browser Bot]: Opened Human Verifier training from sidebar.")
+            time.sleep(1.0)
+
+        for _ in range(4):
+            if self.is_verifier_exercise() and self.verifier_clause_count() > 0:
+                return True
+            if self._click_first_visible(SELECTORS["how_it_works_continue"]):
+                time.sleep(0.8)
+                continue
+            break
+
+        for category in (
+            "Multi-step Cooking",
+            "Dishwashing & Cleaning",
+            "Electronics Disassembly",
+            "Garment Folding",
+        ):
+            if self.is_verifier_exercise() and self.verifier_clause_count() > 0:
+                return True
+            if self._click_training_step(category):
+                print(f"[Browser Bot]: Opened verifier category '{category}'.")
+                time.sleep(1.0)
+
+        if self._wait_for_verifier_rows(timeout=15.0):
+            print("[Browser Bot]: Human Verifier exercise is ready.")
+            return True
+        return False
+
     def ensure_labeling_ready(self, timeout: float = 120.0) -> bool:
-        """Navigate until segment rows exist and the in-page video is primed."""
+        """Navigate until segment rows or a verifier exercise is open."""
         deadline = time.time() + timeout
         last_queue_attempt = 0.0
         while time.time() < deadline:
@@ -367,8 +443,17 @@ class VideoBrowserBot:
                     f"[Browser Bot]: Segment editor is open ({self.segment_count()} rows)."
                 )
                 return True
+            if self.is_verifier_exercise() and self.verifier_clause_count() > 0:
+                try:
+                    self.prepare_video_playback()
+                except Exception as exc:
+                    print(f"[Browser Bot]: Video prep warning: {exc}")
+                print(
+                    f"[Browser Bot]: Verifier exercise is open "
+                    f"({self.verifier_clause_count()} clause(s))."
+                )
+                return True
             now = time.time()
-            # Avoid hammering /tasks — retry navigation at most every 8 seconds.
             if now - last_queue_attempt >= 8.0:
                 self.open_work_queue()
                 last_queue_attempt = now
@@ -446,11 +531,16 @@ class VideoBrowserBot:
         )
 
     def click_next_task(self) -> bool:
-        """Clicks Next task / Next clip. Generic Next only if the editor is gone."""
+        """Clicks Next task / Next clip / verifier Next."""
         if self._click_first_visible(SELECTORS["next_task"]):
             print("[Browser Bot]: Clicked Next task.")
             time.sleep(1.2)
             return True
+        if self.is_verifier_exercise():
+            if self._click_first_visible(SELECTORS["verifier_next"]):
+                print("[Browser Bot]: Clicked verifier Next.")
+                time.sleep(1.2)
+                return True
         if self._has_visible_segments():
             return False
         if self._click_first_visible(SELECTORS["next_generic"]):
@@ -482,8 +572,11 @@ class VideoBrowserBot:
                 )
                 last_log = now
             has_segments = self._has_visible_segments()
+            has_verifier = self.is_verifier_exercise()
             current = self.episode_fingerprint()
-            if has_segments and (not previous or current != previous):
+            if self.is_verifier_exercise():
+                current = self.verifier_fingerprint() or current
+            if (has_segments or has_verifier) and (not previous or current != previous):
                 print("[Browser Bot]: Next clip is ready.")
                 return True
             self.click_next_task()
@@ -528,13 +621,20 @@ class VideoBrowserBot:
                     break
 
     def open_work_queue(self) -> str:
-        """After login: training Practice assessment, or first listed live task."""
+        """After login: verifier training, practice assessment, or listed live task."""
         if self.segment_count() > 0:
             print("[Browser Bot]: Segment editor already open.")
             return "editor"
+        if self.is_verifier_exercise():
+            print("[Browser Bot]: Verifier exercise already open.")
+            return "verifier"
 
         self.go_to_tasks()
         mode = ATLAS_LABEL_MODE
+
+        if mode == "verifier":
+            if self._open_verifier_training_flow():
+                return "verifier"
 
         if mode in {"practice", "auto", ""}:
             if self._open_practice_assessment_flow():
@@ -550,21 +650,30 @@ class VideoBrowserBot:
                 if self._wait_for_segment_rows(timeout=15.0):
                     return "assessment"
 
+        if mode != "verifier" and self._open_verifier_training_flow():
+            return "verifier"
+
         for key in ("review_task", "start_task"):
             if self._click_first_visible(SELECTORS[key]):
                 print(f"[Browser Bot]: Opened listed task via {key}.")
                 time.sleep(1.2)
                 if self._wait_for_segment_rows(timeout=12.0):
                     return "live"
+                if self._wait_for_verifier_rows(timeout=12.0):
+                    return "verifier"
 
         if mode == "auto":
             if self._open_graded_assessment_flow():
                 return "assessment"
 
-        print(
-            "[Browser Bot]: No practice or task entry found. "
-            "Click Practice assessment in the training sidebar, then Continue."
+        hints = (
+            "Click Human Verifier training or Practice assessment in the training sidebar, "
+            "then Continue."
+            if mode == "verifier"
+            else "Click Practice assessment or Human Verifier training in the training sidebar, "
+            "then Continue."
         )
+        print(f"[Browser Bot]: No practice or task entry found. {hints}")
         return "manual"
 
     def play_segment_clip(self, segment_number: int):
@@ -707,6 +816,197 @@ class VideoBrowserBot:
             return float(value or 0)
         except Exception:
             return 0.0
+
+    def discover_verifier_clauses(self) -> list[VerifierClauseRow]:
+        """Read action descriptions shown in the Human Verifier panel."""
+        rows = self.page.evaluate(
+            """() => {
+                const verb = /^(hold|pick up|place|pass|scoop|scrub|wipe|trim|dig|rotate|strip|insert|pull|open|close|fold|smooth|smoothen|iron|mop|sweep|rake|gather|water|fill|cut|align|reposition|move|set|put)\\b/i;
+                const seen = new Set();
+                const results = [];
+
+                const explicit = Array.from(
+                    document.querySelectorAll('[data-verifier-clause], [data-clause-row], li[data-clause]')
+                );
+                for (const row of explicit) {
+                    const textEl = row.querySelector('.clause-text, [data-clause-text], p, span');
+                    const text = ((textEl && textEl.innerText) || row.innerText || '').trim();
+                    const firstLine = text.split('\\n').map((line) => line.trim()).find((line) => verb.test(line));
+                    if (!firstLine || seen.has(firstLine.toLowerCase())) continue;
+                    seen.add(firstLine.toLowerCase());
+                    row.setAttribute('data-bot-clause-index', String(results.length + 1));
+                    results.push({ index: results.length + 1, text: firstLine, rowSelector: '[data-bot-clause-index="' + (results.length + 1) + '"]' });
+                }
+                if (results.length) return results;
+
+                const panel = Array.from(document.querySelectorAll('section, aside, div, main')).find((el) => {
+                    const text = el.innerText || '';
+                    return /verify what the hands are doing/i.test(text)
+                        && /important action missing/i.test(text);
+                });
+                const scope = panel || document.body;
+                const candidates = Array.from(scope.querySelectorAll('li, p, div, span, label')).filter((el) => {
+                    if (!(el instanceof HTMLElement)) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden') return false;
+                    const text = (el.innerText || '').trim();
+                    if (!text || text.length > 140 || text.length < 8) return false;
+                    const firstLine = text.split('\\n').map((line) => line.trim()).find((line) => verb.test(line));
+                    if (!firstLine || firstLine.length > 120) return false;
+                    if (/important action missing|check answer|episode id|verify what/i.test(firstLine)) return false;
+                    const childMatch = Array.from(el.querySelectorAll('li, p, div, span')).some((child) => {
+                        if (child === el) return false;
+                        const childLine = (child.innerText || '').trim().split('\\n')[0];
+                        return verb.test(childLine || '');
+                    });
+                    return !childMatch;
+                });
+
+                for (const el of candidates) {
+                    const text = (el.innerText || '').trim().split('\\n').map((line) => line.trim()).find((line) => verb.test(line));
+                    if (!text || seen.has(text.toLowerCase())) continue;
+                    seen.add(text.toLowerCase());
+                    el.setAttribute('data-bot-clause-index', String(results.length + 1));
+                    results.push({
+                        index: results.length + 1,
+                        text,
+                        rowSelector: '[data-bot-clause-index="' + (results.length + 1) + '"]',
+                    });
+                }
+                return results;
+            }"""
+        )
+        clauses = [
+            VerifierClauseRow(
+                index=int(row.get("index") or index + 1),
+                text=str(row.get("text") or "").strip(),
+                row_selector=str(row.get("rowSelector") or ""),
+            )
+            for index, row in enumerate(rows or [])
+            if str(row.get("text") or "").strip()
+        ]
+        print(f"[Browser Bot]: Found {len(clauses)} verifier clause(s).")
+        return clauses
+
+    def verify_clause(self, clause: VerifierClauseRow, *, approve: bool) -> bool:
+        """Click thumbs up (approve) or thumbs down (reject) for one clause."""
+        if not clause.text:
+            return False
+        selector_key = "verifier_thumbs_up" if approve else "verifier_thumbs_down"
+        row = None
+        if clause.row_selector:
+            row = self.page.locator(clause.row_selector).first
+        if row is None or row.count() == 0:
+            row = self.page.get_by_text(clause.text, exact=False).first
+        try:
+            if row.count() == 0:
+                return False
+            container = row.locator("xpath=ancestor::*[self::li or @data-verifier-clause or @data-clause-row][1]")
+            target = container.locator(SELECTORS[selector_key]).first
+            if target.count() == 0:
+                buttons = container.locator("button")
+                if buttons.count() >= 2:
+                    target = buttons.nth(0 if approve else 1)
+                else:
+                    target = row.locator(SELECTORS[selector_key]).first
+            if target.count() == 0:
+                return False
+            target.scroll_into_view_if_needed()
+            target.click(timeout=3000)
+            label = "up" if approve else "down"
+            print(f"[Browser Bot]: Clause {clause.index} thumbs {label}: '{clause.text}'")
+            return True
+        except Exception as exc:
+            print(f"[Browser Bot]: Could not verify clause {clause.index}: {exc}")
+            return False
+
+    def answer_missing_action(self, missing: bool) -> bool:
+        """Answer 'Is any important action missing?' with Yes or No."""
+        choice = "Yes" if missing else "No"
+        try:
+            clicked = self.page.evaluate(
+                """({ choice }) => {
+                    const blocks = Array.from(document.querySelectorAll('section, div, form, aside, main'));
+                    const block = blocks.find((el) => /important action missing/i.test(el.innerText || ''));
+                    const scope = block || document.body;
+                    const buttons = Array.from(scope.querySelectorAll('button, [role="button"]'));
+                    const target = buttons.find((btn) => {
+                        const text = (btn.innerText || btn.textContent || '').trim();
+                        return text.toLowerCase() === choice.toLowerCase();
+                    });
+                    if (!target) return false;
+                    target.click();
+                    return true;
+                }""",
+                {"choice": choice},
+            )
+            if clicked:
+                print(f"[Browser Bot]: Missing action answer: {choice}")
+                return True
+        except Exception:
+            pass
+        selector = SELECTORS["missing_action_yes" if missing else "missing_action_no"]
+        if self._click_first_visible(selector):
+            print(f"[Browser Bot]: Missing action answer: {choice}")
+            return True
+        return self._click_labeled_buttons(choice)
+
+    def click_check_answer(self) -> bool:
+        if self._click_first_visible(SELECTORS["check_answer"]):
+            print("[Browser Bot]: Clicked Check answer.")
+            time.sleep(1.0)
+            return True
+        return False
+
+    def click_verifier_next(self) -> bool:
+        if self._click_first_visible(SELECTORS["verifier_next"]):
+            print("[Browser Bot]: Clicked Next.")
+            time.sleep(1.0)
+            return True
+        return self.click_next_task()
+
+    def capture_clip_frames(
+        self,
+        interval_seconds: float = 0.5,
+        duration_seconds: float | None = None,
+    ) -> list[tuple[float, str]]:
+        """Capture frames from the looping verifier clip (full video duration)."""
+        duration = duration_seconds or self._video_duration() or 4.0
+        duration = max(0.5, min(duration, 30.0))
+        return self.capture_segment_frames(
+            start_seconds=0.0,
+            segment_duration=duration,
+            interval_seconds=interval_seconds,
+            trust_play_segment=False,
+        )
+
+    def verifier_fingerprint(self) -> str:
+        try:
+            data = self.page.evaluate(
+                """() => {
+                    const body = document.body ? document.body.innerText : '';
+                    const episode = (body.match(/Episode ID[:\\s]+([\\w-]+)/i) || [])[1] || '';
+                    const title = (body.match(/Try it out[^\\n]*/i) || [])[0] || '';
+                    const clauses = Array.from(document.querySelectorAll('[data-bot-clause-index], [data-verifier-clause]'))
+                        .map((el) => el.innerText.trim())
+                        .join('|');
+                    const video = document.querySelector('video');
+                    const src = video ? (video.currentSrc || video.getAttribute('src') || '') : '';
+                    return { episode, title, clauses, src: src.slice(0, 160), url: location.href.split('#')[0] };
+                }"""
+            )
+        except Exception:
+            return ""
+        payload = data or {}
+        return "|".join(
+            [
+                str(payload.get("episode") or ""),
+                str(payload.get("title") or ""),
+                str(payload.get("clauses") or ""),
+                str(payload.get("src") or ""),
+                str(payload.get("url") or ""),
+            ]
+        )
 
     def discover_segments(self) -> list[SegmentRow]:
         """Reads pre-rendered Atlas segment rows, including AI drafts and time ranges."""
