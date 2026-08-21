@@ -344,10 +344,12 @@ def process_verifier_exercise(
         print("[Hybrid]: No verifier clauses found on page.")
         return False
 
-    duration = max(0.5, min(bot._video_duration() or 4.0, 30.0))
+    duration = max(0.5, min(bot._video_duration() or 4.0, 15.0))
+    print(f"[Hybrid]: Watching clip (~{duration:.1f}s) before judging clauses...")
     chunk = bot.capture_clip_frames(
         interval_seconds=interval_seconds,
         duration_seconds=duration,
+        fullscreen=False,
     )
     draft_blob = ", ".join(clause.text for clause in clauses)
     print(f"[Hybrid]: Verifier draft clauses: '{draft_blob}'")
@@ -380,8 +382,12 @@ def process_verifier_exercise(
             expected_clauses=expected_clauses,
             index=index,
         )
-        bot.verify_clause(clause, approve=approve)
+        verdict = "thumbs up" if approve else "thumbs down"
+        print(f"[Hybrid]: Clause {clause.index} → {verdict}: '{clause.text}'")
+        if not bot.verify_clause(clause, approve=approve):
+            print(f"[Hybrid]: WARNING: failed to click {verdict} for clause {clause.index}")
 
+    bot._exit_player_fullscreen()
     missing = decide_missing_action(clause_texts, expected_label=expected)
     bot.answer_missing_action(missing)
     bot.click_check_answer()

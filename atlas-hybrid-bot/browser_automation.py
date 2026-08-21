@@ -897,33 +897,85 @@ class VideoBrowserBot:
         """Click thumbs up (approve) or thumbs down (reject) for one clause."""
         if not clause.text:
             return False
-        selector_key = "verifier_thumbs_up" if approve else "verifier_thumbs_down"
-        row = None
-        if clause.row_selector:
-            row = self.page.locator(clause.row_selector).first
-        if row is None or row.count() == 0:
-            row = self.page.get_by_text(clause.text, exact=False).first
+        self._exit_player_fullscreen()
+        label = "up" if approve else "down"
         try:
-            if row.count() == 0:
-                return False
-            container = row.locator("xpath=ancestor::*[self::li or @data-verifier-clause or @data-clause-row][1]")
-            target = container.locator(SELECTORS[selector_key]).first
-            if target.count() == 0:
-                buttons = container.locator("button")
-                if buttons.count() >= 2:
-                    target = buttons.nth(0 if approve else 1)
-                else:
-                    target = row.locator(SELECTORS[selector_key]).first
-            if target.count() == 0:
-                return False
-            target.scroll_into_view_if_needed()
-            target.click(timeout=3000)
-            label = "up" if approve else "down"
-            print(f"[Browser Bot]: Clause {clause.index} thumbs {label}: '{clause.text}'")
-            return True
+            clicked = self.page.evaluate(
+                """({ clauseText, approve }) => {
+                    const skip = /^(yes|no|next|back|check answer|continue|got it)$/i;
+                    const panel = Array.from(document.querySelectorAll('section, aside, main, div')).find(
+                        (el) => /verify what the hands are doing/i.test(el.innerText || '')
+                    );
+                    const scope = panel || document.body;
+
+                    let anchor = null;
+                    let bestLen = Infinity;
+                    for (const el of scope.querySelectorAll('p, span, li, div, label')) {
+                        const style = window.getComputedStyle(el);
+                        if (style.display === 'none' || style.visibility === 'hidden') continue;
+                        const lines = (el.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);
+                        for (const line of lines) {
+                            if (line !== clauseText && !line.startsWith(clauseText)) continue;
+                            if (!/^(hold|pick up|place|pass|scoop|scrub|wipe|trim|dig|rotate|strip|insert|pull|open|close|fold|smooth|smoothen|iron|mop|sweep|rake|gather|water|fill|cut|align|reposition|move|set|put)\\b/i.test(line)) {
+                                continue;
+                            }
+                            const len = line.length;
+                            if (len < bestLen) {
+                                bestLen = len;
+                                anchor = el;
+                            }
+                        }
+                    }
+                    if (!anchor) return false;
+
+                    const isVoteButton = (btn) => {
+                        const text = (btn.innerText || btn.textContent || '').trim();
+                        if (skip.test(text)) return false;
+                        if (/^\\d+$/.test(text)) return false;
+                        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                        if (aria.includes('thumb') || aria.includes('approve') || aria.includes('reject')
+                            || aria.includes('match') || aria.includes('correct') || aria.includes('incorrect')) {
+                            return true;
+                        }
+                        return Boolean(btn.querySelector('svg')) && text.length <= 2;
+                    };
+
+                    let node = anchor;
+                    for (let depth = 0; depth < 10 && node; depth += 1) {
+                        const buttons = Array.from(
+                            node.querySelectorAll(':scope > button, :scope > [role="button"], button, [role="button"]')
+                        ).filter((btn) => {
+                            if (!(btn instanceof HTMLElement)) return false;
+                            const style = window.getComputedStyle(btn);
+                            return style.display !== 'none' && style.visibility !== 'hidden';
+                        });
+                        const voteButtons = buttons.filter(isVoteButton);
+                        const pick = voteButtons.length >= 2 ? voteButtons : (buttons.length === 2 ? buttons : []);
+                        if (pick.length >= 2) {
+                            (approve ? pick[0] : pick[1]).click();
+                            return true;
+                        }
+                        node = node.parentElement;
+                    }
+                    return false;
+                }""",
+                {"clauseText": clause.text, "approve": approve},
+            )
+            if clicked:
+                print(
+                    f"[Browser Bot]: Clause {clause.index} thumbs {label}: '{clause.text}'"
+                )
+                time.sleep(0.25)
+                return True
         except Exception as exc:
             print(f"[Browser Bot]: Could not verify clause {clause.index}: {exc}")
             return False
+
+        print(
+            f"[Browser Bot]: Could not find thumbs buttons for clause {clause.index} "
+            f"({label}): '{clause.text}'"
+        )
+        return False
 
     def answer_missing_action(self, missing: bool) -> bool:
         """Answer 'Is any important action missing?' with Yes or No."""
@@ -957,10 +1009,31 @@ class VideoBrowserBot:
         return self._click_labeled_buttons(choice)
 
     def click_check_answer(self) -> bool:
+        self._exit_player_fullscreen()
+        try:
+            clicked = self.page.evaluate(
+                """() => {
+                    const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                    const target = buttons.find((btn) => {
+                        const text = (btn.innerText || btn.textContent || '').trim();
+                        return /^check answer$/i.test(text) || /^submit answer$/i.test(text);
+                    });
+                    if (!target) return false;
+                    target.click();
+                    return true;
+                }"""
+            )
+            if clicked:
+                print("[Browser Bot]: Clicked Check answer.")
+                time.sleep(1.0)
+                return True
+        except Exception:
+            pass
         if self._click_first_visible(SELECTORS["check_answer"]):
             print("[Browser Bot]: Clicked Check answer.")
             time.sleep(1.0)
             return True
+        print("[Browser Bot]: Could not find Check answer button.")
         return False
 
     def click_verifier_next(self) -> bool:
@@ -974,16 +1047,27 @@ class VideoBrowserBot:
         self,
         interval_seconds: float = 0.5,
         duration_seconds: float | None = None,
+        *,
+        fullscreen: bool = False,
     ) -> list[tuple[float, str]]:
         """Capture frames from the looping verifier clip (full video duration)."""
         duration = duration_seconds or self._video_duration() or 4.0
-        duration = max(0.5, min(duration, 30.0))
-        return self.capture_segment_frames(
+        duration = max(0.5, min(duration + 0.15, 15.0))
+        if not self.headless:
+            if fullscreen:
+                self._enter_player_fullscreen()
+            else:
+                self._exit_player_fullscreen()
+        frames = self.capture_segment_frames(
             start_seconds=0.0,
             segment_duration=duration,
             interval_seconds=interval_seconds,
             trust_play_segment=False,
+            fullscreen=fullscreen,
         )
+        if not self.headless:
+            self._exit_player_fullscreen()
+        return frames
 
     def verifier_fingerprint(self) -> str:
         try:
@@ -1468,16 +1552,22 @@ class VideoBrowserBot:
         segment_duration: float = 3.0,
         interval_seconds: float = 1.0,
         trust_play_segment: bool = False,
+        *,
+        fullscreen: bool | None = None,
     ) -> list[tuple[float, str]]:
         """Headed: watch the segment at 1x. Headless tests: seek."""
         if segment_duration <= 0:
             segment_duration = 0.5
+        use_fullscreen = self.headless if fullscreen is None else fullscreen
         if self.headless:
             frames = self._capture_by_seek(
                 start_seconds, segment_duration, interval_seconds
             )
         else:
-            self._enter_player_fullscreen()
+            if use_fullscreen:
+                self._enter_player_fullscreen()
+            else:
+                self._exit_player_fullscreen()
             frames = self._capture_realtime(
                 start_seconds,
                 segment_duration,
