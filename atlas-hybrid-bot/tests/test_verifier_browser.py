@@ -2,7 +2,11 @@ from pathlib import Path
 
 import config
 from browser_automation import VideoBrowserBot
-from verifier_logic import decide_clause_verification, decide_missing_action
+from verifier_logic import (
+    decide_clause_verification,
+    decide_missing_action,
+    infer_rejection_reason,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "verifier_portal.html"
 
@@ -16,19 +20,60 @@ def test_decide_clause_verification_accepts_valid_grammar():
     assert decide_clause_verification(clauses[1], clauses, index=1)
 
 
-def test_decide_clause_verification_rejects_duplicate():
+def test_decide_clause_verification_accepts_related_scoop_clauses():
+    """Cooking training clip: clause 3 is valid even without 'into pot'."""
+    clauses = [
+        "hold container with left hand",
+        "scoop food from container into pot with spoon in right hand",
+        "scoop food from container with spoon in right hand",
+    ]
+    expected = [
+        "hold container with left hand",
+        "scoop food from container into pot with spoon in right hand",
+    ]
+    for index, clause in enumerate(clauses):
+        assert decide_clause_verification(
+            clause,
+            clauses,
+            expected_clauses=expected,
+            index=index,
+        )
+
+
+def test_decide_clause_verification_approves_duplicate_scoop():
     clauses = [
         "scoop food from container into pot with spoon in right hand",
         "scoop food from container into pot with spoon in right hand",
     ]
     assert decide_clause_verification(clauses[0], clauses, index=0)
+    assert decide_clause_verification(clauses[1], clauses, index=1)
+
+
+def test_decide_clause_verification_rejects_bad_grammar():
+    clauses = ["hold container with left hand", "container left hand hold"]
+    assert decide_clause_verification(clauses[0], clauses, index=0)
     assert not decide_clause_verification(clauses[1], clauses, index=1)
 
 
-def test_decide_missing_action_when_expected_has_extra_clause():
+def test_infer_rejection_reason_for_bad_grammar():
+    clauses = ["hold bottle with right hand", "bottle right hand"]
+    reason = infer_rejection_reason(clauses[1], clauses, index=1)
+    assert reason == "Grammar / spelling"
+
+
+def test_infer_rejection_reason_for_exact_duplicate():
+    clauses = [
+        "scoop food from container into pot with spoon in right hand",
+        "scoop food from container into pot with spoon in right hand",
+    ]
+    reason = infer_rejection_reason(clauses[1], clauses, index=1)
+    assert reason == "Added action"
+
+
+def test_decide_missing_action_defaults_to_no():
     shown = ["hold bottle with right hand"]
     expected = "hold bottle with right hand, pass bottle from right hand to left hand"
-    assert decide_missing_action(shown, expected_label=expected)
+    assert not decide_missing_action(shown, expected_label=expected)
 
 
 def test_open_verifier_training_flow(tmp_path, monkeypatch):

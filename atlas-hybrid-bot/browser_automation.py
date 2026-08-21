@@ -893,7 +893,13 @@ class VideoBrowserBot:
         print(f"[Browser Bot]: Found {len(clauses)} verifier clause(s).")
         return clauses
 
-    def verify_clause(self, clause: VerifierClauseRow, *, approve: bool) -> bool:
+    def verify_clause(
+        self,
+        clause: VerifierClauseRow,
+        *,
+        approve: bool,
+        rejection_reason: str | None = None,
+    ) -> bool:
         """Click thumbs up (approve) or thumbs down (reject) for one clause."""
         if not clause.text:
             return False
@@ -965,7 +971,9 @@ class VideoBrowserBot:
                 print(
                     f"[Browser Bot]: Clause {clause.index} thumbs {label}: '{clause.text}'"
                 )
-                time.sleep(0.25)
+                time.sleep(0.35)
+                if not approve and rejection_reason:
+                    self.select_clause_rejection_reason(clause, rejection_reason)
                 return True
         except Exception as exc:
             print(f"[Browser Bot]: Could not verify clause {clause.index}: {exc}")
@@ -974,6 +982,83 @@ class VideoBrowserBot:
         print(
             f"[Browser Bot]: Could not find thumbs buttons for clause {clause.index} "
             f"({label}): '{clause.text}'"
+        )
+        return False
+
+    def select_clause_rejection_reason(
+        self,
+        clause: VerifierClauseRow,
+        reason: str,
+    ) -> bool:
+        """After thumbs down, choose why the description is wrong."""
+        if not reason or not clause.text:
+            return False
+        try:
+            clicked = self.page.evaluate(
+                """({ clauseText, reason }) => {
+                    const panel = Array.from(document.querySelectorAll('section, aside, main, div')).find(
+                        (el) => /verify what the hands are doing/i.test(el.innerText || '')
+                    );
+                    const scope = panel || document.body;
+
+                    let anchor = null;
+                    let bestLen = Infinity;
+                    for (const el of scope.querySelectorAll('p, span, li, div, label')) {
+                        const style = window.getComputedStyle(el);
+                        if (style.display === 'none' || style.visibility === 'hidden') continue;
+                        const lines = (el.innerText || '').split('\\n').map((s) => s.trim()).filter(Boolean);
+                        for (const line of lines) {
+                            if (line !== clauseText && !line.startsWith(clauseText)) continue;
+                            const len = line.length;
+                            if (len < bestLen) {
+                                bestLen = len;
+                                anchor = el;
+                            }
+                        }
+                    }
+
+                    const pickReason = (root) => {
+                        const candidates = Array.from(
+                            root.querySelectorAll(
+                                '[role="option"], [role="menuitem"], [role="menuitemradio"], li, button, div, span'
+                            )
+                        ).filter((el) => {
+                            const text = (el.innerText || el.textContent || '').trim();
+                            return text === reason;
+                        });
+                        if (candidates.length) {
+                            candidates[0].click();
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    if (anchor) {
+                        let node = anchor;
+                        for (let depth = 0; depth < 10 && node; depth += 1) {
+                            if (pickReason(node)) return true;
+                            node = node.parentElement;
+                        }
+                    }
+                    return pickReason(scope) || pickReason(document.body);
+                }""",
+                {"clauseText": clause.text, "reason": reason},
+            )
+            if clicked:
+                print(
+                    f"[Browser Bot]: Clause {clause.index} rejection reason: {reason}"
+                )
+                time.sleep(0.25)
+                return True
+        except Exception as exc:
+            print(
+                f"[Browser Bot]: Could not select rejection reason for "
+                f"clause {clause.index}: {exc}"
+            )
+            return False
+        print(
+            f"[Browser Bot]: Rejection reason menu not found for clause "
+            f"{clause.index} ({reason})"
         )
         return False
 
@@ -1042,6 +1127,28 @@ class VideoBrowserBot:
             time.sleep(1.0)
             return True
         return self.click_next_task()
+
+    def _verifier_clip_duration(self) -> float:
+        """Best-effort clip length for looping verifier videos."""
+        duration = self._video_duration() or 0.0
+        if duration <= 0 or duration > 12.0:
+            try:
+                ui_duration = self.page.evaluate(
+                    """() => {
+                        const body = document.body ? document.body.innerText : '';
+                        const match = body.match(/(\\d+):(\\d+(?:\\.\\d+)?)\\s*\\/\\s*(\\d+):(\\d+(?:\\.\\d+)?)/);
+                        if (!match) return 0;
+                        const end = parseFloat(match[3]) * 60 + parseFloat(match[4]);
+                        return Number.isFinite(end) ? end : 0;
+                    }"""
+                )
+                if ui_duration and ui_duration <= 12.0:
+                    duration = float(ui_duration)
+            except Exception:
+                pass
+        if duration <= 0 or duration > 12.0:
+            duration = 4.5
+        return max(0.5, min(duration + 0.15, 8.0))
 
     def capture_clip_frames(
         self,

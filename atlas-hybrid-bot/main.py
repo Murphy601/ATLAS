@@ -31,6 +31,7 @@ from verifier_logic import (
     decide_clause_verification,
     decide_missing_action,
     expected_clauses_from_label,
+    infer_rejection_reason,
 )
 
 load_dotenv()
@@ -344,7 +345,7 @@ def process_verifier_exercise(
         print("[Hybrid]: No verifier clauses found on page.")
         return False
 
-    duration = max(0.5, min(bot._video_duration() or 4.0, 15.0))
+    duration = bot._verifier_clip_duration()
     print(f"[Hybrid]: Watching clip (~{duration:.1f}s) before judging clauses...")
     chunk = bot.capture_clip_frames(
         interval_seconds=interval_seconds,
@@ -384,7 +385,16 @@ def process_verifier_exercise(
         )
         verdict = "thumbs up" if approve else "thumbs down"
         print(f"[Hybrid]: Clause {clause.index} → {verdict}: '{clause.text}'")
-        if not bot.verify_clause(clause, approve=approve):
+        reason = None
+        if not approve:
+            reason = infer_rejection_reason(
+                clause.text,
+                clause_texts,
+                expected_clauses=expected_clauses,
+                index=index,
+            )
+            print(f"[Hybrid]: Clause {clause.index} rejection reason: {reason}")
+        if not bot.verify_clause(clause, approve=approve, rejection_reason=reason):
             print(f"[Hybrid]: WARNING: failed to click {verdict} for clause {clause.index}")
 
     bot._exit_player_fullscreen()
