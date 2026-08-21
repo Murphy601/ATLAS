@@ -53,8 +53,7 @@ WINDOW_SLACK_SECONDS = 0.6
 APP_READY_SELECTOR = (
     f'{SELECTORS["tasks_nav"]}, {SELECTORS["training_home"]}, '
     f'{SELECTORS["continue_practice"]}, {SELECTORS["practice_assessment"]}, '
-    f'{SELECTORS["segment_input"]}, {SELECTORS["verifier_panel"]}, '
-    f'{SELECTORS["human_verifier_training"]}'
+    f'{SELECTORS["segment_input"]}, {SELECTORS["human_verifier_training"]}'
 )
 
 
@@ -214,13 +213,19 @@ class VideoBrowserBot:
         """Waits for login, then opens Practice assessment or a listed episode."""
         print(
             "[Browser Bot]: Log in if needed. After login I will open "
-            "Practice assessment (training sidebar) or a listed task."
+            "Human Verifier training, Practice assessment, or a listed task."
         )
         try:
             self.page.wait_for_selector(check_selector, timeout=timeout * 1000)
             print("[Browser Bot]: Atlas app is ready.")
         except PlaywrightTimeoutError:
             print("[Browser Bot]: Still on login or unknown page. Continuing...")
+        except Exception as exc:
+            print(f"[Browser Bot]: Ready-selector warning ({exc}). Continuing...")
+            try:
+                self.page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
         if not self.ensure_labeling_ready(timeout=float(timeout)):
             hint = (
                 "Open Human Verifier training from the training sidebar, then Continue."

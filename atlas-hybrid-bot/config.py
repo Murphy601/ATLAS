@@ -711,7 +711,6 @@ SELECTORS = {
         '[role="button"]:has-text("Human Verifier training")'
     ),
     "verifier_panel": (
-        'text="Verify what the hands are doing", '
         'h1:has-text("Verify what the hands are doing"), '
         'h2:has-text("Verify what the hands are doing"), '
         'h3:has-text("Verify what the hands are doing")'
@@ -725,13 +724,9 @@ SELECTORS = {
         'button[aria-label*="reject" i], button[aria-label*="thumbs down" i], '
         'button[aria-label*="does not match" i], button[title*="reject" i]'
     ),
-    "missing_action_question": 'text="Is any important action missing?"',
-    "missing_action_yes": (
-        'button:has-text("Yes"):near(:text("Is any important action missing?"))'
-    ),
-    "missing_action_no": (
-        'button:has-text("No"):near(:text("Is any important action missing?"))'
-    ),
+    "missing_action_question": 'p:has-text("Is any important action missing?"), div:has-text("Is any important action missing?")',
+    "missing_action_yes": 'button:has-text("Yes")',
+    "missing_action_no": 'button:has-text("No")',
     "check_answer": (
         'button:has-text("Check answer"), button:has-text("Check Answer"), '
         'button:has-text("Submit answer")'
