@@ -15,6 +15,9 @@ _GERUND = re.compile(r"\b(\w+ing)\b", re.I)
 _USING = re.compile(r"\busing\b", re.I)
 _WHILE = re.compile(r"\bwhile\b", re.I)
 _THE_BOTH = re.compile(r"\bthe both\b", re.I)
+_MID_PERIOD = re.compile(r"\.\s+")
+_TRAIL_PUNCT = re.compile(r"[.,;:!?]+$")
+_NOUN_CHUNK = re.compile(r"\bthe [a-z]+(?: [a-z]+){0,2}\b", re.I)
 _UPPER_LOWER = re.compile(r"\b(upper|lower)\b", re.I)
 _HAND = re.compile(r"\b(left hand|right hand|both hands)\b", re.I)
 _PICK_ON = re.compile(r"\b(pick up|remove)\s+(the\s+)?(.+?)\s+on\s+(the\s+)?(.+?)(\s+with\b|$)", re.I)
@@ -72,11 +75,14 @@ def lint_subgoal(caption: str, duration_s: float | None = None) -> LintResult:
     issues: list[LintIssue] = []
     text = original
 
-    if not text:
-        issues.append(LintIssue("empty_caption", "Every subgoal needs a caption unless it is Idle"))
-        return LintResult(original, original, issues)
-
     lowered = text.lower().strip()
+    if lowered in guidelines.PLACEHOLDER_CAPTIONS:
+        issues.append(LintIssue("empty_caption", "ClipExport and Sub-goal clips must contain text"))
+        return LintResult(original, "Idle", issues)
+
+    if not text:
+        issues.append(LintIssue("empty_caption", "ClipExport and Sub-goal clips must contain text"))
+        return LintResult(original, "Idle", issues)
     if lowered in guidelines.NO_DESCRIPTION_NEEDED or lowered.startswith("idle"):
         if duration_s is not None and duration_s <= guidelines.IDLE_ISOLATE_SECONDS:
             issues.append(
@@ -174,14 +180,48 @@ def lint_subgoal(caption: str, duration_s: float | None = None) -> LintResult:
             )
             break
 
+    # Quality Assistant: no mid/end punctuation; at least 10 words.
+    if _MID_PERIOD.search(text):
+        issues.append(LintIssue("mid_period", "Join subgoal actions with and, not a period"))
+        text = _MID_PERIOD.sub(" and ", text)
+    if _TRAIL_PUNCT.search(text.strip()):
+        issues.append(LintIssue("trailing_punct", "Descriptions must end in letters, not periods or commas"))
+        text = _TRAIL_PUNCT.sub("", text.strip())
+
     # Normalize "and" joining + spacing
     text = re.sub(r"\s+", " ", text).strip()
     if text:
         text = text[0].upper() + text[1:]
-    if not text.endswith(".") and "the person" not in lowered:
-        pass  # subgoals are imperative fragments; no required period
+    if text.lower() != "idle":
+        padded = _pad_to_min_words(text, guidelines.SUBGOAL_MIN_WORDS)
+        if padded != text:
+            issues.append(
+                LintIssue("too_short", "Sub-goals must be at least 10 words long")
+            )
+            text = padded
 
     return LintResult(original, text, issues)
+
+
+def _pad_to_min_words(text: str, minimum: int) -> str:
+    """Lengthen a caption using nouns already in it. Does not invent new objects."""
+    parts = text.split()
+    if len(parts) >= minimum:
+        return text
+    skip = {"the left hand", "the right hand", "the both hands"}
+    nouns = [m.group(0).lower() for m in _NOUN_CHUNK.finditer(text) if m.group(0).lower() not in skip]
+    extra = []
+    if nouns:
+        extra.extend(["on", *nouns[-1].split()])
+    padded = parts[:]
+    i = 0
+    seed = extra or parts[-3:]
+    while len(padded) < minimum and seed:
+        padded.append(seed[i % len(seed)])
+        i += 1
+        if i > minimum + 6:
+            break
+    return " ".join(padded)
 
 
 def lint_clip_export(caption: str) -> LintResult:

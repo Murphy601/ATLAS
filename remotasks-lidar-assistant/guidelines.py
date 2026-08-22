@@ -18,6 +18,7 @@ MID_TASK_COLLECTOR_ISSUE_MIN_SECONDS = 5.0
 MAX_ACTIONS_PER_SUBGOAL = 3
 FRAME_ALLOWANCE = 5
 MAX_IDENTICAL_CAPTIONS = 3
+SUBGOAL_MIN_WORDS = 10
 
 # --- Hard operational constraints ---
 WATCH_ENTIRE_VIDEO_FIRST = True
@@ -115,6 +116,15 @@ BANNED_BRANDS = frozenset({"ipad", "airpods", "iphone", "macbook"})
 
 # Idle / collector-issue labels that need no manipulation caption
 NO_DESCRIPTION_NEEDED = frozenset({"idle", "inactive time", "return to home"})
+PLACEHOLDER_CAPTIONS = frozenset(
+    {
+        "click to add text",
+        "click to add",
+        "(empty clip)",
+        "empty clip",
+        "review",
+    }
+)
 
 # Precise verb families from the spec
 HOLD_VERBS = ("grasp", "grip", "pinch", "hold")

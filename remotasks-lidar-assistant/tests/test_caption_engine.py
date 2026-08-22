@@ -78,3 +78,19 @@ def test_the_both_hands_rewritten():
     assert "the both" not in result.rewritten.lower()
     assert "with both hands" in result.rewritten.lower()
     assert any(i.code == "the_both" for i in result.issues)
+    assert len(result.rewritten.split()) >= 10
+
+
+def test_placeholder_empty_clip_becomes_idle():
+    result = lint_subgoal("click to add text")
+    assert result.rewritten == "Idle"
+    assert any(i.code == "empty_caption" for i in result.issues)
+
+
+def test_trailing_period_and_min_words():
+    result = lint_subgoal(
+        "Open the refrigerator door with the left hand. Hold the red mayonnaise jar with the left hand."
+    )
+    assert not result.rewritten.endswith(".")
+    assert " and " in result.rewritten.lower()
+    assert any(i.code == "trailing_punct" for i in result.issues)

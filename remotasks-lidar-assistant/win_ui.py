@@ -14,6 +14,7 @@ from ego_task import parse_clips_from_text
 from process_cdp import is_ix_install, is_stock_chrome_path
 from review_ui import (
     estimated_use_point,
+    find_phrase_click,
     find_review_use_clicks,
     find_word_click,
     ocr_text,
@@ -144,7 +145,12 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
 
         played = False
         remaining = 0.0
-        skip_watch = (watched_pct is not None and watched_pct >= 80) or use_ready
+        skip_watch = (
+            (watched_pct is not None and watched_pct >= 80)
+            or use_ready
+            or "click to add text" in page_text.lower()
+            or "quality assistant" in page_text.lower()
+        )
         if skip_watch:
             say("Review / watched state already on screen. Skipping another full watch; fixing red Grammar clips.")
             played = True
@@ -168,8 +174,10 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
 
         review = _apply_review_uses(hwnd, write=write)
         say(f"Clicked Review Use {review['applied']} time(s)")
+        filled = _fill_missing_and_reds(hwnd, write=write)
+        say(f"Filled {filled['wrote']} missing/red caption(s)")
 
-        body = "\n".join(part for part in (review.get("text"), page_text) if part)
+        body = "\n".join(part for part in (filled.get("text"), review.get("text"), page_text) if part)
         clips = parse_clips_from_text(body) if body else []
         say(f"Read {len(clips)} timeline clip(s) from the window")
         preview = re.sub(r"\s+", " ", body).strip()[:220]
@@ -177,7 +185,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             say(f"Page text preview: {preview}")
 
         reports = []
-        wrote = int(review["applied"])
+        wrote = int(review["applied"]) + int(filled["wrote"])
         for item in lint_clips([clip.to_dict() for clip in clips]):
             lint = item["lint"]
             reports.append(
@@ -202,7 +210,8 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             "clip_count": len(clips),
             "wrote_captions": wrote,
             "review_use_clicks": review["applied"],
-            "quality_assistant": review["applied"] > 0,
+            "missing_filled": filled["wrote"],
+            "quality_assistant": review["applied"] > 0 or filled["wrote"] > 0,
             "submitted": False,
             "hte_edited": False,
             "clips": reports,
@@ -689,3 +698,53 @@ def _apply_review_uses(hwnd: int, write: bool = True, max_clicks: int = 12) -> d
         applied += 1
         time.sleep(0.85)
     return {"applied": applied, "text": ocr_text(last_words), "words": last_words}
+
+
+def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
+    """Click 'click to add text' and type fixes for red Quality Assistant clips."""
+    left, top, _width, _height = _window_rect(hwnd)
+    words, img_w, img_h = _ocr_window(hwnd, "missing")
+    wrote = 0
+    target = find_phrase_click(words, "click to add text", img_w, img_h)
+    if not target:
+        target = find_phrase_click(
+            words, "empty clip", img_w, img_h, y_min_frac=0.12, y_max_frac=0.70
+        )
+    if target:
+        say("Clicked missing clip (click to add text)")
+        if write:
+            _focus(hwnd)
+            _click_screen(left + target[0], top + target[1])
+            time.sleep(0.25)
+            _send_ctrl_a()
+            _send_unicode("Idle")
+            wrote += 1
+            say("Typed missing caption: Idle")
+        time.sleep(0.4)
+        words, img_w, img_h = _ocr_window(hwnd, "after_empty")
+
+    for item in lint_clips([clip.to_dict() for clip in parse_clips_from_text(ocr_text(words))]):
+        lint = item["lint"]
+        if item.get("skip_edit") or not lint.changed:
+            continue
+        snippet = " ".join((lint.original or "").split()[:5])
+        if not snippet or snippet.lower() in {"idle", "click to add text"}:
+            continue
+        hit = find_phrase_click(
+            words, snippet, img_w, img_h, y_min_frac=0.48, y_max_frac=0.96
+        )
+        if not hit:
+            continue
+        say(f"Clicked red clip to edit: {snippet}")
+        if not write:
+            continue
+        _focus(hwnd)
+        _click_screen(left + hit[0], top + hit[1])
+        time.sleep(0.2)
+        _send_ctrl_a()
+        _send_unicode(lint.rewritten)
+        wrote += 1
+        say(f"Typed caption fix: {lint.rewritten}")
+        time.sleep(0.35)
+        words, img_w, img_h = _ocr_window(hwnd, f"edit_{wrote}")
+    return {"wrote": wrote, "text": ocr_text(words)}

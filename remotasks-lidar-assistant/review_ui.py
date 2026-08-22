@@ -95,6 +95,36 @@ def estimated_use_point(width: int, height: int) -> tuple[int, int]:
     return x, y
 
 
+def find_phrase_click(
+    words: list[dict[str, Any]],
+    phrase: str,
+    width: int,
+    height: int,
+    *,
+    y_min_frac: float = 0.45,
+    y_max_frac: float = 0.95,
+    x_max_frac: float = 0.85,
+) -> tuple[int, int] | None:
+    """Click the center of a consecutive OCR phrase (timeline 'click to add text')."""
+    tokens = [tok for tok in phrase.lower().split() if tok]
+    if not tokens or width < 1 or height < 1:
+        return None
+    norms = [_norm(word) for word in words]
+    for i in range(len(words) - len(tokens) + 1):
+        if norms[i : i + len(tokens)] != tokens:
+            continue
+        first = _center(words[i])
+        last = _center(words[i + len(tokens) - 1])
+        cx = (first[0] + last[0]) // 2
+        cy = (first[1] + last[1]) // 2
+        if cy < height * y_min_frac or cy > height * y_max_frac:
+            continue
+        if cx > width * x_max_frac:
+            continue
+        return cx, cy
+    return None
+
+
 def _norm(word: dict[str, Any]) -> str:
     return str(word.get("text") or "").strip().lower()
 
