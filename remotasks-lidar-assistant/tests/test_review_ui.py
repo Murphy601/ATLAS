@@ -435,17 +435,25 @@ def test_review_description_is_not_the_timeline_placeholder() -> None:
         ["All ClipExports must be fully filled in parallel with Sub-goals"],
         chip_count=3,
     )
-    from review_ui import clip_durations_from_ocr, qa_end_mismatch_seconds
+    from review_ui import clip_durations_from_ocr, parse_timeline_fps, qa_end_mismatch_seconds
 
     assert qa_end_mismatch_seconds(
         ["All ClipExport end must match a Sub-goal end. On frames: 297."]
     ) == [9.9]
+    assert qa_end_mismatch_seconds(
+        ["All ClipExport end must match a Sub-goal end. On frames: 297."],
+        fps=60.0,
+    ) == [4.95]
+    assert parse_timeline_fps("ClipExport 60 FPS (0-62) Focused Timeline") == 60.0
     assert 9.9 in clip_durations_from_ocr("9.9s 3.1s 7.6s Watched 100% 60 FPS")
     from review_ui import (
+        chip_end_fractions,
         clip_export_interior_cut_fracs,
+        clip_export_needs_more_cards,
         clip_export_visible_card_count,
         duration_end_fractions,
         long_card_interior_fracs,
+        wide_card_cut_fracs,
     )
 
     assert 27.0 in clip_durations_from_ocr("9.9s 27.0s 5.3s Watched 100% 60 FPS")
@@ -457,6 +465,33 @@ def test_review_description_is_not_the_timeline_placeholder() -> None:
     assert all(0.24 < f < 0.86 for f in longs)
     assert clip_export_visible_card_count(2, 3) == 3
     assert clip_export_visible_card_count(3, 0) == 3
+    assert chip_end_fractions([(168, 820, 210, 850), (716, 820, 760, 850)], 80, 1400) == [
+        round((716 - 80) / (1400 - 80), 4)
+    ]
+    wide = wide_card_cut_fracs(
+        [(168, 820, 210, 850), (716, 820, 760, 850)],
+        [0.14, 0.28, 0.42, 0.56],
+        80,
+        1400,
+    )
+    assert 0.14 not in wide
+    assert any(f > 0.50 for f in wide)
+    assert clip_export_needs_more_cards(
+        2, 9, ["All ClipExports must be fully filled in parallel with Sub-goals"]
+    )
+    assert not clip_export_needs_more_cards(9, 9, ["ClipExport", "done"])
+    from review_ui import pick_ocr_duration_centers
+
+    durs = pick_ocr_duration_centers(
+        [
+            {"text": "27.0", "x": 400, "y": 820, "w": 36, "h": 16},
+            {"text": "s", "x": 438, "y": 820, "w": 10, "h": 16},
+            {"text": "5.3s", "x": 900, "y": 822, "w": 32, "h": 16},
+            {"text": "60", "x": 200, "y": 40, "w": 20, "h": 14},
+        ],
+        min_y=700,
+    )
+    assert [row[2] for row in durs] == [27.0, 5.3]
 
 
 def test_click_to_add_text_prefers_compact_field_not_giant_box() -> None:
@@ -540,6 +575,20 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
     assert (
         selected_timeline_kind(
             [
+                "ClipExport",
+                "ClipExport",
+                "Play",
+                "Focused Timeline",
+                "Sub-goal",
+                "done",
+                "The person stands at an indoor table and folds shirts, pants, and a blouse during a laundry task",
+            ]
+        )
+        == "sub-goal"
+    )
+    assert (
+        selected_timeline_kind(
+            [
                 "Hand Tracking Error",
                 "Hand Tracking Error",
                 "Play",
@@ -549,7 +598,12 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
         )
         == "hte"
     )
-    from review_ui import is_hte_clip_caption, should_stop_clip_export_k
+    from review_ui import (
+        focused_timeline_kind,
+        is_hte_clip_caption,
+        should_abort_clip_export_k,
+        should_stop_clip_export_k,
+    )
 
     assert is_hte_clip_caption("missing_hand_predictions")
     assert not is_hte_clip_caption(
@@ -561,6 +615,22 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
     )
     assert should_stop_clip_export_k(
         3, 4, ["Hand Tracking Error", "pending", "missing_hand_predictions"]
+    )
+    assert should_abort_clip_export_k(
+        ["Hand Tracking Error", "pending", "missing_hand_predictions"]
+    )
+    assert not should_abort_clip_export_k(["ClipExport", "done", "done"])
+    assert (
+        focused_timeline_kind(
+            ["ClipExport", "ClipExport", "Focused Timeline", "Sub-goal", "done"]
+        )
+        == "sub-goal"
+    )
+    assert (
+        focused_timeline_kind(
+            ["Sub-goal", "Focused Timeline", "ClipExport", "done", "The person folds shirts"]
+        )
+        == "clip export"
     )
     assert quality_linters_remaining(
         [

@@ -28,12 +28,19 @@ from review_ui import (
     clip_export_end_fractions_from_status_rects,
     clip_export_end_fractions_from_times,
     clip_export_interior_cut_fracs,
+    clip_export_needs_more_cards,
     clip_export_visible_card_count,
+    chip_end_fractions,
     duration_end_fractions,
+    focused_timeline_kind,
     long_card_interior_fracs,
+    parse_timeline_fps,
+    pick_clip_export_status_rects,
     pick_ocr_duration_centers,
     clip_durations_from_ocr,
     qa_end_mismatch_seconds,
+    should_abort_clip_export_k,
+    wide_card_cut_fracs,
     clip_export_needs_new_clip,
     clip_export_needs_parallel_splits,
     clip_export_slot_mid_fractions,
@@ -258,12 +265,14 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
 
     global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _CLIP_EXPORT_STUCK, _IDLE_SPLIT_STUCK, _REWRITTEN_SNIPPETS
     global _CLIP_EXPORT_SNAPPED, _CLIP_EXPORT_END_FRACS, _CLIP_EXPORT_SENTENCES
+    global _CLIP_EXPORT_WRITTEN_CARDS
     _CLIP_EXPORT_ALIGNED = False
     _CLIP_EXPORT_FILLED = False
     _CLIP_EXPORT_STUCK = False
     _CLIP_EXPORT_SNAPPED = []
     _CLIP_EXPORT_END_FRACS = []
     _CLIP_EXPORT_SENTENCES = []
+    _CLIP_EXPORT_WRITTEN_CARDS = 0
     _IDLE_SPLIT_STUCK = False
     _REWRITTEN_SNIPPETS = set()
 
@@ -724,15 +733,18 @@ def _send_vk(vk: int) -> None:
     user32.keybd_event(vk, 0, 2, 0)
 
 
-def _press_k_to_create(hwnd: int) -> bool:
+def _press_k_to_create(hwnd: int, at: tuple[int, int] | None = None) -> bool:
     """PDF / on-screen hint: click or press K to create a subgoal or clip-export cut."""
     _text, nodes = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in nodes]
-    if selected_timeline_kind(names) == "hte" or any(is_hte_clip_caption(n) for n in names):
+    if should_abort_clip_export_k(names):
         say("Not pressing K on Hand Tracking Error")
         return False
     _focus(hwnd)
-    time.sleep(0.1)
+    time.sleep(0.08)
+    if at is not None:
+        _click_screen(int(at[0]), int(at[1]))
+        time.sleep(0.12)
     _send_vk(0x4B)  # K
     say("Pressed K to create/split a clip (never HTE)")
     return True
@@ -1379,7 +1391,10 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     if duplicate:
         say("Not creating a second Clip Export track on Full Timeline")
     left, top, width, height = _window_rect(hwnd)
-    chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+    named = _named_rects(nodes)
+    min_y = top + int(height * 0.62)
+    chips_now = pick_clip_export_review_rects(named, min_y)
+    status_chips = pick_clip_export_status_rects(named, min_y)
     export_ocr = ""
     export_words: list[dict] = []
     if not _OCR_BROKEN:
@@ -1387,7 +1402,14 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         export_ocr = ocr_text(export_words)
     card_durs = clip_durations_from_ocr(export_ocr)
     visible = clip_export_visible_card_count(len(chips_now), len(card_durs))
-    existing_ends = duration_end_fractions(card_durs)
+    bar = _focused_timeline_rect(hwnd, nodes)
+    bar_left, bar_right = bar[0], bar[2]
+    if bar_right - bar_left < 200:
+        bar_left = left + int(width * 0.08)
+        bar_right = left + int(width * 0.92)
+    existing_ends = duration_end_fractions(card_durs) or chip_end_fractions(
+        status_chips or chips_now, bar_left, bar_right
+    )
     for frac in existing_ends:
         if all(abs(frac - seen) > 0.02 for seen in _CLIP_EXPORT_SNAPPED):
             _CLIP_EXPORT_SNAPPED.append(frac)
@@ -1399,6 +1421,15 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             if all(abs(f - seen) > 0.03 for seen in interior)
             and all(abs(f - seen) > 0.03 for seen in existing_ends)
         )
+    if clip_export_needs_more_cards(visible, n_slots, names):
+        interior.extend(
+            f
+            for f in wide_card_cut_fracs(
+                status_chips or chips_now, end_fracs, bar_left, bar_right
+            )
+            if all(abs(f - seen) > 0.03 for seen in interior)
+            and all(abs(f - seen) > 0.03 for seen in existing_ends)
+        )
     say(
         f"Clip Export has {visible} on-screen card(s) "
         f"({', '.join(f'{d:g}s' for d in card_durs) or 'no durations'}); "
@@ -1406,27 +1437,35 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         f"({len(interior)} interior cut(s), {n_slots} Sub-goal slot(s))"
     )
     snap = should_snap_clip_export_ends(names, chip_count=visible, duplicate=duplicate)
+    cards_before_split = visible
     if snap and interior and (
         not _CLIP_EXPORT_ALIGNED
         or any(is_clip_export_end_mismatch(n) for n in names)
         or any(is_clip_export_missing_error(n) for n in names)
+        or clip_export_needs_more_cards(visible, n_slots, names)
     ):
-        _align_clip_export_on_focused_timeline(hwnd, interior, nodes)
+        _align_clip_export_on_focused_timeline(hwnd, interior, nodes, existing_ends)
         _CLIP_EXPORT_ALIGNED = True
         time.sleep(0.3)
         uia_text, nodes = _read_uia(hwnd)
-        chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+        named = _named_rects(nodes)
+        chips_now = pick_clip_export_review_rects(named, min_y)
         visible = clip_export_visible_card_count(len(chips_now), len(card_durs))
     else:
         if not interior:
             say("No interior Clip Export cut left; not pressing K on an existing card edge")
         _CLIP_EXPORT_ALIGNED = True
-    if snap and any(d > 10 for d in card_durs) and visible < max(n_slots, 4):
-        added = _split_long_clip_export_card(hwnd, export_words, nodes)
+    if snap and clip_export_needs_more_cards(visible, n_slots, names):
+        added = _split_long_clip_export_card(
+            hwnd, export_words, nodes, end_fracs=end_fracs
+        )
         if added:
             _text, nodes = _read_uia(hwnd, verbose=False)
-            chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+            chips_now = pick_clip_export_review_rects(_named_rects(nodes), min_y)
             visible = max(visible, len(chips_now))
+    if visible > cards_before_split:
+        _CLIP_EXPORT_WRITTEN_CARDS = 0
+        say(f"Clip Export now has {visible} card(s) after split; will write each one")
 
     hands = any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes)
     dirty = any(
@@ -1528,7 +1567,8 @@ def _subgoal_end_fractions(
             dur = float(end) - float(start)
         if dur and float(dur) > 0.05:
             durations.append(float(dur))
-    for sec in qa_end_mismatch_seconds(names or []):
+    fps = parse_timeline_fps(ocr_blob) or 30.0
+    for sec in qa_end_mismatch_seconds(names or [], fps):
         if all(abs(sec - seen) > 0.15 for seen in end_times):
             end_times.append(sec)
     durations.extend(clip_durations_from_ocr(ocr_blob))
@@ -1577,10 +1617,10 @@ def _focused_timeline_rect(hwnd: int, nodes: list[Any]) -> tuple[int, int, int, 
     return (left, int(top + height * 0.72), left + width, int(top + height * 0.86))
 
 
-def _click_focused_timeline_fraction(
+def _focused_timeline_xy(
     hwnd: int, frac: float, nodes: list[Any] | None = None
 ) -> tuple[int, int]:
-    """Click along Focused Timeline (the clip-cut bar), not Full Timeline."""
+    """Playhead point on Focused Timeline. Does not click."""
     if nodes is None:
         _text, nodes = _read_uia(hwnd, verbose=False)
     left, top, width, height = _window_rect(hwnd)
@@ -1588,12 +1628,23 @@ def _click_focused_timeline_fraction(
     x, y = full_timeline_xy(bar, frac, (left, top, width, height))
     if bar[2] - bar[0] < 200:
         y = int(top + height * 0.78)
+    return x, y
+
+
+def _click_focused_timeline_fraction(
+    hwnd: int, frac: float, nodes: list[Any] | None = None
+) -> tuple[int, int]:
+    """Click along Focused Timeline (the clip-cut bar), not Full Timeline."""
+    x, y = _focused_timeline_xy(hwnd, frac, nodes)
     _click_screen(x, y)
     return x, y
 
 
 def _align_clip_export_on_focused_timeline(
-    hwnd: int, fracs: list[float], nodes: list[Any]
+    hwnd: int,
+    fracs: list[float],
+    nodes: list[Any],
+    existing_ends: list[float] | None = None,
 ) -> int:
     """K-split Clip Export on Focused Timeline at Sub-goal ends. Full Timeline K does not create clips."""
     global _CLIP_EXPORT_SNAPPED
@@ -1614,6 +1665,8 @@ def _align_clip_export_on_focused_timeline(
             continue
         if any(abs(clamped - seen) < 0.03 for seen in _CLIP_EXPORT_SNAPPED):
             continue
+        if any(abs(clamped - seen) < 0.03 for seen in (existing_ends or [])):
+            continue
         unique.append(clamped)
     left, top, _width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
@@ -1625,16 +1678,23 @@ def _align_clip_export_on_focused_timeline(
             break
         x, y = _click_focused_timeline_fraction(hwnd, frac, nodes)
         say(f"Snapped Clip Export end on Focused Timeline at {int(frac * 100)}% ({x},{y})")
-        time.sleep(0.2)
-        if not _press_k_to_create(hwnd):
+        time.sleep(0.15)
+        if not _press_k_to_create(hwnd, at=(x, y)):
             break
         time.sleep(0.35)
         _text, nodes = _read_uia(hwnd, verbose=False)
         names_after = [_uia_name(ctrl) for ctrl in nodes]
         chips_after = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
-        if should_stop_clip_export_k(chips_before, chips_after, names_after):
-            say("Focused Timeline K did not add a Clip Export card; stopping")
+        if should_abort_clip_export_k(names_after):
+            say("Focused Timeline K landed on Hand Tracking Error; stopping")
             break
+        if should_stop_clip_export_k(chips_before, chips_after, names_after):
+            say(
+                f"K at {int(frac * 100)}% did not add a card (already an edge); "
+                "trying the next Sub-goal end inside the long card"
+            )
+            _CLIP_EXPORT_SNAPPED.append(frac)
+            continue
         cuts += 1
         _CLIP_EXPORT_SNAPPED.append(frac)
         chips_before = chips_after
@@ -1682,34 +1742,62 @@ def _align_clip_export_cuts(hwnd: int, fracs: list[float], nodes: list[Any]) -> 
 
 
 def _split_long_clip_export_card(
-    hwnd: int, words: list[dict], nodes: list[Any]
+    hwnd: int,
+    words: list[dict],
+    nodes: list[Any],
+    end_fracs: list[float] | None = None,
 ) -> int:
-    """K inside a 27s-style card using its duration chip, not a 14% bar guess."""
+    """K inside a long Clip Export card. Uses duration chips when OCR sees them."""
     if not _ensure_clip_export_track(hwnd, nodes):
         return 0
-    left, top, _w, height = _window_rect(hwnd)
+    left, top, width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
     hits = pick_ocr_duration_centers(words or [], int(height * 0.62))
     long_hits = [row for row in hits if row[2] > 10]
-    if not long_hits:
-        return 0
-    _x0, y0, dur = max(long_hits, key=lambda row: row[2])
     chips_before = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
     added = 0
-    for offset in (90, 180, 270):
-        x = left + _x0 + offset
-        _click_screen(x, top + y0)
-        say(f"Splitting {dur:g}s Clip Export card inside at {x},{top + y0}")
-        time.sleep(0.2)
-        if not _press_k_to_create(hwnd):
+    click_points: list[tuple[int, int, str]] = []
+    if long_hits:
+        _x0, y0, dur = max(long_hits, key=lambda row: row[2])
+        for offset in (90, 180, 270, 360):
+            click_points.append((left + _x0 + offset, top + y0, f"{dur:g}s"))
+    else:
+        bar = _focused_timeline_rect(hwnd, nodes)
+        bar_left, bar_right = bar[0], bar[2]
+        if bar_right - bar_left < 200:
+            bar_left = left + int(width * 0.08)
+            bar_right = left + int(width * 0.92)
+        named = _named_rects(nodes)
+        status = pick_clip_export_status_rects(named, min_y)
+        interiors = wide_card_cut_fracs(
+            status or pick_clip_export_review_rects(named, min_y),
+            end_fracs or [0.28, 0.42, 0.56, 0.70],
+            bar_left,
+            bar_right,
+        )
+        if not interiors:
+            interiors = [0.28, 0.42, 0.56, 0.70]
+        for frac in interiors[:6]:
+            x, y = _focused_timeline_xy(hwnd, frac, nodes)
+            click_points.append((x, y, f"{int(frac * 100)}%"))
+    _focus_filled_clip_export_track(hwnd, nodes)
+    time.sleep(0.1)
+    for x, y, label in click_points:
+        _click_screen(x, y)
+        say(f"Splitting long Clip Export card inside at {label} ({x},{y})")
+        time.sleep(0.15)
+        if not _press_k_to_create(hwnd, at=(x, y)):
             break
         time.sleep(0.35)
         _text, nodes = _read_uia(hwnd, verbose=False)
         names = [_uia_name(ctrl) for ctrl in nodes]
         chips_after = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
-        if should_stop_clip_export_k(chips_before, chips_after, names):
-            say("Long-card K did not add a Clip Export card; stopping")
+        if should_abort_clip_export_k(names):
+            say("Long-card K landed on Hand Tracking Error; stopping")
             break
+        if should_stop_clip_export_k(chips_before, chips_after, names):
+            say(f"Long-card K at {label} was already an edge; trying the next cut")
+            continue
         added += 1
         chips_before = chips_after
     return added
@@ -1841,29 +1929,67 @@ def _ensure_clip_export_track(hwnd: int, nodes: list[Any] | None = None) -> bool
         say("Still on Hand Tracking Error; not creating or typing HTE clips")
         return False
     if kind != "clip export":
-        _switch_timeline_kind(hwnd, "clip export")
-        time.sleep(0.3)
-        _text, nodes = _read_uia(hwnd, verbose=False)
-        names = [_uia_name(ctrl) for ctrl in nodes]
-        if selected_timeline_kind(names) != "clip export":
-            return False
+        if _click_full_timeline_clip_export_track(hwnd, nodes):
+            time.sleep(0.25)
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            names = [_uia_name(ctrl) for ctrl in nodes]
+            kind = selected_timeline_kind(names)
+        if kind != "clip export":
+            _switch_timeline_kind(hwnd, "clip export")
+            time.sleep(0.3)
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            names = [_uia_name(ctrl) for ctrl in nodes]
+            if selected_timeline_kind(names) != "clip export":
+                return False
     return True
+
+
+def _click_full_timeline_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
+    """Click the lowest ClipExport label so Focused Timeline shows that track, not Sub-goal."""
+    left, top, _width, height = _window_rect(hwnd)
+    hits: list[tuple[int, Any]] = []
+    for ctrl in nodes:
+        if not is_clip_export_tab(_uia_name(ctrl)):
+            continue
+        center = _ctrl_center(ctrl)
+        if center and center[1] > top + int(height * 0.52):
+            hits.append((center[1], ctrl))
+    if not hits:
+        return False
+    hits.sort(key=lambda row: -row[0])
+    if _uia_click(hits[0][1]):
+        say("Clicked Full Timeline Clip Export track so Focused Timeline shows Clip Export")
+        time.sleep(0.25)
+        return True
+    return False
 
 
 def _focus_filled_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
-    """Click an existing The-person / done card so K does not hit the empty extra track."""
-    if _click_clip_export_caption_field(nodes):
-        return True
-    left, top, _width, height = _window_rect(hwnd)
-    chips = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
-    if not chips:
+    """Click a timeline chip (not the Review caption) so K hits Clip Export, not a text box."""
+    _click_full_timeline_clip_export_track(hwnd, nodes)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    kind = focused_timeline_kind(names) or selected_timeline_kind(names)
+    if kind == "hte":
+        say("Focused Timeline is Hand Tracking Error; not clicking that track")
         return False
-    rect = chips[0]
-    x = int((rect[0] + rect[2]) / 2)
-    y = int((rect[1] + rect[3]) / 2)
-    _click_screen(x, y)
-    say(f"Clicked filled Clip Export chip at {x},{y} before snap")
-    return True
+    if kind != "clip export":
+        _switch_timeline_kind(hwnd, "clip export")
+        time.sleep(0.25)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    left, top, _width, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.62)
+    chips = pick_clip_export_status_rects(_named_rects(nodes), min_y)
+    if not chips:
+        chips = pick_clip_export_review_rects(_named_rects(nodes), min_y)
+    if chips:
+        rect = chips[0]
+        x = int((rect[0] + rect[2]) / 2)
+        y = int((rect[1] + rect[3]) / 2)
+        _click_screen(x, y)
+        say(f"Clicked filled Clip Export chip at {x},{y} before snap")
+        return True
+    return False
 
 
 def _write_clip_export_sentence(
@@ -2179,9 +2305,24 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
                 if center:
                     dropdowns.append((center[1], ctrl, name))
         dropdowns.sort(key=lambda row: row[0])
-        if dropdowns:
-            _uia_click(dropdowns[0][1])
-            say(f"Opened timeline-kind dropdown ({dropdowns[0][2]})")
+        ft_y = None
+        for ctrl in nodes:
+            if _uia_name(ctrl).strip().casefold() != "focused timeline":
+                continue
+            center = _ctrl_center(ctrl)
+            if center:
+                ft_y = center[1]
+                break
+        chosen = dropdowns[0] if dropdowns else None
+        if dropdowns and ft_y is not None:
+            below = [row for row in dropdowns if row[0] >= ft_y - 30]
+            if below:
+                chosen = min(below, key=lambda row: row[0])
+            else:
+                chosen = min(dropdowns, key=lambda row: abs(row[0] - ft_y))
+        if chosen:
+            _uia_click(chosen[1])
+            say(f"Opened timeline-kind dropdown ({chosen[2]})")
             time.sleep(0.4)
             _text, nodes = _read_uia(hwnd)
     export_ctrl = None

@@ -685,7 +685,7 @@ def is_clip_export_review_chip(name: str) -> bool:
     return n.casefold() in {"review", "done", "pending"}
 
 
-MIN_CLIP_EXPORT_CHIP_GAP = 150
+MIN_CLIP_EXPORT_CHIP_GAP = 120
 
 
 def pick_clip_export_review_rects(
@@ -698,8 +698,32 @@ def pick_clip_export_review_rects(
         if is_hte_clip_caption(name):
             continue
         if not (
-            is_clip_export_review_chip(name) or is_clip_export_style_caption(name)
+            is_clip_export_review_chip(name)
+            or is_clip_export_style_caption(name)
+            or is_empty_clip_label(name)
         ):
+            continue
+        _left, top, _right, bottom = rect
+        if (top + bottom) / 2 < min_y:
+            continue
+        chips.append(rect)
+    chips.sort(key=lambda row: (row[0], row[1]))
+    out: list[tuple[int, int, int, int]] = []
+    for rect in chips:
+        if out and rect[0] - out[-1][0] < MIN_CLIP_EXPORT_CHIP_GAP:
+            continue
+        out.append(rect)
+    return out
+
+
+def pick_clip_export_status_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+) -> list[tuple[int, int, int, int]]:
+    """done/pending chips only. Mid-card The-person captions are not card edges."""
+    chips: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        if not is_clip_export_review_chip(name):
             continue
         _left, top, _right, bottom = rect
         if (top + bottom) / 2 < min_y:
@@ -864,6 +888,17 @@ def qa_end_mismatch_seconds(names: list[str], fps: float = 30.0) -> list[float]:
     return times
 
 
+def parse_timeline_fps(blob: str) -> float | None:
+    """OCR '60 FPS (0-62)' means frame 297 is 4.95s, not 9.9s."""
+    match = re.search(r"(\d+)\s*FPS", blob or "", flags=re.I)
+    if not match:
+        return None
+    fps = float(match.group(1))
+    if 10 <= fps <= 120:
+        return fps
+    return None
+
+
 def clip_durations_from_ocr(blob: str) -> list[float]:
     """Timeline card lengths like 9.9s / 27.0s / 5.3s. Ignore FPS and Watched 100."""
     vals: list[float] = []
@@ -934,14 +969,73 @@ def clip_export_visible_card_count(chip_count: int, duration_count: int) -> int:
     return max(int(chip_count or 0), int(duration_count or 0), 1)
 
 
+def chip_end_fractions(
+    rects: list[tuple[int, int, int, int]],
+    timeline_left: int,
+    timeline_right: int,
+) -> list[float]:
+    """Existing Clip Export card edges from on-screen chips when OCR has no durations."""
+    return clip_export_end_fractions_from_status_rects(rects, timeline_left, timeline_right)
+
+
+def wide_card_cut_fracs(
+    chip_rects: list[tuple[int, int, int, int]],
+    needed: list[float],
+    timeline_left: int,
+    timeline_right: int,
+    min_span_frac: float = 0.18,
+) -> list[float]:
+    """Sub-goal ends that fall inside the widest Clip Export card, not on its edges."""
+    if timeline_right <= timeline_left:
+        return []
+    span = float(timeline_right - timeline_left)
+    ordered = sorted(chip_rects or [], key=lambda row: row[0])
+    bounds = [float(timeline_left)]
+    for rect in ordered:
+        x = float(rect[0])
+        if x - bounds[-1] > 40:
+            bounds.append(x)
+    bounds.append(float(timeline_right))
+    widest_i = 0
+    widest = 0.0
+    for i in range(len(bounds) - 1):
+        width = bounds[i + 1] - bounds[i]
+        if width > widest:
+            widest = width
+            widest_i = i
+    if widest / span < min_span_frac and len(ordered) <= 1:
+        start, end = 0.08, 0.92
+    else:
+        start = (bounds[widest_i] - timeline_left) / span
+        end = (bounds[widest_i + 1] - timeline_left) / span
+    out: list[float] = []
+    for frac in needed or []:
+        f = float(frac)
+        if start + 0.03 < f < end - 0.03 and all(abs(f - seen) > 0.03 for seen in out):
+            out.append(round(f, 4))
+    return out
+
+
+def clip_export_needs_more_cards(visible: int, n_slots: int, names: list[str]) -> bool:
+    """Keep splitting while QA still wants one Clip Export per Sub-goal."""
+    if any(is_clip_export_missing_error(n) for n in names or []) and visible < max(int(n_slots or 0), 2):
+        return True
+    return int(visible or 0) < max(int(n_slots or 0), 2)
+
+
 def pick_ocr_duration_centers(
     words: list[dict[str, Any]], min_y: int
 ) -> list[tuple[int, int, float]]:
     """Focused Timeline duration chips such as 9.9s / 27.0s / 5.3s."""
     hits: list[tuple[int, int, float]] = []
-    for word in words or []:
+    items = list(words or [])
+    for i, word in enumerate(items):
         text = str(word.get("text") or "").strip()
         match = re.fullmatch(r"(\d+(?:\.\d+)?)s", text, flags=re.I)
+        if not match and i + 1 < len(items):
+            nxt = str(items[i + 1].get("text") or "").strip()
+            if re.fullmatch(r"\d+(?:\.\d+)?", text) and nxt.casefold() in {"s", "sec"}:
+                match = re.fullmatch(r"(\d+(?:\.\d+)?)", text)
         if not match:
             continue
         val = float(match.group(1))
@@ -1042,10 +1136,36 @@ def timeline_dropdown_is_open(names: list[str]) -> bool:
     return {"sub-goal", "clip export", "hte"} <= kinds
 
 
+def focused_timeline_kind(names: list[str]) -> str | None:
+    """Kind chip sitting after the Focused Timeline heading, not a Full Timeline track."""
+    found = False
+    for name in names or []:
+        n = (name or "").strip().casefold()
+        if n == "focused timeline":
+            found = True
+            continue
+        if not found:
+            continue
+        if is_hte_label(name):
+            return "hte"
+        if is_clip_export_tab(name):
+            return "clip export"
+        if n in {"sub-goal", "subgoal"}:
+            return "sub-goal"
+        if is_timeline_status_label(name) or is_clip_export_style_caption(name):
+            continue
+        if n in {"play", "review", "watched", "quality assistant"}:
+            break
+    return None
+
+
 def selected_timeline_kind(names: list[str]) -> str | None:
-    """Toolbar kind when the dropdown is closed. None if the menu is open."""
+    """Focused Timeline kind when the dropdown is closed. None if the menu is open."""
     if timeline_dropdown_is_open(names):
         return None
+    focused = focused_timeline_kind(names)
+    if focused:
+        return focused
     for name in names:
         if is_clip_export_missing_error(name):
             continue
@@ -1058,13 +1178,20 @@ def selected_timeline_kind(names: list[str]) -> str | None:
     return None
 
 
+def should_abort_clip_export_k(names: list[str]) -> bool:
+    """Stop the whole K loop only if the track became Hand Tracking Error."""
+    if selected_timeline_kind(names) == "hte":
+        return True
+    if focused_timeline_kind(names) == "hte":
+        return True
+    return any(is_hte_clip_caption(n) for n in names)
+
+
 def should_stop_clip_export_k(
     chip_count_before: int, chip_count_after: int, names: list[str]
 ) -> bool:
-    """Stop Focused Timeline K if it did not add a Clip Export card or landed on HTE."""
-    if selected_timeline_kind(names) == "hte":
-        return True
-    if any(is_hte_clip_caption(n) for n in names):
+    """True when this K should not be retried: HTE, or this cut was already a card edge."""
+    if should_abort_clip_export_k(names):
         return True
     return chip_count_after <= chip_count_before
 
