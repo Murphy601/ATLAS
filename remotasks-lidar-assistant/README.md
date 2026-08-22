@@ -30,7 +30,7 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - brings the **IX** window to the front (not Google Chrome / Gemini)
 - clicks the **video** in the page (below the Chromium tab strip), then Space once
 - watches at 1x (player clock if visible, otherwise ~90s)
-- reads timeline captions via Windows accessibility and types lint fixes
+- clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
 
 You should see a click like `Clicked video-center at 525,367` (y much larger than 50).
 A click at y=49 is the tab bar and will not play the video.

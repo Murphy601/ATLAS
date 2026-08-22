@@ -12,6 +12,13 @@ from typing import Any
 from caption_engine import lint_clips
 from ego_task import parse_clips_from_text
 from process_cdp import is_ix_install, is_stock_chrome_path
+from review_ui import (
+    estimated_use_point,
+    find_review_use_clicks,
+    find_word_click,
+    ocr_text,
+    parse_watched_percent,
+)
 import config
 
 logger = logging.getLogger("ego.win_ui")
@@ -126,63 +133,65 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         hwnd, title = _pick_ix_window()
         say(f"Using IX window: {title or '(no title)'}")
         _focus(hwnd)
-        time.sleep(1.2)
+        time.sleep(0.8)
 
-        uia_text, uia_nodes = _read_uia(hwnd)
-        played = _play_via_uia(uia_nodes)
-        if not played:
-            played = _play_video(hwnd)
-        say("Watch the IX window: the video should be playing now." if played else "Sent play input; check the IX window.")
+        ocr_words, img_w, img_h = _ocr_window(hwnd, "start")
+        page_text = ocr_text(ocr_words)
+        watched_pct = parse_watched_percent(page_text)
+        use_ready = bool(find_review_use_clicks(ocr_words, img_w, img_h))
+        if watched_pct is not None:
+            say(f"Player shows Watched {watched_pct}%")
 
-        body = "\n".join(part for part in (uia_text, _read_window_text(hwnd)) if part)
-        duration = parse_media_clock(body)
-        remaining = watch_seconds
-        if remaining is None:
-            remaining = duration if duration and duration > 2 else DEFAULT_WATCH_S
-        remaining = min(max(float(remaining), 8.0), MAX_WATCH_S)
-        if duration:
-            say(f"Player clock duration {duration:.0f}s; watching at 1x")
+        played = False
+        remaining = 0.0
+        skip_watch = (watched_pct is not None and watched_pct >= 80) or use_ready
+        if skip_watch:
+            say("Review / watched state already on screen. Skipping another full watch; fixing red Grammar clips.")
+            played = True
         else:
-            say(f"No player clock found; watching {remaining:.0f}s at 1x (spec: entire video first)")
+            uia_text, uia_nodes = _read_uia(hwnd)
+            played = _play_via_uia(uia_nodes)
+            if not played:
+                played = _play_video(hwnd)
+            say("Watch the IX window: the video should be playing now." if played else "Sent play input; check the IX window.")
+            duration = parse_media_clock(page_text)
+            remaining = watch_seconds
+            if remaining is None:
+                remaining = duration if duration and duration > 2 else DEFAULT_WATCH_S
+            remaining = min(max(float(remaining), 8.0), MAX_WATCH_S)
+            elapsed = 0.0
+            while elapsed < remaining:
+                step = min(5.0, remaining - elapsed)
+                time.sleep(step)
+                elapsed += step
+                say(f"Watching video... {int(elapsed)}/{int(remaining)}s")
 
-        elapsed = 0.0
-        while elapsed < remaining:
-            step = min(5.0, remaining - elapsed)
-            time.sleep(step)
-            elapsed += step
-            say(f"Watching video... {int(elapsed)}/{int(remaining)}s")
+        review = _apply_review_uses(hwnd, write=write)
+        say(f"Clicked Review Use {review['applied']} time(s)")
 
-        uia_text, uia_nodes = _read_uia(hwnd)
-        body = "\n".join(part for part in (uia_text, _read_window_text(hwnd)) if part)
+        body = "\n".join(part for part in (review.get("text"), page_text) if part)
         clips = parse_clips_from_text(body) if body else []
         say(f"Read {len(clips)} timeline clip(s) from the window")
-        if uia_text:
-            preview = re.sub(r"\s+", " ", uia_text).strip()[:180]
-            if preview:
-                say(f"Page text preview: {preview}")
+        preview = re.sub(r"\s+", " ", body).strip()[:220]
+        if preview:
+            say(f"Page text preview: {preview}")
 
         reports = []
-        wrote = 0
+        wrote = int(review["applied"])
         for item in lint_clips([clip.to_dict() for clip in clips]):
             lint = item["lint"]
-            did_write = False
-            if write and lint.changed and not item.get("skip_edit"):
-                did_write = _type_caption(hwnd, uia_nodes, lint.original, lint.rewritten)
-                if did_write:
-                    wrote += 1
-                    say(f"Wrote caption: {lint.rewritten}")
-                else:
-                    say(f"Suggested caption fix (could not type): {lint.rewritten}")
             reports.append(
                 {
                     "index": item.get("index"),
                     "original": lint.original,
                     "rewritten": lint.rewritten,
                     "issues": [issue.__dict__ for issue in lint.issues],
-                    "wrote": did_write,
+                    "wrote": False,
                     "skipped": bool(item.get("skip_edit")),
                 }
             )
+            if write and lint.changed and not item.get("skip_edit") and review["applied"] == 0:
+                say(f"Suggested caption fix: {lint.rewritten}")
 
         payload = {
             "mode": "ego-window",
@@ -192,7 +201,8 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             "watch_seconds": remaining,
             "clip_count": len(clips),
             "wrote_captions": wrote,
-            "quality_assistant": False,
+            "review_use_clicks": review["applied"],
+            "quality_assistant": review["applied"] > 0,
             "submitted": False,
             "hte_edited": False,
             "clips": reports,
@@ -512,3 +522,170 @@ def _read_window_text(hwnd: int) -> str:
     user32.EnumChildWindows(hwnd, callback, 0)
     chunks.extend(found)
     return "\n".join(chunk for chunk in chunks if chunk)
+
+
+def _window_rect(hwnd: int) -> tuple[int, int, int, int]:
+    import ctypes
+    from ctypes import wintypes
+
+    rect = wintypes.RECT()
+    ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    return rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top
+
+
+def _capture_window_bmp(hwnd: int, dest) -> tuple[int, int]:
+    import ctypes
+    from ctypes import wintypes
+    from pathlib import Path
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    left, top, width, height = _window_rect(hwnd)
+    if width < 2 or height < 2:
+        return 0, 0
+    hwnd_dc = user32.GetWindowDC(hwnd)
+    mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+    bmp = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
+    gdi32.SelectObject(mem_dc, bmp)
+    if not user32.PrintWindow(hwnd, mem_dc, 2):
+        user32.PrintWindow(hwnd, mem_dc, 0)
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", ctypes.c_long),
+            ("biHeight", ctypes.c_long),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", ctypes.c_long),
+            ("biYPelsPerMeter", ctypes.c_long),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    info = BITMAPINFOHEADER()
+    info.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    info.biWidth = width
+    info.biHeight = -height
+    info.biPlanes = 1
+    info.biBitCount = 32
+    info.biCompression = 0
+    row = ((width * 32 + 31) // 32) * 4
+    buf = (ctypes.c_char * (row * height))()
+    gdi32.GetDIBits(mem_dc, bmp, 0, height, buf, ctypes.byref(info), 0)
+    pixel_bytes = buf.raw[: row * height]
+    file_size = 14 + 40 + len(pixel_bytes)
+    header = b"BM" + file_size.to_bytes(4, "little") + (0).to_bytes(4, "little") + (54).to_bytes(4, "little")
+    dib = bytes(info) if ctypes.sizeof(info) == 40 else (
+        (40).to_bytes(4, "little")
+        + width.to_bytes(4, "little", signed=True)
+        + (-height).to_bytes(4, "little", signed=True)
+        + (1).to_bytes(2, "little")
+        + (32).to_bytes(2, "little")
+        + (0).to_bytes(4, "little")
+        + (0).to_bytes(4, "little") * 5
+    )
+    dest.write_bytes(header + dib + pixel_bytes)
+    gdi32.DeleteObject(bmp)
+    gdi32.DeleteDC(mem_dc)
+    user32.ReleaseDC(hwnd, hwnd_dc)
+    return width, height
+
+
+def _ocr_image(path) -> list[dict]:
+    import json
+    import subprocess
+    from pathlib import Path
+
+    script = Path(__file__).with_name("ocr_image.ps1")
+    if not script.is_file():
+        return []
+    try:
+        proc = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=40,
+        )
+    except Exception:
+        logger.debug("OCR subprocess failed", exc_info=True)
+        return []
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        logger.debug("OCR empty stderr=%s", proc.stderr)
+        return []
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.debug("OCR JSON parse failed: %s", raw[:200])
+        return []
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        return []
+    return [row for row in payload if isinstance(row, dict)]
+
+
+def _ocr_window(hwnd: int, tag: str) -> tuple[list[dict], int, int]:
+    dest = config.DEBUG_CAPTURES / f"ix_{tag}.bmp"
+    width, height = _capture_window_bmp(hwnd, dest)
+    say(f"Captured IX window {width}x{height} -> {dest.name}")
+    words = _ocr_image(dest)
+    say(f"OCR words: {len(words)}")
+    return words, width, height
+
+
+def _apply_review_uses(hwnd: int, write: bool = True, max_clicks: int = 12) -> dict:
+    """Click Grammar Use on the Review sidebar for red clips. Never Submit."""
+    applied = 0
+    last_words: list[dict] = []
+    left, top, width, height = _window_rect(hwnd)
+    guessed = False
+    for step in range(max_clicks):
+        words, img_w, img_h = _ocr_window(hwnd, f"review_{step}")
+        last_words = words
+        targets = find_review_use_clicks(words, img_w, img_h)
+        if not targets:
+            review = find_word_click(
+                words, "review", img_w, img_h, x_min_frac=0.45, y_max_frac=0.30
+            )
+            if review and applied == 0 and step < 2:
+                rx, ry = review
+                say(f"Clicked Review tab at {left + rx},{top + ry}")
+                if write:
+                    _focus(hwnd)
+                    _click_screen(left + rx, top + ry)
+                    time.sleep(0.5)
+                continue
+            if applied == 0 and not guessed:
+                ex, ey = estimated_use_point(width, height)
+                say(f"No OCR Use; clicking estimated Review Use at {left + ex},{top + ey}")
+                guessed = True
+                if write:
+                    _focus(hwnd)
+                    _click_screen(left + ex, top + ey)
+                    applied += 1
+                    time.sleep(0.85)
+                continue
+            break
+        cx, cy = targets[0]
+        say(f"Review Use at {left + cx},{top + cy}")
+        if not write:
+            break
+        _focus(hwnd)
+        _click_screen(left + cx, top + cy)
+        applied += 1
+        time.sleep(0.85)
+    return {"applied": applied, "text": ocr_text(last_words), "words": last_words}

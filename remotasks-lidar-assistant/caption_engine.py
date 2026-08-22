@@ -14,6 +14,7 @@ import guidelines
 _GERUND = re.compile(r"\b(\w+ing)\b", re.I)
 _USING = re.compile(r"\busing\b", re.I)
 _WHILE = re.compile(r"\bwhile\b", re.I)
+_THE_BOTH = re.compile(r"\bthe both\b", re.I)
 _UPPER_LOWER = re.compile(r"\b(upper|lower)\b", re.I)
 _HAND = re.compile(r"\b(left hand|right hand|both hands)\b", re.I)
 _PICK_ON = re.compile(r"\b(pick up|remove)\s+(the\s+)?(.+?)\s+on\s+(the\s+)?(.+?)(\s+with\b|$)", re.I)
@@ -98,6 +99,9 @@ def lint_subgoal(caption: str, duration_s: float | None = None) -> LintResult:
     if _WHILE.search(text):
         issues.append(LintIssue("while_not_and", 'Join two hands with "and", never "while"'))
         text = _WHILE.sub("and", text)
+    if _THE_BOTH.search(text):
+        issues.append(LintIssue("the_both", 'Say "both hands", not "the both hands"'))
+        text = _THE_BOTH.sub("both", text)
     if _UPPER_LOWER.search(text):
         issues.append(LintIssue("upper_lower", 'Use top/bottom, never "upper/lower"'))
         text = re.sub(r"\bupper\b", "top", text, flags=re.I)

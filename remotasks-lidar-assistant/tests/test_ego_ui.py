@@ -44,3 +44,21 @@ def test_does_not_launch_browser():
         raise AssertionError("launch() must not open Chrome")
     except RuntimeError as exc:
         assert "does not open Chrome" in str(exc)
+
+
+def test_parses_sensorfusionlab_ocr_cards():
+    text = """
+Focused Timeline
+3.3s
+Attach the refrigerator door with the both hands
+2.8s
+Pick up the red mayonnaise jar with the left hand
+click or press K to create
+Full Timeline
+Watched 92%
+"""
+    clips = parse_clips_from_text(text)
+    assert len(clips) >= 2
+    assert clips[0].duration_s == 3.3
+    assert "refrigerator door" in clips[0].caption
+    assert "mayonnaise" in clips[1].caption

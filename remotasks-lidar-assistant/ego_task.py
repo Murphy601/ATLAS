@@ -121,6 +121,41 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
                 raw=match.group(0).strip(),
             )
         )
+    if clips:
+        return clips
+    # SensorFusionLab OCR: "3.3s" on its own line, caption on the next.
+    card = re.compile(
+        r"(pending\s+)?(\d+(?:\.\d+)?)s\s*\n+\s*([A-Z][^\n]{8,180})",
+        re.M,
+    )
+    for match in card.finditer(focused):
+        caption = re.sub(r"\s+", " ", match.group(3)).strip()
+        clips.append(
+            TimelineClip(
+                index=len(clips),
+                caption=caption,
+                duration_s=float(match.group(2)),
+                pending=bool(match.group(1)),
+                raw=match.group(0).strip(),
+            )
+        )
+    if clips:
+        return clips
+    stacked = re.compile(
+        r"([A-Z][^\n]{8,180})\s*\n\s*(pending\s+)?(\d+(?:\.\d+)?)s\b",
+        re.M,
+    )
+    for match in stacked.finditer(focused):
+        caption = re.sub(r"\s+", " ", match.group(1)).strip()
+        clips.append(
+            TimelineClip(
+                index=len(clips),
+                caption=caption,
+                duration_s=float(match.group(3)),
+                pending=bool(match.group(2)),
+                raw=match.group(0).strip(),
+            )
+        )
     return clips
 
 

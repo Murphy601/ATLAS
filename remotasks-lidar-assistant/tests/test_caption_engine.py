@@ -71,3 +71,10 @@ def test_screenshot_pending_clips_follow_hand_and_imperative_rules():
         result = lint_subgoal(caption)
         assert not any(i.code == "banned_verb" for i in result.issues)
         assert not any(i.code == "missing_hand" for i in result.issues)
+
+
+def test_the_both_hands_rewritten():
+    result = lint_subgoal("Attach the refrigerator door with the both hands")
+    assert "the both" not in result.rewritten.lower()
+    assert "with both hands" in result.rewritten.lower()
+    assert any(i.code == "the_both" for i in result.issues)
