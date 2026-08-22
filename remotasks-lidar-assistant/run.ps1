@@ -58,10 +58,11 @@ Write-Host "[Setup] Project: $root"
 
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
-    Write-Host "Python was not found. Install Python 3.12+ from https://www.python.org/downloads/"
+    Write-Host "Python was not found. Install Python 3.12 from https://www.python.org/downloads/"
     Write-Host "During setup, enable 'Add python.exe to PATH'."
     exit 1
 }
+& python -c "import sys; print('[Setup] Python ' + sys.version.split()[0])"
 
 $venvPython = $null
 foreach ($name in @("venv", ".venv")) {
@@ -78,12 +79,15 @@ if (-not $venvPython) {
     $venvPython = Join-Path $root "venv\Scripts\python.exe"
 }
 
-Write-Host "[Setup] Installing Python packages..."
+Write-Host "[Setup] Installing Python packages (EGO attach — Open3D is not required)..."
 & $venvPython -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $venvPython -m pip install -r (Join-Path $root "requirements.txt")
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "[Setup] Installing Playwright client (used only to attach to IX Browser)..."
 & $venvPython -m playwright install chromium
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $envFile = Join-Path $root ".env"
 $example = Join-Path $root ".env.example"

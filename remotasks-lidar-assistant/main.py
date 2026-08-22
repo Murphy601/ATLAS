@@ -13,7 +13,6 @@ from browser_engine import LidarBrowser
 from caption_engine import lint_subgoal
 from ego_task import apply_caption_fixes, play_open_video, read_clips, run_quality_assistant
 from overlay import start_overlay_thread
-from pcd_parser import PointCloudAnalyzer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,6 +22,8 @@ logger = logging.getLogger("ego.main")
 
 
 def analyze_frame(path: Path) -> list[dict]:
+    from pcd_parser import PointCloudAnalyzer
+
     analyzer = PointCloudAnalyzer(path)
     cuboids = analyzer.extract_object_cuboids()
     dest = analyzer.write_summary(cuboids)

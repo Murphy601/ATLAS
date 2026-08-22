@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+open3d = pytest.importorskip("open3d")
+
 from pcd_parser import PointCloudAnalyzer
 
 from tests.conftest import synthetic_scene, write_ascii_pcd

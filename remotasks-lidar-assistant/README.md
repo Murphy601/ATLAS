@@ -28,6 +28,8 @@ cd remotasks-lidar-assistant
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
+`run.ps1` installs Playwright + Flask only. Open3D is **not** required for EGO/IX attach (it has no Windows wheel on some Python versions).
+
 ## IX Browser (required before run.ps1)
 
 1. In the IX profile: enable **debugging port** `9222` (Advanced / Other).
