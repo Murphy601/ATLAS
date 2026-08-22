@@ -297,8 +297,35 @@ def test_grammar_advance_and_remaining_work() -> None:
         ["All ClipExports must be fully filled in parallel with Sub-goals"],
         garbled,
     )
+    assert not should_rewrite_every_clip_export_card(
+        [
+            "All ClipExports must be fully filled in parallel with Sub-goals",
+            "The person drops the pants and folds the pants at an indoor table during a laundry folding task.",
+        ]
+    )
+    from review_ui import (
+        filter_ocr_person_card_hits,
+        should_nudge_end_match,
+        should_refill_clip_export_after_write,
+    )
+
+    assert should_nudge_end_match(
+        ["Text Annotation 9c1a: All ClipExport end must match a Sub-goal end. On frames: 297."]
+    )
     assert needs_one_frame_nudge([297], 296)
-    assert not needs_one_frame_nudge([297], 297)
+    assert needs_one_frame_nudge([297], None)
+    assert not needs_one_frame_nudge([], 297)
+    assert not should_refill_clip_export_after_write(
+        True,
+        [
+            "All ClipExports must be fully filled in parallel with Sub-goals",
+            "The person drops the pants and folds the pants at an indoor table during a laundry folding task.",
+        ],
+    )
+    overlay_hits = filter_ocr_person_card_hits(
+        [(61, 738), (191, 738), (400, 850)], 0, 0, 1050
+    )
+    assert overlay_hits == [(400, 850)]
 
     class _Lint:
         def __init__(self, original: str, rewritten: str) -> None:

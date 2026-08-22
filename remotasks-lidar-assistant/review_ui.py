@@ -949,10 +949,17 @@ def qa_mismatch_frames(names: list[str]) -> list[int]:
 
 
 def needs_one_frame_nudge(qa_frames: list[int], review_start_frame: int | None) -> bool:
-    """True when QA wants frame 297 and the current Clip Export ends at 296."""
+    """True when QA wants frame 297. Review often OCR-reads f300 instead of f296."""
+    if qa_frames:
+        return True
     if review_start_frame is None:
         return False
     return any(abs(int(frame) - int(review_start_frame)) == 1 for frame in qa_frames or [])
+
+
+def should_nudge_end_match(names: list[str]) -> bool:
+    """QA still lists a Clip Export end-match frame (297). Drag/nudge; do not rewrite text."""
+    return bool(qa_mismatch_frames(names))
 
 
 def clip_export_inferred_card_fracs(
@@ -988,19 +995,47 @@ def should_skip_k_after_caption_fill(already_filled: bool) -> bool:
 
 
 def should_rewrite_every_clip_export_card(names: list[str], ocr_blob: str = "") -> bool:
-    """Rewrite all on-screen Clip Export cards, not only the first UIA chip."""
+    """Rewrite garbled / placeholder / hands text. Parallel-fill is a split, not a rewrite."""
     blob = "\n".join([*(names or []), ocr_blob or ""])
     if is_garbled_clip_export_caption(blob):
         return True
     if any(is_clip_export_placeholder(n) for n in names or []):
         return True
-    if any(is_clip_export_missing_error(n) for n in names or []):
+    if any(is_clip_export_empty_error(n) or is_clip_export_short_error(n) for n in names or []):
         return True
     if any(clip_export_caption_needs_rewrite(n) for n in names or []):
         return True
     if any(is_garbled_clip_export_caption(n) for n in names or []):
         return True
     return False
+
+
+def should_refill_clip_export_after_write(
+    already_filled: bool, names: list[str], ocr_blob: str = ""
+) -> bool:
+    """After the first good write, do not paste over the same three cards again."""
+    if not already_filled:
+        return True
+    return should_rewrite_every_clip_export_card(names, ocr_blob)
+
+
+def filter_ocr_person_card_hits(
+    hits: list[tuple[int, int]],
+    win_left: int,
+    win_top: int,
+    win_height: int,
+) -> list[tuple[int, int]]:
+    """Drop overlay 'The person' words (y~738, x=61). Those are not timeline cards."""
+    lo = win_top + int(win_height * 0.78)
+    hi = win_top + int(win_height * 0.92)
+    out: list[tuple[int, int]] = []
+    for x, y in hits or []:
+        if int(x) < win_left + 90:
+            continue
+        if int(y) < lo or int(y) > hi:
+            continue
+        out.append((int(x), int(y)))
+    return out
 
 
 def harvest_rewrites_to_apply(
@@ -1062,12 +1097,14 @@ def long_range_interior_fracs(
 
 
 def clip_durations_from_ocr(blob: str) -> list[float]:
-    """Timeline card lengths like 9.9s / 27.0s / 5.3s. Ignore FPS and Watched 100."""
+    """Timeline card lengths like 9.9s / 27.0s / 5.3s. Ignore FPS and a lone OCR '3s'."""
     vals: list[float] = []
     for raw in re.findall(r"(\d+(?:\.\d+)?)\s*s\b", blob or "", flags=re.I):
         val = float(raw)
         if 0.4 <= val <= 180 and val not in {15.0, 60.0}:
             vals.append(val)
+    if len(vals) == 1 and vals[0] < 5.0:
+        return []
     return vals
 
 
