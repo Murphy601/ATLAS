@@ -218,6 +218,18 @@ def is_idle_too_long_error(name: str) -> bool:
     return "more than 5" in n or "split" in n
 
 
+def is_false_idle_review_error(name: str) -> bool:
+    """Review is rejecting Idle: this clip has action and needs a real caption."""
+    n = (name or "").strip().casefold()
+    if "at least 10 words" in n:
+        return True
+    if "format expected" in n:
+        return True
+    if "left hand" in n and "idle" in n and "unless" in n:
+        return True
+    return False
+
+
 def is_ignore_all_label(name: str) -> bool:
     n = (name or "").strip().casefold()
     return n == "ignore all" or n == "ignoreall"
@@ -302,7 +314,10 @@ def review_sidebar_open(names: list[str]) -> bool:
 
 
 def quality_linters_remaining(names: list[str]) -> bool:
-    return any(is_idle_too_long_error(n) or is_clip_export_missing_error(n) for n in names)
+    return any(
+        is_idle_too_long_error(n) or is_clip_export_missing_error(n) or is_false_idle_review_error(n)
+        for n in names
+    )
 
 
 def pick_idle_split_rects(

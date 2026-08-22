@@ -9,7 +9,13 @@ import sys
 import time
 from typing import Any
 
-from caption_engine import clip_export_from_subgoals, lint_clips, subgoal_captions_from_names
+from caption_engine import (
+    action_caption_for_mislabeled_idle,
+    clip_export_from_subgoals,
+    is_not_timeline_caption,
+    lint_clips,
+    subgoal_captions_from_names,
+)
 from ego_task import parse_clips_from_text
 from process_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from review_ui import (
@@ -26,6 +32,7 @@ from review_ui import (
     is_create_clip_hint,
     is_empty_clip_label,
     is_grammar_row_label,
+    is_false_idle_review_error,
     is_hte_label,
     is_idle_too_long_error,
     is_ignore_all_label,
@@ -76,6 +83,7 @@ TAB_STRIP_MIN = 110
 TAB_STRIP_MAX = 160
 DEFAULT_WATCH_S = 90.0
 MAX_WATCH_S = 300.0
+OBSERVE_FIRST_CLIPS_S = 24.0
 CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
 _OCR_BROKEN = False
 
@@ -195,6 +203,12 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         if quality_ready:
             say("Quality Assistant reds are on screen.")
 
+        first_is_idle = any(
+            _uia_name(ctrl).strip().casefold() == "idle" for ctrl in uia_nodes
+        ) or any(is_idle_too_long_error(_uia_name(ctrl)) for ctrl in uia_nodes)
+        _seek_timeline_start(hwnd, uia_nodes)
+        time.sleep(0.3)
+        uia_text, uia_nodes = _read_uia(hwnd)
         already_playing = any(is_pause_control_label(_uia_name(ctrl)) for ctrl in uia_nodes)
         played = False
         remaining = 0.0
@@ -215,8 +229,17 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             watched_pct, use_ready=use_ready, quality_ready=quality_ready
         )
         if skip_full_watch:
-            say("Watched / Review already on screen, so not waiting another 90s after Play.")
-            time.sleep(4.0)
+            remaining = OBSERVE_FIRST_CLIPS_S if first_is_idle else 8.0
+            say(
+                f"Watched already on screen; playing {int(remaining)}s from the start "
+                "so the first clips can be seen (not pausing after 2 segments)."
+            )
+            elapsed = 0.0
+            while elapsed < remaining:
+                step = min(5.0, remaining - elapsed)
+                time.sleep(step)
+                elapsed += step
+                say(f"Watching first clips... {int(elapsed)}/{int(remaining)}s")
         else:
             duration = parse_media_clock(page_text)
             remaining = watch_seconds
@@ -239,18 +262,27 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             _close_timeline_dropdown(hwnd)
             _switch_timeline_kind(hwnd, "sub-goal")
             used = _apply_review_uses(hwnd, write=write, max_clicks=4)
+            recap = _recaption_false_idle(hwnd, write=write)
             missing = _fill_missing_and_reds(hwnd, write=write)
-            split = _split_long_idle(hwnd, write=write)
+            split = {"wrote": 0, "text": recap.get("text") or ""}
+            if recap.get("wrote", 0) == 0:
+                split = _split_long_idle(hwnd, write=write)
             exported = _fill_clip_export(hwnd, write=write)
             review["applied"] += int(used["applied"])
             if used.get("text"):
                 review["text"] = used["text"]
-            filled["wrote"] += int(missing["wrote"]) + int(exported["wrote"]) + int(split["wrote"])
+            filled["wrote"] += (
+                int(missing["wrote"])
+                + int(exported["wrote"])
+                + int(split["wrote"])
+                + int(recap.get("wrote") or 0)
+            )
             if missing.get("text"):
                 filled["text"] = missing["text"]
             say(
                 f"Pass {pass_i + 1}: Use {used['applied']}, filled {missing['wrote']}, "
-                f"clip-export {exported['wrote']}, idle-split {split['wrote']}"
+                f"false-idle {recap.get('wrote', 0)}, clip-export {exported['wrote']}, "
+                f"idle-split {split['wrote']}"
             )
             uia_now, _nodes_now = _read_uia(hwnd)
             body_now = "\n".join(
@@ -269,7 +301,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
                 if not review_work_remaining(body_now):
                     say("No more Review / Quality Assistant work on screen.")
                     break
-            if used["applied"] + missing["wrote"] + exported["wrote"] + split["wrote"] == 0:
+            if used["applied"] + missing["wrote"] + exported["wrote"] + split["wrote"] + recap.get("wrote", 0) == 0:
                 idle_rounds += 1
                 if not review_work_remaining(body_now):
                     say("No more Review / Quality Assistant work on screen.")
@@ -696,6 +728,75 @@ def _named_rects(nodes: list[Any]) -> list[tuple[str, tuple[int, int, int, int]]
         except Exception:
             continue
     return out
+
+
+def _seek_timeline_start(hwnd: int, nodes: list[Any] | None = None) -> None:
+    """Put the playhead at the first clip so Play starts at 0s, not mid-video."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd)
+    left, top, width, height = _window_rect(hwnd)
+    y = int(top + height * 0.90)
+    for ctrl in nodes:
+        if _uia_name(ctrl).strip().casefold() != "full timeline":
+            continue
+        center = _ctrl_center(ctrl)
+        if center:
+            y = center[1] + 16
+            break
+    x = int(left + width * 0.06)
+    _click_screen(x, y)
+    say(f"Seeked Full Timeline to the start at {x},{y}")
+
+
+def _recaption_false_idle(hwnd: int, write: bool = True) -> dict:
+    """Replace a first-clip Idle that actually has action. Never Submit. Never HTE."""
+    uia_text, nodes = _read_uia(hwnd)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    idle_on_timeline = any(n.strip().casefold() == "idle" for n in names)
+    rejected = any(is_false_idle_review_error(n) for n in names) or any(
+        is_idle_too_long_error(n) for n in names
+    )
+    if not idle_on_timeline or not rejected:
+        return {"wrote": 0, "text": uia_text}
+    blob = list(names)
+    if not _OCR_BROKEN:
+        words, _w, _h = _ocr_window(hwnd, "false_idle")
+        blob.append(ocr_text(words))
+    blob.extend(subgoal_captions_from_names(names))
+    caption = action_caption_for_mislabeled_idle(blob)
+    if not write:
+        return {"wrote": 0, "text": caption}
+    if not _click_idle_caption_field(hwnd, nodes):
+        say("Could not focus the Idle caption field to replace it with an action")
+        return {"wrote": 0, "text": uia_text}
+    time.sleep(0.2)
+    _type_into_focused(caption)
+    say(f"Replaced false Idle with action: {caption}")
+    time.sleep(0.45)
+    return {"wrote": 1, "text": caption}
+
+
+def _click_idle_caption_field(hwnd: int, nodes: list[Any]) -> bool:
+    """Click the Review-panel Idle caption (not the video overlay)."""
+    left, top, width, height = _window_rect(hwnd)
+    review_hits: list[tuple[int, Any]] = []
+    timeline_hits: list[tuple[int, Any]] = []
+    for ctrl in nodes:
+        if _uia_name(ctrl).strip().casefold() != "idle":
+            continue
+        center = _ctrl_center(ctrl)
+        if not center:
+            continue
+        if center[0] > left + width * 0.52 and center[1] < top + height * 0.58:
+            review_hits.append((center[1], ctrl))
+        elif center[1] > top + height * 0.62:
+            timeline_hits.append((center[0], ctrl))
+    ordered = sorted(review_hits) + sorted(timeline_hits)
+    for _key, ctrl in ordered:
+        if _uia_click(ctrl):
+            say("Clicked the Idle caption field")
+            return True
+    return False
 
 
 def _click_uia_use(hwnd: int, nodes: list[Any]) -> bool:
@@ -1479,8 +1580,12 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
         lint = item["lint"]
         if item.get("skip_edit") or not lint.changed:
             continue
+        if is_not_timeline_caption(lint.original) or is_not_timeline_caption(lint.rewritten):
+            continue
         snippet = " ".join((lint.original or "").split()[:5])
         if not snippet or snippet.lower() in {"idle", "click to add text"}:
+            continue
+        if is_not_timeline_caption(snippet):
             continue
         hit = None
         for ctrl in nodes:

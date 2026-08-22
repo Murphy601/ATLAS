@@ -68,6 +68,23 @@ def test_clip_export_from_kitchen_subgoals() -> None:
         ["Sub-goal", "Focused Timeline Idle", "Pick up thY!9d mayonnaisejar"]
     )
     assert "kitchen" in ocr_blob.lower()
+
+
+def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:
+    from caption_engine import action_caption_for_mislabeled_idle, is_not_timeline_caption, lint_subgoal
+
+    text = action_caption_for_mislabeled_idle(
+        ["Idle", "Pick up the red mayonnaise jar with the left hand"]
+    )
+    assert "idle" not in text.lower()
+    assert "mayonnaise" in text.lower()
+    assert "hand" in text.lower()
+    assert "reach for" not in text.lower()
+    assert len(text.split()) >= 10
+    assert lint_subgoal(text).ok
+    assert is_not_timeline_caption("LLM check not yet run. QUALITY ASSISTANT")
+    assert is_not_timeline_caption("Shortcuts q q fs40 Rotate")
+    assert not is_not_timeline_caption("Pick up the red mayonnaise jar with the left hand")
     bad = lint_clip_export("Make a sandwich")
     assert not bad.ok
     good = lint_clip_export(

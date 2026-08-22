@@ -32,8 +32,9 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - clicks the **video** in the page (below the Chromium tab strip), then Space once
 - watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
-- **pauses** the video before any timeline edit (K while playing cuts at a moving playhead)
-- splits Idle **over 5s** by clicking **45% of the way from the Idle card to the next pending clip** (not the tiny Idle word) and pressing **K** once (`click or press K to create`). If the red remains, it tries ~90% (~5.0s of 5.5s). Caption stays `Idle`. Never HTE
+- **pauses only after watching the first clips** (~24s from the start). It does not stop after 2 segments.
+- if the first card says **Idle** but Review flags missing hands / 10 words / format (the clip has action), it **replaces Idle** with a 10+ word hand caption grounded in the next sub-goal (mayonnaise jar / kitchen counter). It does not split a mislabeled action into smaller Idle pieces
+- splits Idle **over 5s** only when the clip is truly Idle (no action). Caption stays `Idle`. Never HTE
 - switches the top **Sub-goal** dropdown to **ClipExport** and types 1–2 kitchen/environment sentences into the **existing pending / Focus annotation** field. It does **not** press K when a Clip Export clip already exists (K at the playhead makes a short clip that is not in parallel with sub-goals)
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 

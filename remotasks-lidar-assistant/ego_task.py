@@ -15,7 +15,7 @@ from typing import Any
 from playwright.sync_api import Page
 
 import guidelines
-from caption_engine import LintResult, lint_clips
+from caption_engine import LintResult, is_not_timeline_caption, lint_clips
 
 logger = logging.getLogger("ego.task")
 
@@ -97,6 +97,8 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
         caption = re.sub(r"\s+", " ", match.group(3)).strip(" :-")
         if not caption or CREATE_HINT.lower() in caption.lower():
             continue
+        if is_not_timeline_caption(caption):
+            continue
         clips.append(
             TimelineClip(
                 index=len(clips),
@@ -112,6 +114,8 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
     loose = re.compile(r"(pending\s*)?(\d+(?:\.\d+)?)s\s+([A-Z][^|\n]{8,200})")
     for match in loose.finditer(focused):
         caption = re.sub(r"\s+", " ", match.group(3)).strip()
+        if is_not_timeline_caption(caption):
+            continue
         clips.append(
             TimelineClip(
                 index=len(clips),
@@ -130,6 +134,8 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
     )
     for match in card.finditer(focused):
         caption = re.sub(r"\s+", " ", match.group(3)).strip()
+        if is_not_timeline_caption(caption):
+            continue
         clips.append(
             TimelineClip(
                 index=len(clips),
@@ -147,6 +153,8 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
     )
     for match in stacked.finditer(focused):
         caption = re.sub(r"\s+", " ", match.group(1)).strip()
+        if is_not_timeline_caption(caption):
+            continue
         clips.append(
             TimelineClip(
                 index=len(clips),

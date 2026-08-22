@@ -62,3 +62,18 @@ Watched 92%
     assert clips[0].duration_s == 3.3
     assert "refrigerator door" in clips[0].caption
     assert "mayonnaise" in clips[1].caption
+
+
+def test_parse_clips_ignores_sidebar_chrome() -> None:
+    text = """
+Focused Timeline
+LLM check not yet run. QUALITY ASSISTANT Error All ClipExports
+Shortcuts q q fs40 Rotate the jar
+pending | 2.7s Pick up the red mayonnaise jar with the left hand
+click or press K to create
+"""
+    clips = parse_clips_from_text(text)
+    assert len(clips) == 1
+    assert "mayonnaise" in clips[0].caption
+    assert all("QUALITY ASSISTANT" not in c.caption for c in clips)
+    assert all("Shortcuts" not in c.caption for c in clips)

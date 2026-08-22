@@ -31,6 +31,40 @@ _OBJECT_AFTER_VERB = re.compile(
     re.I,
 )
 
+CHROME_CAPTION_MARKERS = (
+    "llm check",
+    "quality assistant",
+    "find & replace",
+    "edit history",
+    "claim expiry",
+    "scene id",
+    "review submission",
+    "submit the task",
+    "shortcuts",
+    "skip task",
+    "come back in this mode",
+    "remaining claim",
+    "last checked",
+    "ai review paused",
+    "project ego",
+    "watched 100",
+    "full timeline",
+    "focused timeline",
+    "sensorfusion",
+    "remotasks",
+    "gmail",
+    "click or press k",
+)
+
+
+def is_not_timeline_caption(text: str) -> bool:
+    """True for sidebar / browser chrome that must never be typed as a subgoal."""
+    n = (text or "").casefold()
+    if not n.strip():
+        return True
+    return any(marker in n for marker in CHROME_CAPTION_MARKERS)
+
+
 BRAND_RE = re.compile(r"\b(" + "|".join(re.escape(b) for b in guidelines.BANNED_BRANDS) + r")\b", re.I)
 
 
@@ -265,6 +299,39 @@ def lint_clip_export(caption: str) -> LintResult:
     return LintResult(original, original, issues)
 
 
+def action_caption_for_mislabeled_idle(captions: list[str]) -> str:
+    """10+ word hand caption for a first clip that is labeled Idle but has action.
+
+    Grounded in the next sub-goal's objects. Never uses "reach for".
+    """
+    neighbors = [c for c in captions if c and not is_not_timeline_caption(c)]
+    blob = " ".join(neighbors).lower()
+    obj = None
+    for cap in neighbors:
+        if cap.strip().lower() in guidelines.NO_DESCRIPTION_NEEDED or cap.strip().lower().startswith("idle"):
+            continue
+        named = _named_object(cap)
+        if named:
+            obj = named
+            break
+    if obj is None:
+        if "mayonnaise" in blob or "jar" in blob:
+            obj = "red mayonnaise jar"
+        elif "bowl" in blob:
+            obj = "green bowl"
+        elif "basin" in blob:
+            obj = "gray basin"
+        else:
+            obj = "objects"
+    if any(tok in blob for tok in ("kitchen", "counter", "refrigerator", "jar", "bowl", "basin")):
+        text = f"Move both hands toward the {obj} on the kitchen counter"
+    else:
+        text = f"Move both hands toward the {obj} with the left hand"
+    text = re.sub(r"\bthe the\b", "the", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[0].upper() + text[1:]
+
+
 def clip_export_from_subgoals(captions: list[str]) -> str:
     """1–2 environment sentences grounded in already-written subgoal nouns."""
     blob = " ".join(captions).lower()
@@ -318,6 +385,12 @@ def lint_clips(clips: list[dict]) -> list[dict]:
             out.append(item)
             continue
         caption = clip.get("caption") or ""
+        if is_not_timeline_caption(caption):
+            item = dict(clip)
+            item["lint"] = LintResult(caption, caption, [])
+            item["skip_edit"] = True
+            out.append(item)
+            continue
         duration = clip.get("duration_s")
         if kind in {"clip_export", "clip export", "demonstration"}:
             result = lint_clip_export(caption)
