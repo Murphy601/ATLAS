@@ -32,7 +32,6 @@ from review_ui import (
     clip_export_visible_card_count,
     chip_end_fractions,
     duration_end_fractions,
-    focused_timeline_kind,
     long_card_interior_fracs,
     parse_timeline_fps,
     pick_clip_export_status_rects,
