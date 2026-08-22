@@ -24,7 +24,9 @@ from review_ui import (
     is_grammar_row_label,
     is_idle_too_long_error,
     is_ignore_all_label,
+    is_pause_control_label,
     is_pending_clip_label,
+    is_play_control_label,
     is_quality_assistant_text,
     is_quality_empty_error,
     is_review_use_label,
@@ -182,19 +184,29 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         if quality_ready:
             say("Quality Assistant reds are on screen.")
 
+        already_playing = any(is_pause_control_label(_uia_name(ctrl)) for ctrl in uia_nodes)
         played = False
         remaining = 0.0
-        skip_watch = should_skip_watch(
-            watched_pct, use_ready=use_ready, quality_ready=quality_ready
-        )
-        if skip_watch:
-            say("Review / watched state already on screen. Skipping another full watch; filling missing captions.")
+        if already_playing:
+            say("Video is already playing (Pause is on screen).")
             played = True
         else:
             played = _play_via_uia(uia_nodes)
             if not played:
                 played = _play_video(hwnd)
-            say("Watch the IX window: the video should be playing now." if played else "Sent play input; check the IX window.")
+            say(
+                "Watch the IX window: Play was clicked and the video should be playing now."
+                if played
+                else "Sent play input; check the IX window."
+            )
+
+        skip_full_watch = should_skip_watch(
+            watched_pct, use_ready=use_ready, quality_ready=quality_ready
+        )
+        if skip_full_watch:
+            say("Watched / Review already on screen, so not waiting another 90s after Play.")
+            time.sleep(4.0)
+        else:
             duration = parse_media_clock(page_text)
             remaining = watch_seconds
             if remaining is None:
@@ -588,15 +600,19 @@ def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
 
 
 def _play_via_uia(nodes: list[Any]) -> bool:
+    if any(is_pause_control_label(_uia_name(ctrl)) for ctrl in nodes):
+        say("Pause control is visible; leaving the video playing.")
+        return True
     for ctrl in nodes:
-        name = _uia_name(ctrl).lower()
-        if name in {"play", "play video", "play clip"} or name.startswith("play "):
-            try:
-                if _uia_click(ctrl):
-                    say(f"Clicked UIA play control: {name}")
-                    return True
-            except Exception:
-                logger.debug("UIA play click failed", exc_info=True)
+        name = _uia_name(ctrl)
+        if not is_play_control_label(name):
+            continue
+        try:
+            if _uia_click(ctrl):
+                say(f"Clicked UIA play control: {name}")
+                return True
+        except Exception:
+            logger.debug("UIA play click failed", exc_info=True)
     return False
 
 
@@ -658,19 +674,19 @@ def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
         _text, nodes = _read_uia(hwnd)
     for ctrl in nodes:
         name = _uia_name(ctrl)
-        if not is_pending_clip_label(name):
-            continue
-        if _uia_click(ctrl):
-            say(f"Opened pending timeline clip: {name}")
-            return True
-    for ctrl in nodes:
-        name = _uia_name(ctrl)
         if is_ignore_all_label(name):
             continue
         if not is_grammar_row_label(name):
             continue
         if _click_control_left(ctrl):
             say(f"Clicked Grammar row (left side, not Ignore all): {name[:80]}")
+            return True
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if not is_pending_clip_label(name):
+            continue
+        if _uia_click(ctrl):
+            say(f"Opened pending timeline clip: {name}")
             return True
     for ctrl in nodes:
         name = _uia_name(ctrl)
@@ -1012,18 +1028,30 @@ def _ocr_image(path) -> list[dict]:
         logger.debug("OCR subprocess failed", exc_info=True)
         return []
     raw = (proc.stdout or "").strip()
-    if proc.returncode not in (0, None) or not raw:
-        err = (proc.stderr or "").strip()[:400]
-        say(f"OCR empty (exit {proc.returncode}). {err}")
-        if "MakeGenericMethod" in (proc.stderr or "") or "generic parameter" in (proc.stderr or "").lower():
+    err = (proc.stderr or "").strip()
+    json_path = Path(raw.splitlines()[-1].strip()) if raw else None
+    if json_path and json_path.suffix.lower() == ".json" and json_path.is_file():
+        raw = json_path.read_text(encoding="utf-8-sig")
+    elif proc.returncode not in (0, None) or not raw:
+        say(f"OCR empty (exit {proc.returncode}). {err[:400]}")
+        if "MakeGenericMethod" in err or "generic parameter" in err.lower():
             _OCR_BROKEN = True
             say("OCR script failed; continuing with UIA only.")
         return []
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        say(f"OCR JSON parse failed: {raw[:240]}")
-        return []
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start >= 0 and end > start:
+            try:
+                payload = json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                say(f"OCR JSON parse failed: {raw[:240]}")
+                return []
+        else:
+            say(f"OCR JSON parse failed: {raw[:240]}")
+            return []
     if isinstance(payload, dict):
         payload = [payload]
     if not isinstance(payload, list):

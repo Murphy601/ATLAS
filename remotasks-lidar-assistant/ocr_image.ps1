@@ -74,7 +74,10 @@ foreach ($line in $result.Lines) {
 }
 
 if ($words.Count -eq 0) {
-    Write-Output "[]"
+    $json = "[]"
 } else {
-    $words | ConvertTo-Json -Compress
+    $json = $words | ConvertTo-Json -Compress -Depth 6
 }
+$jsonPath = [System.IO.Path]::ChangeExtension($Path, ".ocr.json")
+[System.IO.File]::WriteAllText($jsonPath, $json)
+Write-Output $jsonPath

@@ -30,7 +30,8 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 
 - brings the **IX** window to the front (not Google Chrome / Gemini)
 - clicks the **video** in the page (below the Chromium tab strip), then Space once
-- watches at 1x (player clock if visible, otherwise ~90s)
+- watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
+- clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 

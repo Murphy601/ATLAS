@@ -49,6 +49,16 @@ def test_find_click_to_add_text_on_timeline() -> None:
     assert hit[1] > 500
 
 
+def test_play_is_not_playback_speed() -> None:
+    from review_ui import is_pause_control_label, is_play_control_label
+
+    assert is_play_control_label("Play")
+    assert not is_play_control_label("Playback speed (away from transitions)")
+    assert not is_play_control_label("Playback mode")
+    assert is_pause_control_label("Pause")
+    assert not is_pause_control_label("Play")
+
+
 def test_use_and_empty_clip_labels() -> None:
     assert is_review_use_label("Use")
     assert is_review_use_label("Use suggestion")

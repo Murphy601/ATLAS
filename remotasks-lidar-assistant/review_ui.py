@@ -151,6 +151,19 @@ def find_phrase_click(
     return None
 
 
+def is_play_control_label(name: str) -> bool:
+    """True for the video Play button, not Playback speed / Playback mode."""
+    n = (name or "").strip().casefold()
+    if not n or n.startswith("playback"):
+        return False
+    return n in {"play", "play video", "play clip"}
+
+
+def is_pause_control_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"pause", "pause video"} or n.startswith("pause ")
+
+
 def is_review_use_label(name: str) -> bool:
     """True for the Grammar Review Use button (not Find & Replace / Submit)."""
     n = (name or "").strip().casefold()
