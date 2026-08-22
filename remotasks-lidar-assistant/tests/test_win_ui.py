@@ -203,5 +203,6 @@ def test_empty_clip_and_use_helpers_match_screenshot_labels() -> None:
 
     assert is_empty_clip_label("click to add text")
     assert is_review_use_label("Use")
-    assert is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert not is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert is_quality_empty_error("Sub-goal clips must contain text")
     assert not is_review_use_label("Ignore")

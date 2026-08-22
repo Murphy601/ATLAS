@@ -43,7 +43,10 @@ from review_ui import (
     is_clip_export_end_mismatch,
     is_clip_export_hands_error,
     is_clip_export_caption_label,
+    is_clip_export_duplicate_timeline,
+    is_clip_export_empty_error,
     is_clip_export_missing_error,
+    is_clip_export_short_error,
     is_clip_export_placeholder,
     is_clip_export_tab,
     is_create_clip_hint,
@@ -1179,7 +1182,12 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     hands = any(is_clip_export_hands_error(n) for n in names)
     if not should_fill_clip_export(names, already_filled=_CLIP_EXPORT_FILLED):
         return {"wrote": 0, "text": uia_text}
-    if not missing and not end_mismatch and not hands:
+    empty_err = any(is_clip_export_empty_error(n) for n in names) or is_clip_export_empty_error(
+        uia_text
+    )
+    short_err = any(is_clip_export_short_error(n) for n in names)
+    duplicate = any(is_clip_export_duplicate_timeline(n) for n in names)
+    if not missing and not end_mismatch and not hands and not empty_err and not short_err:
         say("Filling Clip Export from Sub-goal captions (no Clip Export Quality Assistant row this pass)")
 
     blob = list(names)
@@ -1206,7 +1214,12 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
 
     for ctrl in nodes:
         name = _uia_name(ctrl)
-        if is_clip_export_missing_error(name) or is_clip_export_hands_error(name):
+        if (
+            is_clip_export_missing_error(name)
+            or is_clip_export_hands_error(name)
+            or is_clip_export_empty_error(name)
+            or is_clip_export_short_error(name)
+        ):
             if _uia_click(ctrl):
                 say("Clicked Quality Assistant Clip Export error")
                 time.sleep(0.35)
@@ -1218,7 +1231,11 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
     parallel = clip_export_needs_parallel_splits(names, n_slots)
-    if not _CLIP_EXPORT_ALIGNED and end_fracs:
+    duplicate = duplicate or any(is_clip_export_duplicate_timeline(n) for n in names)
+    if duplicate:
+        say("Not pressing K: Quality Assistant already has more than one Clip Export timeline")
+        _CLIP_EXPORT_ALIGNED = True
+    elif not _CLIP_EXPORT_ALIGNED and end_fracs:
         _align_clip_export_on_focused_timeline(hwnd, end_fracs, nodes)
         _CLIP_EXPORT_ALIGNED = True
         time.sleep(0.3)
@@ -1233,9 +1250,21 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     )
     empty = any(is_empty_clip_label(_uia_name(ctrl)) for ctrl in nodes)
     missing_now = any(is_clip_export_missing_error(_uia_name(ctrl)) for ctrl in nodes)
+    empty_now = any(is_clip_export_empty_error(_uia_name(ctrl)) for ctrl in nodes)
+    short_now = any(is_clip_export_short_error(_uia_name(ctrl)) for ctrl in nodes)
     wrote = 0
-    if not _CLIP_EXPORT_FILLED or hands or dirty or empty or missing_now:
-        if n_slots >= 2 and (end_fracs or empty or missing_now):
+    need_slots = (
+        not _CLIP_EXPORT_FILLED
+        or hands
+        or dirty
+        or empty
+        or missing_now
+        or empty_now
+        or short_now
+        or parallel
+    )
+    if need_slots:
+        if n_slots >= 2 or empty or empty_now or short_now or missing_now:
             wrote = _fill_each_clip_export_slot(hwnd, sentences, end_fracs)
         elif _click_clip_export_caption_field(nodes, prefer_hands=True):
             say("Clicked the Clip Export caption that still mentions hands")
@@ -1245,6 +1274,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             say(f"Typed Clip Export: {fallback}")
         else:
             wrote = _type_one_clip_export(hwnd, nodes, fallback)
+        wrote += _fill_clip_export_from_qa_errors(hwnd, fallback)
         _CLIP_EXPORT_FILLED = True
         time.sleep(0.25)
         _text, nodes = _read_uia(hwnd, verbose=False)
@@ -1415,6 +1445,35 @@ def _click_clip_export_end_ignore(hwnd: int, nodes: list[Any] | None = None) -> 
     return False
 
 
+def _fill_clip_export_from_qa_errors(hwnd: int, sentence: str) -> int:
+    """Click each empty/short Clip Export Quality Assistant row and type 15+ words."""
+    wrote = 0
+    for _attempt in range(6):
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        target = None
+        for ctrl in nodes:
+            name = _uia_name(ctrl)
+            if is_clip_export_empty_error(name) or is_clip_export_short_error(name):
+                target = ctrl
+                break
+        if target is None:
+            break
+        if not _uia_click(target):
+            break
+        say("Clicked Quality Assistant Clip Export empty/short row")
+        time.sleep(0.3)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        if not _click_clip_export_caption_field(nodes, prefer_hands=True):
+            _click_uia_empty_clip(nodes) or _click_bottom_pending(hwnd, nodes)
+        time.sleep(0.15)
+        _type_into_focused(sentence)
+        _blur_caption(hwnd, nodes)
+        wrote += 1
+        say(f"Typed Clip Export from Quality Assistant row: {sentence}")
+        time.sleep(0.3)
+    return wrote
+
+
 def _fill_each_clip_export_slot(
     hwnd: int, sentences: list[str], end_fracs: list[float] | None = None
 ) -> int:
@@ -1487,12 +1546,13 @@ def _type_one_clip_export(hwnd: int, nodes: list[Any], text: str) -> int:
                     created = True
                     break
         if not created:
-            _span_clip_export(hwnd, nodes)
+            say("Typing into the existing Clip Export track (not creating a second timeline)")
+            _click_focused_timeline_fraction(hwnd, 0.15, nodes)
         time.sleep(0.45)
         uia_text, nodes = _read_uia(hwnd)
         clicked = _click_uia_empty_clip(nodes) or _click_bottom_pending(hwnd, nodes)
         if not clicked:
-            say("Clip Export span created; typing into the focused field")
+            say("Clip Export field focused; typing without a Full Timeline K")
             clicked = True
     time.sleep(0.2)
     _type_into_focused(text)
@@ -1519,15 +1579,9 @@ def _click_bottom_pending(hwnd: int, nodes: list[Any]) -> bool:
 
 
 def _span_clip_export(hwnd: int, nodes: list[Any]) -> None:
-    """Create one Clip Export covering the Full Timeline, not a cut at the playhead."""
-    x0, y0 = _click_full_timeline_fraction(hwnd, 0.02, nodes)
-    time.sleep(0.2)
-    _press_k_to_create(hwnd)
-    time.sleep(0.25)
-    x1, y1 = _click_full_timeline_fraction(hwnd, 0.96, nodes)
-    time.sleep(0.2)
-    _press_k_to_create(hwnd)
-    say(f"Created a Clip Export span on Full Timeline ({x0},{y0} then {x1},{y1})")
+    """Do not K on Full Timeline. That creates a second Clip Export track."""
+    del nodes
+    say("Skipping Full Timeline K so a second Clip Export timeline is not created")
 
 
 def _split_long_idle(hwnd: int, write: bool = True) -> dict:

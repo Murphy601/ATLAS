@@ -181,6 +181,9 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
     assert lint_clip_export(text).ok
     idle = clip_export_sentence_for_subgoal("Idle")
     assert "kitchen" in idle.lower()
+    assert "hand" not in idle.lower()
+    assert len(idle.split()) >= 15
+    assert lint_clip_export(idle).ok
     dirty = clip_export_sentence_for_subgoal(
         "Rotate the red mayonnaise jar Rotate the red mayonnaise jar into t middle layer fago Open"
     )
@@ -195,6 +198,7 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
     assert len(slots) == 5
     assert all("hand" not in s.lower() for s in slots)
     assert all(s.startswith("The person") for s in slots)
+    assert all(len(s.split()) >= 15 for s in slots)
     blob = (
         "Open the refrigerator door with the left hand. "
         "Hold the red mayonnaise jar with the left hand"

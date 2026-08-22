@@ -342,16 +342,12 @@ def should_split_overlong_idle(
 
 
 def should_fill_clip_export(names: list[str], already_filled: bool = False) -> bool:
-    """Fill Clip Export from Sub-goals even when QA only shows the idle>5s row."""
-    errors = any(
-        is_clip_export_missing_error(n)
-        or is_clip_export_hands_error(n)
-        or is_clip_export_end_mismatch(n)
-        for n in names
-    )
+    """Fill Clip Export whenever QA still lists Clip Export rows, or once from Sub-goals."""
+    if has_clip_export_quality_error(names):
+        return True
     if already_filled:
-        return errors
-    return errors or neighbor_action_captions(names)
+        return False
+    return neighbor_action_captions(names)
 
 
 def full_timeline_xy(
@@ -404,8 +400,13 @@ def clip_export_end_fractions_from_status_rects(
         return []
     span = float(timeline_right - timeline_left)
     ordered = sorted(rects, key=lambda row: row[0])
+    deduped: list[tuple[int, int, int, int]] = []
+    for rect in ordered:
+        if deduped and rect[0] - deduped[-1][0] < MIN_IDLE_NEIGHBOR_GAP:
+            continue
+        deduped.append(rect)
     out: list[float] = []
-    for nxt in ordered[1:]:
+    for nxt in deduped[1:]:
         frac = (nxt[0] - timeline_left) / span
         if 0.04 <= frac <= 0.96:
             out.append(round(frac, 4))
@@ -480,15 +481,18 @@ def is_empty_clip_label(name: str) -> bool:
 
 
 def is_quality_empty_error(name: str) -> bool:
-    """Quality Assistant row that jumps to a clip with no caption."""
+    """Quality Assistant row that jumps to a Sub-goal clip with no caption.
+
+    Clip Export empty/short rows are filled by the Clip Export pass, not by
+    typing Idle into whatever field this click opens.
+    """
     n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "clipexport" in compact or "clip export" in n:
+        return False
     if "in parallel" in n:
         return False
-    if "must contain text" in n:
-        return True
-    if "clipexport" in n and "contain text" in n:
-        return True
-    return False
+    return "must contain text" in n
 
 
 def is_clip_export_missing_error(name: str) -> bool:
@@ -496,6 +500,41 @@ def is_clip_export_missing_error(name: str) -> bool:
     if "clipexport" not in n:
         return False
     return "inparallel" in n or "fullyfilled" in n
+
+
+def is_clip_export_empty_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "clipexport" not in compact and "clip export" not in n:
+        return False
+    return "contain text" in n or "must contain" in n
+
+
+def is_clip_export_short_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "clipexport" not in compact and "clip export" not in n:
+        return False
+    return "15 word" in n or "at least 15" in n
+
+
+def is_clip_export_duplicate_timeline(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "more than one timeline" not in n:
+        return False
+    return "clipexport" in n.replace(" ", "") or "clip export" in n or "same type" in n
+
+
+def has_clip_export_quality_error(names: list[str]) -> bool:
+    return any(
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_duplicate_timeline(n)
+        for n in names
+    )
 
 
 def is_clip_export_end_mismatch(name: str) -> bool:
@@ -524,7 +563,14 @@ def is_clip_export_caption_label(name: str) -> bool:
         return False
     if "must not" in lowered or "must be" in lowered or "must match" in lowered:
         return False
-    if is_clip_export_missing_error(n) or is_clip_export_hands_error(n) or is_clip_export_end_mismatch(n):
+    if (
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_duplicate_timeline(n)
+    ):
         return False
     return lowered.startswith("the person") or ("the person" in lowered and "hand" in lowered)
 
@@ -646,6 +692,9 @@ def quality_linters_remaining(names: list[str]) -> bool:
         is_idle_too_long_error(n)
         or is_clip_export_missing_error(n)
         or is_clip_export_hands_error(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_duplicate_timeline(n)
         or is_false_idle_review_error(n)
         for n in names
     )
@@ -719,7 +768,20 @@ def idle_card_split_xy(
 
 
 def clip_export_needs_new_clip(names: list[str]) -> bool:
-    """Press K only when Clip Export has no clip to type into."""
+    """Press K only when Clip Export has no clip to type into.
+
+    Empty/short/parallel QA rows mean clips already exist. A second K on Full
+    Timeline creates another Clip Export track (QA: more than one timeline).
+    """
+    if any(is_clip_export_duplicate_timeline(n) for n in names):
+        return False
+    if any(
+        is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_missing_error(n)
+        for n in names
+    ):
+        return False
     for name in names:
         n = (name or "").strip().casefold()
         if is_pending_clip_label(name):
@@ -759,6 +821,10 @@ def review_work_remaining(text: str) -> bool:
     if "fully filled" in n or "in parallel" in n:
         return True
     if "more than 5" in n and "idle" in n:
+        return True
+    if "at least 15" in n or "15 word" in n:
+        return True
+    if "more than one timeline" in n:
         return True
     return False
 

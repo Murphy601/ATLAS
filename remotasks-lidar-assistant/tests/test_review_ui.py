@@ -101,7 +101,8 @@ def test_use_and_empty_clip_labels() -> None:
 
 
 def test_quality_empty_error_and_skip_watch() -> None:
-    assert is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert not is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert is_quality_empty_error("Sub-goal clips must contain text")
     assert not is_quality_empty_error("All ClipExports must be fully filled in parallel with Sub-goals")
     assert not is_quality_empty_error("Sub-goals must be at least 10 words long")
     assert should_skip_watch(100, use_ready=False, quality_ready=False)
@@ -178,6 +179,31 @@ def test_grammar_advance_and_remaining_work() -> None:
         "All ClipExports must be fully filled in parallel with Sub-goals"
     )
     assert not is_clip_export_missing_error("ClipExport and Sub-goal clips must contain text")
+    from review_ui import (
+        clip_export_needs_new_clip,
+        is_clip_export_duplicate_timeline,
+        is_clip_export_empty_error,
+        is_clip_export_short_error,
+        should_fill_clip_export,
+    )
+
+    contain = (
+        "Text Annotation 9c1a: ClipExport and Sub-goal clips must contain text. On frames: 1, 297, 1107."
+    )
+    short = (
+        "Text Annotation 9c1a: ClipExport descriptions must be at least 15 words long. On frames: 1, 297, 1107."
+    )
+    extra = (
+        "Text Annotation ClipExport: We cannot have more than one timeline from the same type, "
+        "and we should have at last one Sub-goal and ClipExport"
+    )
+    assert is_clip_export_empty_error(contain)
+    assert is_clip_export_short_error(short)
+    assert is_clip_export_duplicate_timeline(extra)
+    assert should_fill_clip_export([contain, short, extra], already_filled=True)
+    assert not clip_export_needs_new_clip(
+        ["ClipExport", contain, short, extra, "Focused Timeline"]
+    )
     assert is_idle_too_long_error(
         "Text Annotation Sub-goal 4a01: No idle time should be more than 5s, please split it into smaller segments"
     )
@@ -193,6 +219,12 @@ def test_grammar_advance_and_remaining_work() -> None:
     assert is_false_idle_review_error("Please make sure the text matches with the format expected")
     assert review_work_remaining("Grammar 2 clips Ignore all")
     assert review_work_remaining("All ClipExports must be fully filled in parallel with Sub-goals")
+    assert review_work_remaining(
+        "Text Annotation 9c1a: ClipExport descriptions must be at least 15 words long. On frames: 1, 297, 1107."
+    )
+    assert review_work_remaining(
+        "We cannot have more than one timeline from the same type"
+    )
     assert not review_work_remaining("Focused Timeline Idle Watched")
 
 
@@ -356,6 +388,12 @@ def test_playback_and_false_idle_helpers() -> None:
         1400,
     )
     assert ends == [round((400 - 80) / (1400 - 80), 4), round((900 - 80) / (1400 - 80), 4)]
+    near_chip_ends = clip_export_end_fractions_from_status_rects(
+        [(80, 820, 130, 858), (110, 818, 170, 856), (420, 818, 470, 856)],
+        80,
+        1400,
+    )
+    assert near_chip_ends == [round((420 - 80) / (1400 - 80), 4)]
     from review_ui import clip_export_end_fractions_from_times, clip_export_slot_mid_fractions
 
     kitchen_ends = clip_export_end_fractions_from_times([5.1, 8.2, 16.9, 19.7, 22.0])
