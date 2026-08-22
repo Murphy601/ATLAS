@@ -105,6 +105,47 @@ def test_rejects_ix_profile_manager_not_chromium() -> None:
     assert manager == 0
 
 
+def test_launcher_title_is_not_the_task() -> None:
+    from win_ui import keep_enumerated_window, score_window
+
+    launcher = r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe"
+    chromium = r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe"
+    assert score_window("ixBrowser | v2.9.20", "Chrome_WidgetWin_1", launcher) == 0
+    assert keep_enumerated_window(
+        160,
+        28,
+        visible=True,
+        minimized=True,
+        title="SensorFusionLab - क्रोमियम",
+        class_name="Chrome_WidgetWin_1",
+        exe_path=chromium,
+    )
+    assert keep_enumerated_window(
+        180,
+        32,
+        minimized=True,
+        title="SensorFusionLab - Chromium",
+        class_name="Chrome_WidgetWin_1",
+        exe_path=chromium,
+    )
+    assert keep_enumerated_window(
+        160,
+        28,
+        minimized=True,
+        title="",
+        class_name="Chrome_WidgetWin_1",
+        exe_path=chromium,
+    )
+    assert not keep_enumerated_window(
+        180,
+        32,
+        minimized=True,
+        title="New project build | Cursor - Google Chrome",
+        class_name="Chrome_WidgetWin_1",
+        exe_path=r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+
+
 def test_select_chromium_not_profile_manager() -> None:
     manager = {
         "title": "Edit Notes",
@@ -121,6 +162,32 @@ def test_select_chromium_not_profile_manager() -> None:
     assert chosen is not None
     assert chosen["title"].startswith("SensorFusionLab")
     assert "ixBrowser-Resources" in chosen["exe_path"]
+
+
+def test_pick_ix_window_retries_until_sensorfusionlab(monkeypatch) -> None:
+    import win_ui
+
+    calls = {"n": 0}
+    task = {
+        "hwnd": 9,
+        "title": "SensorFusionLab - Chromium",
+        "class_name": "Chrome_WidgetWin_1",
+        "exe_path": r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe",
+        "minimized": True,
+    }
+
+    def fake_enum():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            return [], ["ixBrowser | v2.9.20"], ["Saw IX window (1200x800): ixBrowser | v2.9.20"]
+        return [task], ["ixBrowser | v2.9.20"], ["Saw IX window (minimized): SensorFusionLab - Chromium"]
+
+    monkeypatch.setattr(win_ui, "_enumerate_task_windows", fake_enum)
+    monkeypatch.setattr(win_ui.time, "sleep", lambda _s: None)
+    hwnd, title = win_ui._pick_ix_window()
+    assert hwnd == 9
+    assert title.startswith("SensorFusionLab")
+    assert calls["n"] >= 3
 
 
 def test_drive_open_task_requires_windows(monkeypatch) -> None:

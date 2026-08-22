@@ -89,6 +89,9 @@ TASK_HINTS = (
     "ego_rectified_canonical",
     "sensorfusionlab",
     "sensorfusion",
+    "lidarlite",
+    "remotasks",
+    "ego-household",
 )
 
 REJECT_TITLE_TOKENS = (
@@ -105,6 +108,8 @@ TAB_STRIP_MAX = 160
 DEFAULT_WATCH_S = 90.0
 MAX_WATCH_S = 300.0
 OBSERVE_FIRST_CLIPS_S = 24.0
+PICK_WAIT_S = 45.0
+PICK_INTERVAL_S = 2.5
 CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
 _OCR_BROKEN = False
 _CLIP_EXPORT_ALIGNED = False
@@ -163,6 +168,26 @@ def select_ix_window(windows: list[dict]) -> dict | None:
         return None
     scored.sort(key=lambda row: row[0], reverse=True)
     return scored[0][1]
+
+
+def keep_enumerated_window(
+    width: int,
+    height: int,
+    *,
+    visible: bool = True,
+    minimized: bool = False,
+    title: str = "",
+    class_name: str = "",
+    exe_path: str = "",
+) -> bool:
+    """Keep SensorFusionLab even when Win32 reports a tiny minimized rect."""
+    if score_window(title, class_name, exe_path) > 0:
+        return True
+    if not visible and not minimized:
+        return False
+    if width < 400 or height < 300:
+        return False
+    return True
 
 
 def page_click_points(left: int, top: int, width: int, height: int) -> list[tuple[int, int, str]]:
@@ -396,26 +421,68 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
 
 
 def _pick_ix_window() -> tuple[int, str]:
+    deadline = time.time() + PICK_WAIT_S
+    attempt = 0
+    last_skipped: list[str] = []
+    logged_skips = False
+    seen_notes: set[str] = set()
+    while True:
+        attempt += 1
+        found, skipped, notes = _enumerate_task_windows()
+        last_skipped = skipped
+        if not logged_skips:
+            for title in skipped[:8]:
+                say(f"Skipping non-task window: {title}")
+            logged_skips = True
+        for line in notes[:8]:
+            if line in seen_notes:
+                continue
+            seen_notes.add(line)
+            say(line)
+        chosen = select_ix_window(found)
+        if chosen is not None:
+            exe = chosen.get("exe_path") or ""
+            title = chosen.get("title") or ""
+            if chosen.get("minimized"):
+                say(f"SensorFusionLab was minimized; restoring {title or '(no title)'}")
+            say(f"IX process: {exe or '(path unknown)'}")
+            return int(chosen["hwnd"]), title
+        if time.time() >= deadline:
+            break
+        say(
+            f"Waiting for SensorFusionLab Chromium ({attempt})... "
+            "click Open on the IX profile if that window is not on screen."
+        )
+        time.sleep(PICK_INTERVAL_S)
+    seen = last_skipped[:8]
+    raise RuntimeError(
+        "Could not find the IX Chromium task window (SensorFusionLab). "
+        "ixBrowser | v2.9.20 is the profile manager, not the task. "
+        "Click Open on the profile, leave SensorFusionLab visible (not minimized), then retry. "
+        f"Saw: {seen}"
+    )
+
+
+def _enumerate_task_windows() -> tuple[list[dict], list[str], list[str]]:
     import ctypes
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
     found: list[dict] = []
     skipped: list[str] = []
+    notes: list[str] = []
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     def callback(hwnd, _lparam):
-        if not user32.IsWindowVisible(hwnd):
-            return True
         ex_style = user32.GetWindowLongW(hwnd, -20)
         if ex_style & 0x00000080:  # WS_EX_TOOLWINDOW
             return True
+        visible = bool(user32.IsWindowVisible(hwnd))
+        minimized = bool(user32.IsIconic(hwnd))
         rect = wintypes.RECT()
         user32.GetWindowRect(hwnd, ctypes.byref(rect))
         width = rect.right - rect.left
         height = rect.bottom - rect.top
-        if width < 400 or height < 300:
-            return True
         length = user32.GetWindowTextLengthW(hwnd)
         title_buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, title_buf, length + 1)
@@ -424,12 +491,25 @@ def _pick_ix_window() -> tuple[int, str]:
         title = title_buf.value
         class_name = class_buf.value
         exe_path = _hwnd_exe(hwnd)
-        row = {
-            "hwnd": int(hwnd),
-            "title": title,
-            "class_name": class_name,
-            "exe_path": exe_path,
-        }
+        if is_ix_chromium_exe(exe_path) or is_ix_launcher(title, exe_path):
+            state = "minimized" if minimized else f"{width}x{height}"
+            notes.append(f"Saw IX window ({state}): {title or '(no title)'}")
+        if not keep_enumerated_window(
+            width,
+            height,
+            visible=visible,
+            minimized=minimized,
+            title=title,
+            class_name=class_name,
+            exe_path=exe_path,
+        ):
+            if title and (
+                any(token in title.lower() for token in REJECT_TITLE_TOKENS)
+                or is_stock_chrome_path(exe_path)
+                or is_ix_launcher(title, exe_path)
+            ):
+                skipped.append(title)
+            return True
         points = score_window(title, class_name, exe_path)
         if points <= 0:
             if title and (
@@ -439,24 +519,19 @@ def _pick_ix_window() -> tuple[int, str]:
             ):
                 skipped.append(title)
             return True
-        found.append(row)
+        found.append(
+            {
+                "hwnd": int(hwnd),
+                "title": title,
+                "class_name": class_name,
+                "exe_path": exe_path,
+                "minimized": minimized,
+            }
+        )
         return True
 
     user32.EnumWindows(callback, 0)
-    for title in skipped[:8]:
-        say(f"Skipping non-task window: {title}")
-    chosen = select_ix_window(found)
-    if chosen is None:
-        seen = skipped[:8] or [row.get("title") or "(no title)" for row in found[:8]]
-        raise RuntimeError(
-            "Could not find the IX Chromium task window (SensorFusionLab). "
-            "The profile manager / Edit Notes dashboard is not the task. "
-            "Click Open on the profile, leave SensorFusionLab visible, then retry. "
-            f"Saw: {seen}"
-        )
-    exe = chosen.get("exe_path") or ""
-    say(f"IX process: {exe or '(path unknown)'}")
-    return int(chosen["hwnd"]), chosen.get("title") or ""
+    return found, skipped, notes
 
 
 def _hwnd_exe(hwnd: int) -> str:
