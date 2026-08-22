@@ -339,6 +339,36 @@ def test_grammar_advance_and_remaining_work() -> None:
         ["All ClipExports must be fully filled in parallel with Sub-goals", laundry]
     )
 
+    class _Lint:
+        def __init__(self, original: str, rewritten: str) -> None:
+            self.original = original
+            self.rewritten = rewritten
+            self.changed = original != rewritten
+
+    harvest_items = [
+        {"skip_edit": False, "lint": _Lint("Shake the shirt with both hands", "Shake the shirt with both hands and hold the shirt with both hands")},
+        {"skip_edit": False, "lint": _Lint("Drop the pants with both hands and fold it with both hands", "Drop the pants with both hands and fold the pants with both hands")},
+        {"skip_edit": False, "lint": _Lint("Unstack the blouse with the left hand on the blouse", "Unstack the blouse with the left hand on the blouse")},
+        {"skip_edit": True, "lint": _Lint("missing_hand_predictions", "missing_hand_predictions")},
+    ]
+    todo = harvest_rewrites_to_apply(harvest_items)
+    assert len(todo) == 2
+    assert "Shake the shirt" in todo[0]["lint"].original
+    assert "Drop the pants" in todo[1]["lint"].original
+    assert clip_export_other_caption_does_not_block_fill(
+        [
+            "The person unstacks the blouse at an indoor table during a laundry folding task.",
+            "click to add text",
+            "review",
+        ]
+    )
+    assert clip_export_other_caption_does_not_block_fill(
+        [
+            "The person flips the shirt and hold the shirt at an indoor table during a laundry folding task.",
+            "review",
+        ]
+    )
+
 
 def test_clip_export_playhead_split_and_every_slot() -> None:
     from review_ui import (
@@ -374,36 +404,6 @@ def test_clip_export_playhead_split_and_every_slot() -> None:
     assert is_clip_export_placeholder("Focus annotation The person stands at")
     assert not is_clip_export_placeholder(
         "The person stands at an indoor table and folds shirts, pants, and a blouse during a laundry task."
-    )
-
-    class _Lint:
-        def __init__(self, original: str, rewritten: str) -> None:
-            self.original = original
-            self.rewritten = rewritten
-            self.changed = original != rewritten
-
-    harvest_items = [
-        {"skip_edit": False, "lint": _Lint("Shake the shirt with both hands", "Shake the shirt with both hands and hold the shirt with both hands")},
-        {"skip_edit": False, "lint": _Lint("Drop the pants with both hands and fold it with both hands", "Drop the pants with both hands and fold the pants with both hands")},
-        {"skip_edit": False, "lint": _Lint("Unstack the blouse with the left hand on the blouse", "Unstack the blouse with the left hand on the blouse")},
-        {"skip_edit": True, "lint": _Lint("missing_hand_predictions", "missing_hand_predictions")},
-    ]
-    todo = harvest_rewrites_to_apply(harvest_items)
-    assert len(todo) == 2
-    assert "Shake the shirt" in todo[0]["lint"].original
-    assert "Drop the pants" in todo[1]["lint"].original
-    assert clip_export_other_caption_does_not_block_fill(
-        [
-            "The person unstacks the blouse at an indoor table during a laundry folding task.",
-            "click to add text",
-            "review",
-        ]
-    )
-    assert clip_export_other_caption_does_not_block_fill(
-        [
-            "The person flips the shirt and hold the shirt at an indoor table during a laundry folding task.",
-            "review",
-        ]
     )
 
 
