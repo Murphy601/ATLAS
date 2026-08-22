@@ -95,6 +95,5 @@ if (-not (Test-Path $envFile) -and (Test-Path $example)) {
     Copy-Item $example $envFile
 }
 
-Write-Host "[Run] Attach to your open IX Browser task. Do not close that window."
-Write-Host "[Run] Enable IX Local API (Settings -> Local API, port 53200), then reopen the profile if needed."
+Write-Host "[Run] Attach to your already-open IX window. No Local API. Do not close that window."
 & $venvPython (Join-Path $root "main.py") @args

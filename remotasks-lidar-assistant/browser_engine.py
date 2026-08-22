@@ -1,6 +1,6 @@
 """Browser connection. Default: attach to the IX/Chrome window YOU already opened.
 
-The engine never launches a browser. IX Browser must expose a CDP debugging port.
+The engine never launches a browser. It attaches to the IX window you already opened.
 """
 
 from __future__ import annotations
@@ -46,67 +46,64 @@ class LidarBrowser:
         self.saved_frames: list[Path] = []
 
     def attach(self, cdp_url: str | None = None, timeout_s: float = 180.0) -> Browser:
-        """Connect to IX Browser / Chrome that you already opened. Never launches."""
+        """Connect to the IX/Chrome window you already opened. No Local API. Never launches."""
         import time
         import urllib.request
 
-        from ix_api import discover_cdp_http_urls
+        from process_cdp import discover_cdp_http_urls, probe_devtools
 
         def say(msg: str) -> None:
             print(msg, flush=True)
             logger.info(msg)
 
-        say("Looking for an already-open IX profile (Local API port 53200, then CDP)...")
+        say("Scanning your already-open IX/Chrome window. No Local API needed.")
         self._playwright = sync_playwright().start()
         deadline = time.monotonic() + timeout_s
         last_error: Exception | None = None
-        logged_api_miss = False
         attempt = 0
         while time.monotonic() < deadline:
             attempt += 1
-            urls = []
+            urls: list[str] = []
             if cdp_url:
                 urls.append(cdp_url)
             try:
                 urls.extend(discover_cdp_http_urls())
             except Exception as exc:
                 last_error = exc
-            if not urls and not logged_api_miss:
-                say(
-                    "IX Local API is not reachable on 127.0.0.1:53200. "
-                    "Enable it in IX Browser: Settings -> Local API (port 53200). "
-                    "Then close and reopen the profile. Also scanning CDP 9222-9231..."
-                )
-                logged_api_miss = True
-            urls.extend(_cdp_candidates(cdp_url))
-            # unique preserve order
+                say(f"Process scan error: {exc}")
+            # unique
             seen: set[str] = set()
-            unique = []
+            unique: list[str] = []
             for url in urls:
                 if url not in seen:
                     seen.add(url)
                     unique.append(url)
             if attempt == 1 or attempt % 5 == 0:
-                say(f"Attach attempt {attempt}: trying {len(unique)} address(es)...")
+                if unique:
+                    say(f"Attach attempt {attempt}: found {len(unique)} candidate port(s): {unique[:6]}")
+                else:
+                    say(
+                        f"Attach attempt {attempt}: no debug port on the open IX process yet. "
+                        "Keep the profile window open..."
+                    )
             for url in unique:
                 try:
-                    with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=1.0) as resp:
-                        resp.read()
+                    if not probe_devtools(url):
+                        with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=0.8) as resp:
+                            resp.read()
                     self._browser = self._playwright.chromium.connect_over_cdp(url)
                     self._cdp = True
                     if self._browser.contexts:
                         self._context = self._browser.contexts[0]
-                    say(f"Attached to IX/Chrome via {url}")
+                    say(f"Attached to your open IX window via {url}")
                     return self._browser
                 except Exception as exc:
                     last_error = exc
                     continue
             time.sleep(2.0)
         raise RuntimeError(
-            "Could not attach to the IX window that is already open.\n"
-            "1. In IX Browser: Settings -> Local API -> enable, port 53200.\n"
-            "2. Close the profile and open it again (keep the EGO task tab).\n"
-            "3. Re-run run.ps1.\n"
+            "Could not reach the IX window that is already open. "
+            "Leave that profile open with the EGO task on screen, then run this again. "
             f"Last error: {last_error}"
         )
 
