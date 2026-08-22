@@ -48,30 +48,66 @@ class LidarBrowser:
     def attach(self, cdp_url: str | None = None, timeout_s: float = 180.0) -> Browser:
         """Connect to IX Browser / Chrome that you already opened. Never launches."""
         import time
-        import urllib.error
         import urllib.request
 
+        from ix_api import discover_cdp_http_urls
+
+        def say(msg: str) -> None:
+            print(msg, flush=True)
+            logger.info(msg)
+
+        say("Looking for an already-open IX profile (Local API port 53200, then CDP)...")
         self._playwright = sync_playwright().start()
         deadline = time.monotonic() + timeout_s
         last_error: Exception | None = None
+        logged_api_miss = False
+        attempt = 0
         while time.monotonic() < deadline:
-            for url in _cdp_candidates(cdp_url):
+            attempt += 1
+            urls = []
+            if cdp_url:
+                urls.append(cdp_url)
+            try:
+                urls.extend(discover_cdp_http_urls())
+            except Exception as exc:
+                last_error = exc
+            if not urls and not logged_api_miss:
+                say(
+                    "IX Local API is not reachable on 127.0.0.1:53200. "
+                    "Enable it in IX Browser: Settings -> Local API (port 53200). "
+                    "Then close and reopen the profile. Also scanning CDP 9222-9231..."
+                )
+                logged_api_miss = True
+            urls.extend(_cdp_candidates(cdp_url))
+            # unique preserve order
+            seen: set[str] = set()
+            unique = []
+            for url in urls:
+                if url not in seen:
+                    seen.add(url)
+                    unique.append(url)
+            if attempt == 1 or attempt % 5 == 0:
+                say(f"Attach attempt {attempt}: trying {len(unique)} address(es)...")
+            for url in unique:
                 try:
-                    with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=1.5) as resp:
+                    with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=1.0) as resp:
                         resp.read()
                     self._browser = self._playwright.chromium.connect_over_cdp(url)
                     self._cdp = True
                     if self._browser.contexts:
                         self._context = self._browser.contexts[0]
-                    logger.info("Attached to existing browser via %s", url)
+                    say(f"Attached to IX/Chrome via {url}")
                     return self._browser
                 except Exception as exc:
                     last_error = exc
                     continue
-            time.sleep(1.0)
+            time.sleep(2.0)
         raise RuntimeError(
-            "Could not attach to IX Browser. Enable the profile debugging port "
-            f"(default {config.CDP_URL}) and keep the task window open. Last error: {last_error}"
+            "Could not attach to the IX window that is already open.\n"
+            "1. In IX Browser: Settings -> Local API -> enable, port 53200.\n"
+            "2. Close the profile and open it again (keep the EGO task tab).\n"
+            "3. Re-run run.ps1.\n"
+            f"Last error: {last_error}"
         )
 
     def wait_for_task_page(self, timeout_s: float = 600.0) -> Page:
@@ -81,10 +117,24 @@ class LidarBrowser:
         if self._browser is None:
             raise RuntimeError("Call attach() first")
         deadline = time.monotonic() + timeout_s
+        print("Waiting for the EGO task tab (Focused Timeline)...", flush=True)
         logger.info("Waiting for an already-open EGO task tab (Focused Timeline)...")
+        last_dump = 0.0
         while time.monotonic() < deadline:
-            for page in self.iter_pages():
+            pages = self.iter_pages()
+            now = time.monotonic()
+            if now - last_dump > 8:
+                titles = []
+                for page in pages:
+                    try:
+                        titles.append(page.url)
+                    except Exception:
+                        titles.append("(tab)")
+                print(f"Open tabs ({len(pages)}): {titles[:8]}", flush=True)
+                last_dump = now
+            for page in pages:
                 if is_ego_task_page(page):
+                    print(f"Found open task: {page.url}", flush=True)
                     logger.info("Found open task: %s", page.url)
                     self._context = page.context
                     return page

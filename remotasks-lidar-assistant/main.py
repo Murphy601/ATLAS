@@ -75,7 +75,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cdp-url", default=None, help="CDP URL (default http://127.0.0.1:9222)")
     parser.add_argument("--dry-run", action="store_true", help="Lint clips but do not type into the page")
     parser.add_argument("--no-linters", action="store_true", help="Do not click Quality Assistant")
-    parser.add_argument("--no-overlay", action="store_true", help="Do not start the localhost overlay")
+    parser.add_argument("--overlay", action="store_true", help="Start the localhost overlay (off by default)")
+    parser.add_argument("--no-overlay", action="store_true", help="Deprecated: overlay is already off by default")
     parser.add_argument(
         "--analyze-only",
         type=Path,
@@ -98,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         analyze_frame(args.analyze_only)
         return 0
 
-    if not args.no_overlay:
+    if args.overlay and not args.no_overlay:
         start_overlay_thread()
         logger.info("Overlay: http://%s:%s", config.OVERLAY_HOST, config.OVERLAY_PORT)
 
