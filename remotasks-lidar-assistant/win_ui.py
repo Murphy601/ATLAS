@@ -38,6 +38,7 @@ from review_ui import (
     find_word_click,
     full_timeline_xy,
     idle_card_split_xy,
+    idle_is_opening_clip,
     interesting_uia_names,
     is_clip_export_end_mismatch,
     is_clip_export_hands_error,
@@ -68,6 +69,7 @@ from review_ui import (
     pick_idle_split_rects,
     playback_confirmed,
     quality_linters_remaining,
+    should_fill_clip_export,
     review_sidebar_open,
     review_work_remaining,
     selected_timeline_kind,
@@ -1019,11 +1021,14 @@ def _click_first_timeline_card(hwnd: int, nodes: list[Any]) -> bool:
     return False
 
 
-def _recaption_false_idle(hwnd: int, write: bool = True) -> dict:
+def _recaption_false_idle(hwnd: int, write: bool = True, force: bool = False) -> dict:
     """Replace a first-clip Idle that actually has action. Never Submit. Never HTE."""
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
-    if not should_recaption_false_idle(names):
+    left, top, _width, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.62)
+    named = _named_rects(nodes)
+    if not force and not should_recaption_false_idle(names, named, min_y):
         return {"wrote": 0, "text": uia_text}
     blob = list(names)
     if not _OCR_BROKEN:
@@ -1164,6 +1169,7 @@ def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
 
 def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     """Overwrite Clip Export captions that mention hands and snap ends on Focused Timeline."""
+    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED
     uia_text, nodes = _read_uia(hwnd)
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
     missing = any(is_clip_export_missing_error(n) for n in names) or is_clip_export_missing_error(
@@ -1171,8 +1177,10 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     )
     end_mismatch = any(is_clip_export_end_mismatch(n) for n in names)
     hands = any(is_clip_export_hands_error(n) for n in names)
-    if not missing and not end_mismatch and not hands:
+    if not should_fill_clip_export(names, already_filled=_CLIP_EXPORT_FILLED):
         return {"wrote": 0, "text": uia_text}
+    if not missing and not end_mismatch and not hands:
+        say("Filling Clip Export from Sub-goal captions (no Clip Export Quality Assistant row this pass)")
 
     blob = list(names)
     ocr_blob = ""
@@ -1195,8 +1203,6 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     )
     if not write:
         return {"wrote": 0, "text": uia_text}
-
-    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED
 
     for ctrl in nodes:
         name = _uia_name(ctrl)
@@ -1529,12 +1535,22 @@ def _split_long_idle(hwnd: int, write: bool = True) -> dict:
     global _IDLE_SPLIT_STUCK
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
+    left, top, _width, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.62)
+    named = _named_rects(nodes)
     if _IDLE_SPLIT_STUCK:
+        if idle_is_opening_clip(named, min_y) and any(
+            (n or "").strip().casefold() == "idle" for n in names
+        ):
+            say("Opening Idle >5s did not split; replacing it with an action caption")
+            return _recaption_false_idle(hwnd, write=write, force=True)
         say("Idle >5s K-split did not change the card; not retrying the same cut")
         return {"wrote": 0, "text": uia_text}
-    if not should_split_overlong_idle(names):
-        if any(is_false_idle_review_error(n) for n in names):
-            say("Not splitting: Quality Assistant says this Idle clip has action")
+    if not should_split_overlong_idle(names, named, min_y):
+        if should_recaption_false_idle(names, named, min_y) or any(
+            is_false_idle_review_error(n) for n in names
+        ):
+            say("Not splitting: opening Idle is action, not a pause")
         return {"wrote": 0, "text": uia_text}
     target = None
     for ctrl in nodes:
@@ -1682,18 +1698,19 @@ def _click_focused_timeline(hwnd: int, nodes: list[Any]) -> None:
 
 def _click_idle_split_point(hwnd: int, nodes: list[Any], fraction: float = 0.45) -> bool:
     """Place the playhead inside the >5s Idle card so K splits it into pieces <=5s."""
-    left, top, width, height = _window_rect(hwnd)
+    _left, top, _width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
     idle, nxt = pick_idle_split_rects(_named_rects(nodes), min_y)
     if idle:
         x, y = idle_card_split_xy(idle, nxt, fraction)
-        _click_screen(x, y)
-        say(f"Clicked Idle card at {int(fraction * 100)}% for K-split at {x},{y}")
-        return True
-    x = int(left + width * (0.02 + 0.07 * fraction))
-    y = int(top + height * 0.90)
-    _click_screen(x, y)
-    say(f"Clicked Full Timeline at {int(fraction * 100)}% of the first Idle span at {x},{y}")
+        span = (nxt[0] - idle[0]) if nxt is not None else (idle[2] - idle[0])
+        if span >= 150:
+            _click_screen(x, y)
+            say(f"Clicked Idle card at {int(fraction * 100)}% for K-split at {x},{y}")
+            return True
+    bar_frac = 0.14 if fraction < 0.7 else 0.24
+    x, y = _click_focused_timeline_fraction(hwnd, bar_frac, nodes)
+    say(f"Clicked Focused Timeline at {int(bar_frac * 100)}% to split Idle at {x},{y}")
     return True
 
 
@@ -2121,7 +2138,9 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
             if not _OCR_BROKEN:
                 words, img_w, img_h = _ocr_window(hwnd, f"empty_caption_{attempt}")
                 blob.append(ocr_text(words))
-            if should_recaption_false_idle(names):
+            named = _named_rects(nodes)
+            min_y = top + int(_height * 0.62)
+            if should_recaption_false_idle(names, named, min_y):
                 caption = action_caption_for_mislabeled_idle(blob)
             else:
                 caption = "Idle"

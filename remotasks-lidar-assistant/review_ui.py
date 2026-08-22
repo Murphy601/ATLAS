@@ -223,22 +223,135 @@ def count_subgoal_spans(names: list[str], ocr_blob: str = "") -> int:
     return 0
 
 
-def should_recaption_false_idle(names: list[str]) -> bool:
-    """QA is rejecting Idle (missing hands / 10 words / format), so rewrite; do not K-split."""
+NEIGHBOR_ACTION_VERBS = (
+    "grab",
+    "shake",
+    "unstack",
+    "fold",
+    "smooth",
+    "drop",
+    "transfer",
+    "put",
+    "hold",
+    "pick",
+    "place",
+    "move",
+)
+NEIGHBOR_ACTION_OBJECTS = (
+    "pants",
+    "shirt",
+    "blouse",
+    "table",
+    "laundry",
+    "jar",
+    "bowl",
+    "basin",
+)
+MIN_IDLE_NEIGHBOR_GAP = 150
+MIN_IDLE_CARD_SPAN = 280
+
+
+def looks_like_neighbor_action(name: str) -> bool:
+    """True for a real Sub-goal caption next to Idle (not a QA error row)."""
+    text = (name or "").strip()
+    if len(text) < 12:
+        return False
+    lowered = text.casefold()
+    if lowered.startswith(("error", "warning")):
+        return False
+    if "quality assistant" in lowered or "unless" in lowered:
+        return False
+    if "must " in lowered or "must contain" in lowered:
+        return False
+    if "hand" in lowered:
+        return True
+    padded = f" {lowered} "
+    if any(f" {verb} " in padded or lowered.startswith(verb) for verb in NEIGHBOR_ACTION_VERBS):
+        return any(obj in lowered for obj in NEIGHBOR_ACTION_OBJECTS)
+    return False
+
+
+def neighbor_action_captions(names: list[str]) -> bool:
+    return any(looks_like_neighbor_action(n) for n in names)
+
+
+def idle_is_opening_clip(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]] | None,
+    min_y: int = 0,
+) -> bool:
+    """True when Idle is the first Focused Timeline card (no action to its left).
+
+    Mid-video Idle after a Grab/Shake card is a real pause and must be K-split.
+    Names-only callers pass no rects and are treated as opening so neighbor
+    laundry captions can still trigger a recaption.
+    """
+    if not named_rects:
+        return True
+    idles: list[tuple[int, int, int, int]] = []
+    actions: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        _left, top, _right, bottom = rect
+        mid_y = (top + bottom) / 2
+        if min_y and mid_y < min_y:
+            continue
+        if (name or "").strip().casefold() == "idle":
+            idles.append(rect)
+        elif looks_like_neighbor_action(name):
+            actions.append(rect)
+    if not idles:
+        return True
+    idle = min(idles, key=lambda row: (row[0], row[1]))
+    idle_mid = (idle[1] + idle[3]) / 2
+    for act in actions:
+        act_mid = (act[1] + act[3]) / 2
+        if abs(act_mid - idle_mid) > 90:
+            continue
+        if act[0] + 8 < idle[0]:
+            return False
+    return True
+
+
+def should_recaption_false_idle(
+    names: list[str],
+    named_rects: list[tuple[str, tuple[int, int, int, int]]] | None = None,
+    min_y: int = 0,
+) -> bool:
+    """Rewrite a first-clip Idle that is actually action. Do not K-split that card."""
     action_errors = any(is_false_idle_review_error(n) for n in names)
     idle_long = any(is_idle_too_long_error(n) for n in names)
     idle_name = any((n or "").strip().casefold() == "idle" for n in names)
     empty = any(is_empty_clip_label(n) for n in names)
     if action_errors and (idle_name or idle_long or empty):
         return True
-    return bool(idle_name and action_errors)
+    if idle_name and idle_long and neighbor_action_captions(names):
+        return idle_is_opening_clip(named_rects, min_y)
+    return False
 
 
-def should_split_overlong_idle(names: list[str]) -> bool:
-    """Split only a true Idle >5s. False-Idle action clips must be recaptioned instead."""
+def should_split_overlong_idle(
+    names: list[str],
+    named_rects: list[tuple[str, tuple[int, int, int, int]]] | None = None,
+    min_y: int = 0,
+) -> bool:
+    """Split only a true Idle >5s. Opening false-Idle must be recaptioned instead."""
+    if should_recaption_false_idle(names, named_rects, min_y):
+        return False
     if any(is_false_idle_review_error(n) for n in names):
         return False
     return any(is_idle_too_long_error(n) for n in names)
+
+
+def should_fill_clip_export(names: list[str], already_filled: bool = False) -> bool:
+    """Fill Clip Export from Sub-goals even when QA only shows the idle>5s row."""
+    errors = any(
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        for n in names
+    )
+    if already_filled:
+        return errors
+    return errors or neighbor_action_captions(names)
 
 
 def full_timeline_xy(
@@ -542,12 +655,14 @@ def pick_idle_split_rects(
     named_rects: list[tuple[str, tuple[int, int, int, int]]],
     min_y: int,
 ) -> tuple[tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
-    """First Focused-Timeline Idle card and the pending clip to its right.
+    """First Focused-Timeline Idle card and the next real clip to its right.
 
     Ignores the overlay Idle label on the video (higher on screen / smaller y).
+    The pending chip sitting on the same Idle card (~40px to the right of the
+    Idle word) is not a card boundary; K on that chip does nothing.
     """
     idles: list[tuple[int, int, int, int]] = []
-    pendings: list[tuple[int, int, int, int]] = []
+    boundaries: list[tuple[int, int, int, int]] = []
     for name, rect in named_rects:
         left, top, _right, bottom = rect
         mid_y = (top + bottom) / 2
@@ -556,22 +671,30 @@ def pick_idle_split_rects(
         n = (name or "").strip().casefold()
         if n == "idle":
             idles.append(rect)
-        elif is_pending_clip_label(name):
-            pendings.append(rect)
+        elif is_pending_clip_label(name) or looks_like_neighbor_action(name):
+            boundaries.append(rect)
     if not idles:
         return None, None
     idle = min(idles, key=lambda row: (row[0], row[1]))
-    next_pending = None
+    next_hit = None
     idle_mid = (idle[1] + idle[3]) / 2
-    for pending in pendings:
-        if pending[0] <= idle[0] + 8:
+    for cand in boundaries:
+        if cand[0] - idle[0] < MIN_IDLE_NEIGHBOR_GAP:
             continue
-        pending_mid = (pending[1] + pending[3]) / 2
-        if abs(pending_mid - idle_mid) > 90:
+        cand_mid = (cand[1] + cand[3]) / 2
+        if abs(cand_mid - idle_mid) > 90:
             continue
-        if next_pending is None or pending[0] < next_pending[0]:
-            next_pending = pending
-    return idle, next_pending
+        if next_hit is None or cand[0] < next_hit[0]:
+            next_hit = cand
+    if next_hit is None:
+        expanded = (
+            idle[0],
+            idle[1],
+            max(idle[2], idle[0] + MIN_IDLE_CARD_SPAN),
+            idle[3],
+        )
+        return expanded, None
+    return idle, next_hit
 
 
 def idle_card_split_xy(
@@ -581,15 +704,15 @@ def idle_card_split_xy(
 ) -> tuple[int, int]:
     """Click inside the Idle *card*, not the tiny Idle word.
 
-    The UIA Idle control is a short label at the left of the 5.5s card. 45% of
-    the gap to the next pending is ~2.5s; 90% is ~5.0s.
+    The UIA Idle control is a short label at the left of the 9.9s card. 45% of
+    the gap to the next pending is ~4.5s; 90% is ~9.0s.
     """
     left, top, right, bottom = idle_rect
-    if next_rect is not None and next_rect[0] > left + 8:
+    if next_rect is not None and next_rect[0] >= left + MIN_IDLE_NEIGHBOR_GAP:
         span = max(next_rect[0] - left, 1)
     else:
         width = max(right - left, 1)
-        span = width if width >= 80 else 200
+        span = width if width >= MIN_IDLE_CARD_SPAN else MIN_IDLE_CARD_SPAN
     x = int(left + span * fraction)
     y = int((top + bottom) / 2)
     return x, y

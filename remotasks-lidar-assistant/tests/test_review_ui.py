@@ -220,6 +220,35 @@ def test_idle_card_split_is_between_idle_label_and_next_pending() -> None:
     assert x90 < next_pending[0]
 
 
+def test_same_card_pending_is_not_the_idle_split_boundary() -> None:
+    from review_ui import idle_card_split_xy, pick_idle_split_rects
+
+    idle_word = (45, 820, 95, 858)
+    same_card_pending = (70, 818, 125, 856)
+    far_pending = (420, 818, 470, 856)
+    idle, nxt = pick_idle_split_rects(
+        [
+            ("Idle", idle_word),
+            ("pending", same_card_pending),
+            ("pending", far_pending),
+        ],
+        min_y=700,
+    )
+    assert nxt == far_pending
+    x45, _y = idle_card_split_xy(idle, nxt, 0.45)
+    assert x45 > 150
+    assert x45 < far_pending[0]
+
+    only_chip = pick_idle_split_rects(
+        [("Idle", idle_word), ("pending", same_card_pending)],
+        min_y=700,
+    )
+    assert only_chip[1] is None
+    assert only_chip[0][2] - only_chip[0][0] >= 200
+    x_wide, _y_wide = idle_card_split_xy(only_chip[0], only_chip[1], 0.45)
+    assert x_wide > 120
+
+
 def test_clip_export_does_not_press_k_when_pending_exists() -> None:
     from review_ui import (
         clip_export_needs_new_clip,
@@ -280,6 +309,37 @@ def test_playback_and_false_idle_helpers() -> None:
     assert not should_split_overlong_idle(names)
     assert should_split_overlong_idle(
         ["Error No idle time should be more than 5s, please split it into smaller segments", "Idle"]
+    )
+    opening = [
+        "Error No idle time should be more than 5s, please split it into smaller segments",
+        "Idle",
+        "Grab the pants with the left hand",
+        "Unstack the blouse with the left hand on the blouse",
+    ]
+    assert should_recaption_false_idle(opening)
+    assert not should_split_overlong_idle(opening)
+    from review_ui import idle_is_opening_clip, should_fill_clip_export
+
+    opening_rects = [
+        ("Idle", (80, 820, 130, 858)),
+        ("pending", (110, 818, 170, 856)),
+        ("Grab the pants with the left hand", (400, 818, 620, 856)),
+    ]
+    assert idle_is_opening_clip(opening_rects, 700)
+    assert should_recaption_false_idle(opening, opening_rects, 700)
+    assert not should_split_overlong_idle(opening, opening_rects, 700)
+    mid_rects = [
+        ("Grab the pants with the left hand", (80, 818, 300, 856)),
+        ("Idle", (320, 820, 370, 858)),
+        ("pending", (350, 818, 400, 856)),
+    ]
+    assert not idle_is_opening_clip(mid_rects, 700)
+    assert not should_recaption_false_idle(opening, mid_rects, 700)
+    assert should_split_overlong_idle(opening, mid_rects, 700)
+    assert should_fill_clip_export(opening, already_filled=False)
+    assert not should_fill_clip_export(
+        ["Idle", "Error No idle time should be more than 5s, please split it into smaller segments"],
+        already_filled=False,
     )
     assert clip_export_needs_parallel_splits(
         ["All ClipExports must be fully filled in parallel with Sub-goals", "ClipExport"],
