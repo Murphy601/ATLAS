@@ -27,9 +27,13 @@ process (`...\IXBrowser\...\chrome.exe`), not `Google\Chrome\Application\chrome.
 Most IX profiles do **not** expose DevTools. In that case the engine stops scanning
 ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 
-- brings the IX window to the front
-- clicks the play region and sends Space
-- prints `Watching video...` while the clip plays
+- brings the **IX** window to the front (not Google Chrome / Gemini)
+- clicks the **video** in the page (below the Chromium tab strip), then Space once
+- watches at 1x (player clock if visible, otherwise ~90s)
+- reads timeline captions via Windows accessibility and types lint fixes
+
+You should see a click like `Clicked video-center at 525,367` (y much larger than 50).
+A click at y=49 is the tab bar and will not play the video.
 
 You should see the IX window come forward and the video start. Caption typing into
 the page still needs readable timeline text; suggested caption fixes are printed

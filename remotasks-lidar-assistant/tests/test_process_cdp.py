@@ -70,3 +70,12 @@ def test_is_stock_chrome_path() -> None:
     assert not process_cdp.is_stock_chrome_path(
         r"C:\Users\user\AppData\Local\IXBrowser\Application\chrome.exe"
     )
+
+
+def test_ix_devtools_file_urls_from_appdata(tmp_path: Path, monkeypatch) -> None:
+    profile = tmp_path / "ixbrowser" / "profile"
+    profile.mkdir(parents=True)
+    (profile / "DevToolsActivePort").write_text("19991\n/devtools/browser/x\n", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "missing"))
+    assert "http://127.0.0.1:19991" in process_cdp._ix_devtools_file_urls()

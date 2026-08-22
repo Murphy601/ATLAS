@@ -57,6 +57,35 @@ def test_select_ix_window_none_when_only_chrome() -> None:
     assert select_ix_window([GEMINI_CHROME]) is None
 
 
+def test_page_click_points_skip_tab_strip() -> None:
+    from win_ui import page_click_points
+
+    points = page_click_points(0, 0, 1050, 700)
+    assert points
+    _x, y, label = points[0]
+    assert label == "video-center"
+    assert y > 160
+    assert all(pt[1] > 100 for pt in points)
+
+
+def test_parse_media_clock() -> None:
+    from win_ui import parse_media_clock
+
+    assert parse_media_clock("0:12 / 1:45") == 105
+    assert parse_media_clock("no clock") is None
+
+
+def test_sensorfusionlab_title_scores_as_ix_task() -> None:
+    from win_ui import score_window
+
+    score = score_window(
+        "SensorFusionLab - Chromium",
+        "Chrome_WidgetWin_1",
+        r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe",
+    )
+    assert score > 50
+
+
 def test_drive_open_task_requires_windows(monkeypatch) -> None:
     import win_ui
 

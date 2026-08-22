@@ -122,32 +122,74 @@ def _candidate_http_urls() -> list[str]:
     try:
         import psutil
     except ImportError:
-        return found
+        psutil = None  # type: ignore[assignment]
 
-    for proc in psutil.process_iter(["pid", "name", "cmdline", "exe"]):
-        try:
-            info = proc.info
-            cmdline_list = info.get("cmdline") or []
-            cmd = " ".join(str(part) for part in cmdline_list)
-            name = info.get("name") or ""
-            exe = info.get("exe") or ""
-            if not is_ix_install(name, cmd, exe):
-                continue
-            for url in command_line_cdp_urls(cmd):
-                add(url)
+    if psutil is not None:
+        for proc in psutil.process_iter(["pid", "name", "cmdline", "exe"]):
             try:
-                for conn in proc.net_connections(kind="inet"):
-                    if getattr(conn, "status", "") != "LISTEN":
-                        continue
-                    laddr = getattr(conn, "laddr", None)
-                    port = getattr(laddr, "port", None) if laddr is not None else None
-                    if port:
-                        add(f"http://127.0.0.1:{port}")
-            except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                info = proc.info
+                cmdline_list = info.get("cmdline") or []
+                cmd = " ".join(str(part) for part in cmdline_list)
+                name = info.get("name") or ""
+                exe = info.get("exe") or ""
+                if not is_ix_install(name, cmd, exe):
+                    continue
+                for url in command_line_cdp_urls(cmd):
+                    add(url)
+                try:
+                    for conn in proc.net_connections(kind="inet"):
+                        if getattr(conn, "status", "") != "LISTEN":
+                            continue
+                        laddr = getattr(conn, "laddr", None)
+                        port = getattr(laddr, "port", None) if laddr is not None else None
+                        if port:
+                            add(f"http://127.0.0.1:{port}")
+                except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                    continue
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
+
+    for url in _ix_devtools_file_urls():
+        add(url)
     return found
+
+
+def _ix_devtools_file_urls() -> list[str]:
+    """Look for DevToolsActivePort under IX profile folders (not Google Chrome)."""
+    import os
+
+    urls: list[str] = []
+    skip_dir = {"cache", "gpucache", "code cache", "crashpad", "dictionaries", "chrome"}
+    roots: list[Path] = []
+    for env in ("APPDATA", "LOCALAPPDATA"):
+        raw = os.environ.get(env)
+        if raw:
+            roots.append(Path(raw))
+    for root in roots:
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir() or "ixbrowser" not in child.name.lower():
+                continue
+            stack = [(child, 0)]
+            while stack:
+                current, depth = stack.pop()
+                if depth > 4:
+                    continue
+                portfile = current / "DevToolsActivePort"
+                if portfile.is_file():
+                    port = read_devtools_active_port(current)
+                    if port:
+                        urls.append(f"http://127.0.0.1:{port}")
+                try:
+                    for entry in current.iterdir():
+                        if entry.is_dir() and entry.name.lower() not in skip_dir:
+                            stack.append((entry, depth + 1))
+                except OSError:
+                    continue
+    return urls
 
 
 def discover_cdp_http_urls() -> list[str]:

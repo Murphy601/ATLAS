@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 from typing import Any
@@ -22,6 +23,8 @@ TASK_HINTS = (
     "ego_rectified",
     "clip export",
     "ego_rectified_canonical",
+    "sensorfusionlab",
+    "sensorfusion",
 )
 
 REJECT_TITLE_TOKENS = (
@@ -31,6 +34,11 @@ REJECT_TITLE_TOKENS = (
 )
 
 CHROME_CLASS = "Chrome_WidgetWin_1"
+TAB_STRIP_MIN = 110
+TAB_STRIP_MAX = 160
+DEFAULT_WATCH_S = 90.0
+MAX_WATCH_S = 300.0
+CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
 
 
 def say(msg: str) -> None:
@@ -81,64 +89,122 @@ def select_ix_window(windows: list[dict]) -> dict | None:
     return scored[0][1]
 
 
-def drive_open_task(write: bool = True, watch_seconds: float = 12.0) -> dict[str, Any]:
-    """Focus the open IX window, play the video, lint timeline text if readable."""
+def page_click_points(left: int, top: int, width: int, height: int) -> list[tuple[int, int, str]]:
+    """Click targets in the web page, never in the Chromium tab strip.
+
+    The previous run clicked y=49 (tabs). SensorFusionLab chrome UI sits in the
+    top ~110-160px; the video is in the remaining client area.
+    """
+    tab = min(max(int(height * 0.18), TAB_STRIP_MIN), TAB_STRIP_MAX)
+    page_top = top + tab
+    page_h = max(height - tab - 24, 1)
+    page_left = left + 12
+    page_w = max(width - 24, 1)
+    return [
+        (int(page_left + page_w * 0.46), int(page_top + page_h * 0.40), "video-center"),
+        (int(page_left + page_w * 0.42), int(page_top + page_h * 0.14), "player-toolbar"),
+    ]
+
+
+def parse_media_clock(text: str) -> float | None:
+    """Return duration seconds from a player clock like 0:12 / 1:45."""
+    match = CLOCK_RE.search(text or "")
+    if not match:
+        return None
+    return float(int(match.group(3)) * 60 + int(match.group(4)))
+
+
+def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> dict[str, Any]:
+    """Focus the open IX window, play the video, lint/type timeline captions."""
     if sys.platform != "win32":
         raise RuntimeError("Desktop IX control is Windows-only")
 
     say("DevTools is not exposed on this IX profile. Controlling the window you already opened...")
     say("Look at IX now: that window will come forward and the video should play.")
-    hwnd, title = _pick_ix_window()
-    say(f"Using IX window: {title or '(no title)'}")
-    _focus(hwnd)
-    time.sleep(0.4)
-    played = _play_video(hwnd)
-    say("Watch the IX window: the video should be playing now." if played else "Sent play input; check the IX window.")
-    remaining = max(watch_seconds, 2.0)
-    elapsed = 0.0
-    while elapsed < remaining:
-        step = min(2.0, remaining - elapsed)
-        time.sleep(step)
-        elapsed += step
-        say(f"Watching video... {int(elapsed)}/{int(remaining)}s")
+    prev_a11y = _enable_chromium_a11y()
+    try:
+        hwnd, title = _pick_ix_window()
+        say(f"Using IX window: {title or '(no title)'}")
+        _focus(hwnd)
+        time.sleep(1.2)
 
-    body = _read_window_text(hwnd)
-    clips = parse_clips_from_text(body) if body else []
-    say(f"Read {len(clips)} timeline clip(s) from the window")
-    reports = []
-    for item in lint_clips([clip.to_dict() for clip in clips]):
-        lint = item["lint"]
-        reports.append(
-            {
-                "index": item.get("index"),
-                "original": lint.original,
-                "rewritten": lint.rewritten,
-                "issues": [issue.__dict__ for issue in lint.issues],
-                "wrote": False,
-                "skipped": bool(item.get("skip_edit")),
-            }
-        )
-        if write and lint.changed and not item.get("skip_edit"):
-            say(f"Suggested caption fix: {lint.rewritten}")
+        uia_text, uia_nodes = _read_uia(hwnd)
+        played = _play_via_uia(uia_nodes)
+        if not played:
+            played = _play_video(hwnd)
+        say("Watch the IX window: the video should be playing now." if played else "Sent play input; check the IX window.")
 
-    payload = {
-        "mode": "ego-window",
-        "window_title": title,
-        "watched_video": True,
-        "played": played,
-        "clip_count": len(clips),
-        "wrote_captions": 0,
-        "quality_assistant": False,
-        "submitted": False,
-        "hte_edited": False,
-        "clips": reports,
-    }
-    dest = config.ANALYSIS_RESULT
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    print(json.dumps(payload, indent=2), flush=True)
-    say(f"Done. IX window left open. Report: {dest}")
-    return payload
+        body = "\n".join(part for part in (uia_text, _read_window_text(hwnd)) if part)
+        duration = parse_media_clock(body)
+        remaining = watch_seconds
+        if remaining is None:
+            remaining = duration if duration and duration > 2 else DEFAULT_WATCH_S
+        remaining = min(max(float(remaining), 8.0), MAX_WATCH_S)
+        if duration:
+            say(f"Player clock duration {duration:.0f}s; watching at 1x")
+        else:
+            say(f"No player clock found; watching {remaining:.0f}s at 1x (spec: entire video first)")
+
+        elapsed = 0.0
+        while elapsed < remaining:
+            step = min(5.0, remaining - elapsed)
+            time.sleep(step)
+            elapsed += step
+            say(f"Watching video... {int(elapsed)}/{int(remaining)}s")
+
+        uia_text, uia_nodes = _read_uia(hwnd)
+        body = "\n".join(part for part in (uia_text, _read_window_text(hwnd)) if part)
+        clips = parse_clips_from_text(body) if body else []
+        say(f"Read {len(clips)} timeline clip(s) from the window")
+        if uia_text:
+            preview = re.sub(r"\s+", " ", uia_text).strip()[:180]
+            if preview:
+                say(f"Page text preview: {preview}")
+
+        reports = []
+        wrote = 0
+        for item in lint_clips([clip.to_dict() for clip in clips]):
+            lint = item["lint"]
+            did_write = False
+            if write and lint.changed and not item.get("skip_edit"):
+                did_write = _type_caption(hwnd, uia_nodes, lint.original, lint.rewritten)
+                if did_write:
+                    wrote += 1
+                    say(f"Wrote caption: {lint.rewritten}")
+                else:
+                    say(f"Suggested caption fix (could not type): {lint.rewritten}")
+            reports.append(
+                {
+                    "index": item.get("index"),
+                    "original": lint.original,
+                    "rewritten": lint.rewritten,
+                    "issues": [issue.__dict__ for issue in lint.issues],
+                    "wrote": did_write,
+                    "skipped": bool(item.get("skip_edit")),
+                }
+            )
+
+        payload = {
+            "mode": "ego-window",
+            "window_title": title,
+            "watched_video": True,
+            "played": played,
+            "watch_seconds": remaining,
+            "clip_count": len(clips),
+            "wrote_captions": wrote,
+            "quality_assistant": False,
+            "submitted": False,
+            "hte_edited": False,
+            "clips": reports,
+        }
+        dest = config.ANALYSIS_RESULT
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(json.dumps(payload, indent=2), flush=True)
+        say(f"Done. IX window left open. Report: {dest}")
+        return payload
+    finally:
+        _restore_chromium_a11y(prev_a11y)
 
 
 def _pick_ix_window() -> tuple[int, str]:
@@ -255,7 +321,7 @@ def _focus(hwnd: int) -> None:
 
 
 def _play_video(hwnd: int) -> bool:
-    """Click the top-center play control, then Space (EGO player shortcut)."""
+    """Click once in the page (video), then Space. Never click the Chromium tab strip."""
     import ctypes
     from ctypes import wintypes
 
@@ -264,20 +330,25 @@ def _play_video(hwnd: int) -> bool:
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
     width = max(rect.right - rect.left, 1)
     height = max(rect.bottom - rect.top, 1)
-    # Screenshot layout: play triangle is top-center next to Sub-goal; video is mid-window.
-    spots = ((0.50, 0.07), (0.47, 0.08), (0.53, 0.09), (0.50, 0.11), (0.50, 0.38))
-    for rel_x, rel_y in spots:
-        x = int(rect.left + width * rel_x)
-        y = int(rect.top + height * rel_y)
-        user32.SetCursorPos(x, y)
-        time.sleep(0.05)
-        user32.mouse_event(0x0002, 0, 0, 0, 0)
-        user32.mouse_event(0x0004, 0, 0, 0, 0)
-        say(f"Clicked play region at {x},{y}")
-        time.sleep(0.15)
+    points = page_click_points(rect.left, rect.top, width, height)
+    # One click on the video so we do not toggle play/pause. Then Space once.
+    x, y, label = points[0]
+    _click_screen(x, y)
+    say(f"Clicked {label} at {x},{y} (below tab strip)")
+    time.sleep(0.35)
     _send_space(hwnd)
-    say("Sent Space (play/pause) to the IX window")
+    say("Sent Space (play) to the IX page")
     return True
+
+
+def _click_screen(x: int, y: int) -> None:
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    user32.SetCursorPos(x, y)
+    time.sleep(0.05)
+    user32.mouse_event(0x0002, 0, 0, 0, 0)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)
 
 
 def _send_space(hwnd: int | None = None) -> None:
@@ -285,11 +356,136 @@ def _send_space(hwnd: int | None = None) -> None:
 
     user32 = ctypes.windll.user32
     vk_space = 0x20
-    if hwnd:
-        user32.PostMessageW(hwnd, 0x0100, vk_space, 0)  # WM_KEYDOWN
-        user32.PostMessageW(hwnd, 0x0101, vk_space, 0)  # WM_KEYUP
     user32.keybd_event(vk_space, 0, 0, 0)
     user32.keybd_event(vk_space, 0, 2, 0)
+
+
+def _enable_chromium_a11y() -> int:
+    """Ask Chromium to expose its accessibility tree (needed to read clips / Play)."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    prev = ctypes.c_int(0)
+    user32.SystemParametersInfoW(0x0046, 0, ctypes.byref(prev), 0)  # SPI_GETSCREENREADER
+    user32.SystemParametersInfoW(0x0047, 1, None, 0)  # SPI_SETSCREENREADER
+    return int(prev.value)
+
+
+def _restore_chromium_a11y(previous: int) -> None:
+    import ctypes
+
+    try:
+        ctypes.windll.user32.SystemParametersInfoW(0x0047, int(previous), None, 0)
+    except Exception:
+        logger.debug("Could not restore screen-reader flag", exc_info=True)
+
+
+def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
+    nodes: list[Any] = []
+    texts: list[str] = []
+    try:
+        from pywinauto import Desktop
+
+        desktop = Desktop(backend="uia")
+        target = None
+        for win in desktop.windows():
+            try:
+                if int(win.handle) == int(hwnd):
+                    target = win
+                    break
+            except Exception:
+                continue
+        if target is None:
+            return "", []
+        for i, ctrl in enumerate(target.descendants()):
+            if i > 500:
+                break
+            nodes.append(ctrl)
+            try:
+                name = (ctrl.window_text() or "").strip()
+            except Exception:
+                name = ""
+            if name:
+                texts.append(name)
+    except Exception:
+        logger.debug("UIA read skipped", exc_info=True)
+    return "\n".join(texts), nodes
+
+
+def _play_via_uia(nodes: list[Any]) -> bool:
+    for ctrl in nodes:
+        try:
+            name = (ctrl.window_text() or "").strip().lower()
+        except Exception:
+            continue
+        if name in {"play", "play video", "play clip"} or name.startswith("play "):
+            try:
+                ctrl.click_input()
+                say(f"Clicked UIA play control: {name}")
+                return True
+            except Exception:
+                logger.debug("UIA play click failed", exc_info=True)
+    return False
+
+
+def _type_caption(hwnd: int, nodes: list[Any], original: str, rewritten: str) -> bool:
+    snippet = (original or "").strip()[:40]
+    _focus(hwnd)
+    time.sleep(0.2)
+    clicked = False
+    if snippet:
+        for ctrl in nodes:
+            try:
+                name = ctrl.window_text() or ""
+            except Exception:
+                continue
+            if snippet.lower() in name.lower():
+                try:
+                    ctrl.click_input()
+                    clicked = True
+                    break
+                except Exception:
+                    continue
+    if not clicked:
+        return False
+    time.sleep(0.15)
+    _send_ctrl_a()
+    time.sleep(0.05)
+    _send_unicode(rewritten)
+    time.sleep(0.1)
+    return True
+
+
+def _send_ctrl_a() -> None:
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    user32.keybd_event(0x11, 0, 0, 0)  # VK_CONTROL
+    user32.keybd_event(0x41, 0, 0, 0)  # A
+    user32.keybd_event(0x41, 0, 2, 0)
+    user32.keybd_event(0x11, 0, 2, 0)
+
+
+def _send_unicode(text: str) -> None:
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    for ch in text:
+        if ch == "\n":
+            user32.keybd_event(0x0D, 0, 0, 0)
+            user32.keybd_event(0x0D, 0, 2, 0)
+            continue
+        scanned = user32.VkKeyScanW(ord(ch))
+        if scanned == -1:
+            continue
+        vk_code = scanned & 0xFF
+        shift = scanned & 0x100
+        if shift:
+            user32.keybd_event(0x10, 0, 0, 0)
+        user32.keybd_event(vk_code, 0, 0, 0)
+        user32.keybd_event(vk_code, 0, 2, 0)
+        if shift:
+            user32.keybd_event(0x10, 0, 2, 0)
 
 
 def _read_window_text(hwnd: int) -> str:
@@ -315,23 +511,4 @@ def _read_window_text(hwnd: int) -> str:
 
     user32.EnumChildWindows(hwnd, callback, 0)
     chunks.extend(found)
-    try:
-        from pywinauto import Desktop
-
-        desktop = Desktop(backend="uia")
-        for win in desktop.windows():
-            try:
-                if int(win.handle) != int(hwnd):
-                    continue
-                texts = [win.window_text()]
-                for ctrl in win.descendants():
-                    t = ctrl.window_text()
-                    if t:
-                        texts.append(t)
-                chunks.extend(texts)
-                break
-            except Exception:
-                continue
-    except Exception:
-        logger.debug("pywinauto UIA dump skipped", exc_info=True)
     return "\n".join(chunk for chunk in chunks if chunk)
