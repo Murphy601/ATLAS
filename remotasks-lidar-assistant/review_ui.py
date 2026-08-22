@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 WATCHED_RE = re.compile(r"Watched\s+(\d+)\s*%", re.I)
+GRAMMAR_COUNT_RE = re.compile(r"grammar\s+(\d+)\s+clips?", re.I)
 EMPTY_CLIP_PHRASES = (
     "click to add text",
     "click to add",
@@ -181,9 +182,81 @@ def is_empty_clip_label(name: str) -> bool:
 def is_quality_empty_error(name: str) -> bool:
     """Quality Assistant row that jumps to a clip with no caption."""
     n = (name or "").strip().casefold()
+    if "in parallel" in n:
+        return False
     if "must contain text" in n:
         return True
-    if "clipexport" in n and "text" in n:
+    if "clipexport" in n and "contain text" in n:
+        return True
+    return False
+
+
+def is_clip_export_missing_error(name: str) -> bool:
+    n = (name or "").strip().casefold().replace(" ", "")
+    if "clipexport" not in n:
+        return False
+    return "inparallel" in n or "fullyfilled" in n
+
+
+def is_idle_too_long_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "idle" not in n:
+        return False
+    return "more than 5" in n or "split" in n
+
+
+def is_ignore_all_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n == "ignore all" or n == "ignoreall"
+
+
+def is_grammar_row_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if is_ignore_all_label(n):
+        return False
+    return "grammar" in n and "clip" in n
+
+
+def is_pending_clip_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n == "pending" or n.startswith("pending ")
+
+
+def is_split_control_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if not n or is_idle_too_long_error(n):
+        return False
+    if n in {"split", "split clip", "split sub-goal", "split subgoal"}:
+        return True
+    if n.startswith("split ") and "segment" not in n:
+        return True
+    return False
+
+
+def is_clip_export_tab(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "sub-goal" in n or "subgoal" in n:
+        return False
+    return n in {"clip export", "clip_export", "clipexport"} or "clip export" in n
+
+
+def parse_grammar_clip_count(text: str) -> int | None:
+    match = GRAMMAR_COUNT_RE.search(text or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def review_work_remaining(text: str) -> bool:
+    n = (text or "").casefold()
+    count = parse_grammar_clip_count(n)
+    if count:
+        return True
+    if "click to add" in n or "must contain text" in n:
+        return True
+    if "fully filled" in n or "in parallel" in n:
+        return True
+    if "more than 5" in n and "idle" in n:
         return True
     return False
 
@@ -224,6 +297,11 @@ def interesting_uia_names(names: list[str], limit: int = 60) -> list[str]:
         "sub-goal",
         "review",
         "empty",
+        "export",
+        "grammar",
+        "split",
+        "parallel",
+        "error",
     )
     ranked = [n for n in names if any(k in n.casefold() for k in keys)]
     if ranked:

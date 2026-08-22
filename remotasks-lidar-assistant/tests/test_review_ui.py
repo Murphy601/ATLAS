@@ -63,6 +63,7 @@ def test_use_and_empty_clip_labels() -> None:
 
 def test_quality_empty_error_and_skip_watch() -> None:
     assert is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert not is_quality_empty_error("All ClipExports must be fully filled in parallel with Sub-goals")
     assert not is_quality_empty_error("Sub-goals must be at least 10 words long")
     assert should_skip_watch(100, use_ready=False, quality_ready=False)
     assert should_skip_watch(None, use_ready=True, quality_ready=False)
@@ -76,3 +77,31 @@ def test_interesting_uia_names_prefer_review_controls() -> None:
     out = interesting_uia_names(names)
     assert "Use" in out
     assert "click to add text" in out
+
+
+def test_grammar_advance_and_remaining_work() -> None:
+    from review_ui import (
+        is_clip_export_missing_error,
+        is_grammar_row_label,
+        is_idle_too_long_error,
+        is_ignore_all_label,
+        is_pending_clip_label,
+        parse_grammar_clip_count,
+        review_work_remaining,
+    )
+
+    assert parse_grammar_clip_count("Grammar 2 clips Ignore all") == 2
+    assert is_grammar_row_label("Grammar 2 clips Ignore all")
+    assert is_ignore_all_label("Ignore all")
+    assert not is_ignore_all_label("Grammar 2 clips Ignore all")
+    assert is_pending_clip_label("pending")
+    assert is_clip_export_missing_error(
+        "All ClipExports must be fully filled in parallel with Sub-goals"
+    )
+    assert not is_clip_export_missing_error("ClipExport and Sub-goal clips must contain text")
+    assert is_idle_too_long_error(
+        "No idle time should be more than 5s, please split it into smaller segments"
+    )
+    assert review_work_remaining("Grammar 2 clips Ignore all")
+    assert review_work_remaining("All ClipExports must be fully filled in parallel with Sub-goals")
+    assert not review_work_remaining("Focused Timeline Idle Watched")

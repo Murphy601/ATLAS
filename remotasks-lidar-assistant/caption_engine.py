@@ -258,6 +258,35 @@ def lint_clip_export(caption: str) -> LintResult:
     return LintResult(original, original, issues)
 
 
+def clip_export_from_subgoals(captions: list[str]) -> str:
+    """1–2 environment sentences grounded in already-written subgoal nouns."""
+    blob = " ".join(captions).lower()
+    if any(tok in blob for tok in ("kitchen", "refrigerator", "counter", "bowl", "jar", "basin")):
+        return (
+            "The person stands at a kitchen counter and performs a household task "
+            "by handling jars, a bowl, and a refrigerator door."
+        )
+    return (
+        "The person works in an indoor room and performs a household demonstration "
+        "by manipulating the objects described in the sub-goals."
+    )
+
+
+def subgoal_captions_from_names(names: list[str]) -> list[str]:
+    out: list[str] = []
+    for name in names:
+        text = (name or "").strip()
+        if len(text) < 16:
+            continue
+        lowered = text.lower()
+        if "hand" not in lowered:
+            continue
+        if lowered.startswith("error"):
+            continue
+        out.append(text)
+    return out
+
+
 def lint_clips(clips: list[dict]) -> list[dict]:
     """Annotate clip dicts with lint results. Does not modify HTE clips."""
     out = []

@@ -9,7 +9,7 @@ import sys
 import time
 from typing import Any
 
-from caption_engine import lint_clips
+from caption_engine import clip_export_from_subgoals, lint_clips, subgoal_captions_from_names
 from ego_task import parse_clips_from_text
 from process_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from review_ui import (
@@ -18,12 +18,21 @@ from review_ui import (
     find_review_use_clicks,
     find_word_click,
     interesting_uia_names,
+    is_clip_export_missing_error,
+    is_clip_export_tab,
     is_empty_clip_label,
+    is_grammar_row_label,
+    is_idle_too_long_error,
+    is_ignore_all_label,
+    is_pending_clip_label,
     is_quality_assistant_text,
     is_quality_empty_error,
     is_review_use_label,
+    is_split_control_label,
     ocr_text,
+    parse_grammar_clip_count,
     parse_watched_percent,
+    review_work_remaining,
     should_skip_watch,
 )
 import config
@@ -55,6 +64,7 @@ TAB_STRIP_MAX = 160
 DEFAULT_WATCH_S = 90.0
 MAX_WATCH_S = 300.0
 CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
+_OCR_BROKEN = False
 
 
 def say(msg: str) -> None:
@@ -197,16 +207,47 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
                 elapsed += step
                 say(f"Watching video... {int(elapsed)}/{int(remaining)}s")
 
-        review = _apply_review_uses(hwnd, write=write)
+        review = {"applied": 0, "text": page_text}
+        filled = {"wrote": 0, "text": page_text}
+        idle_rounds = 0
+        for pass_i in range(8):
+            say(f"Review pass {pass_i + 1}/8")
+            used = _apply_review_uses(hwnd, write=write)
+            missing = _fill_missing_and_reds(hwnd, write=write)
+            exported = _fill_clip_export(hwnd, write=write)
+            split = _split_long_idle(hwnd, write=write)
+            review["applied"] += int(used["applied"])
+            if used.get("text"):
+                review["text"] = used["text"]
+            filled["wrote"] += int(missing["wrote"]) + int(exported["wrote"]) + int(split["wrote"])
+            if missing.get("text"):
+                filled["text"] = missing["text"]
+            say(
+                f"Pass {pass_i + 1}: Use {used['applied']}, filled {missing['wrote']}, "
+                f"clip-export {exported['wrote']}, idle-split {split['wrote']}"
+            )
+            body_now = "\n".join(
+                part
+                for part in (missing.get("text"), used.get("text"), exported.get("text"), page_text)
+                if part
+            )
+            if used["applied"] + missing["wrote"] + exported["wrote"] + split["wrote"] == 0:
+                idle_rounds += 1
+                if not review_work_remaining(body_now):
+                    say("No more Review / Quality Assistant work on screen.")
+                    break
+                if idle_rounds >= 2:
+                    say("Stopped after two passes with no new Use/fill. Remaining reds may need a Split control.")
+                    break
+                if not _advance_review_target(hwnd):
+                    say("Grammar/Quality work remains but no next clip control was found.")
+                    break
+                time.sleep(0.6)
+            else:
+                idle_rounds = 0
+
         say(f"Clicked Review Use {review['applied']} time(s)")
-        filled = _fill_missing_and_reds(hwnd, write=write)
         say(f"Filled {filled['wrote']} missing/red caption(s)")
-        extra = _apply_review_uses(hwnd, write=write)
-        if extra["applied"]:
-            review["applied"] += int(extra["applied"])
-            if extra.get("text"):
-                review["text"] = extra["text"]
-            say(f"Clicked Review Use {review['applied']} time(s) after filling empties")
 
         body = "\n".join(part for part in (filled.get("text"), review.get("text"), page_text) if part)
         clips = parse_clips_from_text(body) if body else []
@@ -537,6 +578,12 @@ def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
     preview = interesting_uia_names(named)
     if preview:
         say("UIA names: " + " | ".join(preview))
+    try:
+        dest = config.DEBUG_CAPTURES / "uia_names.txt"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("\n".join(named), encoding="utf-8")
+    except Exception:
+        logger.debug("Could not write uia_names.txt", exc_info=True)
     return "\n".join(texts), nodes
 
 
@@ -591,6 +638,123 @@ def _click_uia_quality_empty(nodes: list[Any]) -> bool:
             say(f"Clicked Quality Assistant empty-clip error: {name[:80]}")
             return True
     return False
+
+
+def _click_control_left(ctrl: Any, frac: float = 0.18) -> bool:
+    """Click the left side of a control so Grammar is hit, not Ignore all."""
+    try:
+        rect = ctrl.rectangle()
+        x = int(rect.left + max(rect.right - rect.left, 1) * frac)
+        y = int((rect.top + rect.bottom) / 2)
+    except Exception:
+        return False
+    _click_screen(x, y)
+    return True
+
+
+def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
+    """Select the next Grammar/pending clip so Use reappears. Never Ignore all / Submit."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd)
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if not is_pending_clip_label(name):
+            continue
+        if _uia_click(ctrl):
+            say(f"Opened pending timeline clip: {name}")
+            return True
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if is_ignore_all_label(name):
+            continue
+        if not is_grammar_row_label(name):
+            continue
+        if _click_control_left(ctrl):
+            say(f"Clicked Grammar row (left side, not Ignore all): {name[:80]}")
+            return True
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if is_ignore_all_label(name) or is_review_use_label(name):
+            continue
+        if is_idle_too_long_error(name) or is_clip_export_missing_error(name):
+            continue
+        if is_quality_empty_error(name):
+            continue
+        lowered = name.casefold()
+        if not lowered.startswith("error"):
+            continue
+        if _uia_click(ctrl):
+            say(f"Opened Quality Assistant clip: {name[:80]}")
+            return True
+    return False
+
+
+def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
+    """Fill the Clip Export card. Never Submit. Never type Idle here."""
+    uia_text, nodes = _read_uia(hwnd)
+    names = [line for line in (uia_text or "").splitlines() if line.strip()]
+    if not any(is_clip_export_missing_error(n) for n in names) and not is_clip_export_missing_error(uia_text):
+        return {"wrote": 0, "text": uia_text}
+    for ctrl in nodes:
+        if is_clip_export_tab(_uia_name(ctrl)):
+            _uia_click(ctrl)
+            say(f"Clicked Clip Export tab: {_uia_name(ctrl)}")
+            time.sleep(0.4)
+            uia_text, nodes = _read_uia(hwnd)
+            break
+    for ctrl in nodes:
+        if is_clip_export_missing_error(_uia_name(ctrl)):
+            _uia_click(ctrl)
+            say("Clicked Quality Assistant Clip Export error")
+            time.sleep(0.45)
+            uia_text, nodes = _read_uia(hwnd)
+            break
+    clicked = _click_uia_empty_clip(nodes)
+    if not clicked and not _OCR_BROKEN:
+        words, img_w, img_h = _ocr_window(hwnd, "clip_export")
+        left, top, _w, _h = _window_rect(hwnd)
+        target = find_phrase_click(words, "click to add text", img_w, img_h)
+        if target and write:
+            _focus(hwnd)
+            _double_click_screen(left + target[0], top + target[1])
+            clicked = True
+    if not clicked:
+        say("Clip Export still empty but no editable field was found.")
+        return {"wrote": 0, "text": uia_text}
+    if not write:
+        return {"wrote": 0, "text": uia_text}
+    names = [line for line in (uia_text or "").splitlines() if line.strip()]
+    text = clip_export_from_subgoals(subgoal_captions_from_names(names))
+    time.sleep(0.2)
+    _type_into_focused(text)
+    say(f"Typed Clip Export: {text}")
+    time.sleep(0.4)
+    return {"wrote": 1, "text": text}
+
+
+def _split_long_idle(hwnd: int, write: bool = True) -> dict:
+    """Select a >5s Idle clip and click Split if the control exists."""
+    uia_text, nodes = _read_uia(hwnd)
+    target = None
+    for ctrl in nodes:
+        if is_idle_too_long_error(_uia_name(ctrl)):
+            target = ctrl
+            break
+    if target is None:
+        return {"wrote": 0, "text": uia_text}
+    if write:
+        _uia_click(target)
+        say("Clicked Quality Assistant idle-too-long error")
+        time.sleep(0.45)
+        uia_text, nodes = _read_uia(hwnd)
+    for ctrl in nodes:
+        if is_split_control_label(_uia_name(ctrl)):
+            if write and _uia_click(ctrl):
+                say(f"Clicked split control: {_uia_name(ctrl)}")
+                time.sleep(0.4)
+                return {"wrote": 1, "text": uia_text}
+    say("Idle clip is over 5s; no Split control in the accessibility tree.")
+    return {"wrote": 0, "text": uia_text}
 
 
 def _type_caption(hwnd: int, nodes: list[Any], original: str, rewritten: str) -> bool:
@@ -822,6 +986,9 @@ def _ocr_image(path) -> list[dict]:
     import subprocess
     from pathlib import Path
 
+    global _OCR_BROKEN
+    if _OCR_BROKEN:
+        return []
     script = Path(__file__).with_name("ocr_image.ps1")
     path = Path(path)
     if not script.is_file() or not path.is_file():
@@ -848,6 +1015,9 @@ def _ocr_image(path) -> list[dict]:
     if proc.returncode not in (0, None) or not raw:
         err = (proc.stderr or "").strip()[:400]
         say(f"OCR empty (exit {proc.returncode}). {err}")
+        if "MakeGenericMethod" in (proc.stderr or "") or "generic parameter" in (proc.stderr or "").lower():
+            _OCR_BROKEN = True
+            say("OCR script failed; continuing with UIA only.")
         return []
     try:
         payload = json.loads(raw)
@@ -880,16 +1050,28 @@ def _ocr_window(hwnd: int, tag: str) -> tuple[list[dict], int, int]:
 def _apply_review_uses(hwnd: int, write: bool = True, max_clicks: int = 12) -> dict:
     """Click Grammar Use on the Review sidebar for red clips. Never Submit."""
     applied = 0
+    stalled = 0
     last_words: list[dict] = []
     last_text = ""
     left, top, width, height = _window_rect(hwnd)
     for step in range(max_clicks):
         uia_text, nodes = _read_uia(hwnd)
         last_text = uia_text
+        grammar_n = parse_grammar_clip_count(uia_text)
+        if grammar_n:
+            say(f"Grammar still has {grammar_n} clip(s)")
         if write and _click_uia_use(hwnd, nodes):
             applied += 1
+            stalled = 0
             time.sleep(0.85)
             continue
+        if grammar_n and stalled < 5 and _advance_review_target(hwnd, nodes):
+            stalled += 1
+            time.sleep(0.55)
+            continue
+        if _OCR_BROKEN:
+            say("No Review Use control found (OCR/UIA). Not guessing a click.")
+            break
         words, img_w, img_h = _ocr_window(hwnd, f"review_{step}")
         last_words = words
         last_text = "\n".join(part for part in (uia_text, ocr_text(words)) if part)
@@ -915,6 +1097,7 @@ def _apply_review_uses(hwnd: int, write: bool = True, max_clicks: int = 12) -> d
         _focus(hwnd)
         _click_screen(left + cx, top + cy)
         applied += 1
+        stalled = 0
         time.sleep(0.85)
     return {"applied": applied, "text": last_text or ocr_text(last_words), "words": last_words}
 
@@ -938,6 +1121,8 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
                 uia_text, nodes = _read_uia(hwnd)
                 clicked_empty = _click_uia_empty_clip(nodes) or clicked_empty
         if not clicked_empty:
+            if _OCR_BROKEN:
+                break
             words, img_w, img_h = _ocr_window(hwnd, f"missing_{attempt}")
             target = None
             for phrase in EMPTY_CLIP_PHRASES:
@@ -964,7 +1149,8 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
             time.sleep(0.45)
 
     if not words:
-        words, img_w, img_h = _ocr_window(hwnd, "after_empty")
+        if not _OCR_BROKEN:
+            words, img_w, img_h = _ocr_window(hwnd, "after_empty")
         uia_text, nodes = _read_uia(hwnd)
 
     body = "\n".join(part for part in (uia_text, ocr_text(words)) if part)

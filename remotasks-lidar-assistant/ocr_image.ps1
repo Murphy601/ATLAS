@@ -9,20 +9,30 @@ $Path = (Resolve-Path -LiteralPath $Path).Path
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime | Out-Null
 $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime]
+$null = [Windows.Storage.Streams.IRandomAccessStream, Windows.Storage.Streams, ContentType = WindowsRuntime]
 $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+$null = [Windows.Graphics.Imaging.SoftwareBitmap, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
 $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+$null = [Windows.Media.Ocr.OcrResult, Windows.Foundation, ContentType = WindowsRuntime]
 $null = [Windows.Globalization.Language, Windows.Globalization, ContentType = WindowsRuntime]
 
 function Wait-WinRtOperation {
-    param($Operation)
+    param(
+        $Operation,
+        [type]$ResultType
+    )
     $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() |
         Where-Object {
             $_.Name -eq "AsTask" -and
-            $_.GetParameters().Count -eq 1 -and
-            $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation``1"
+            $_.IsGenericMethodDefinition -and
+            $_.GetGenericArguments().Count -eq 1 -and
+            $_.GetParameters().Count -eq 1
         } |
         Select-Object -First 1
-    $generic = $asTask.MakeGenericMethod($Operation.GetType().GenericTypeArguments)
+    if (-not $asTask) {
+        throw "WindowsRuntime AsTask(IAsyncOperation) was not found"
+    }
+    $generic = $asTask.MakeGenericMethod($ResultType)
     $task = $generic.Invoke($null, @($Operation))
     [void]$task.Wait(-1)
     return $task.Result
@@ -43,11 +53,11 @@ if (-not $engine) {
     exit 0
 }
 
-$file = Wait-WinRtOperation ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path))
-$stream = Wait-WinRtOperation ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read))
-$decoder = Wait-WinRtOperation ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream))
-$bitmap = Wait-WinRtOperation ($decoder.GetSoftwareBitmapAsync())
-$result = Wait-WinRtOperation ($engine.RecognizeAsync($bitmap))
+$file = Wait-WinRtOperation ([Windows.Storage.StorageFile]::GetFileFromPathAsync($Path)) ([Windows.Storage.StorageFile])
+$stream = Wait-WinRtOperation ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$decoder = Wait-WinRtOperation ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$bitmap = Wait-WinRtOperation ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+$result = Wait-WinRtOperation ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
 
 $words = New-Object System.Collections.Generic.List[object]
 foreach ($line in $result.Lines) {

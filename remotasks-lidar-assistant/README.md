@@ -45,8 +45,9 @@ so the engine now:
 
 - reads the Chromium accessibility tree (same path that already found **Play**)
 - captures the real on-screen pixels (desktop BitBlt / screenshot), not PrintWindow
-- clicks **Use** and **click to add text** from those controls
+- clicks **Use** on each remaining Grammar clip (opens **pending** / the Grammar row when Use hides)
+- fills **Clip Export** when Quality Assistant says it is empty
 - never counts a guessed sidebar coordinate as a successful write
 
-Look for `Clicked UIA empty clip` / `Typed missing caption: Idle` / `Clicked UIA Review Use`.
+Look for `Review pass`, `Clicked UIA empty clip` / `Typed missing caption: Idle` / `Clicked UIA Review Use`. Grammar should count down (`Grammar 2 clips` → `1` → gone).
 `--dry-run` plays and prints caption fixes without typing.

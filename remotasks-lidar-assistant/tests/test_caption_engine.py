@@ -52,7 +52,15 @@ def test_max_three_actions():
     assert any(i.code == "too_many_actions" for i in result.issues)
 
 
-def test_clip_export_needs_environment_and_sentences():
+def test_clip_export_from_kitchen_subgoals() -> None:
+    from caption_engine import clip_export_from_subgoals, lint_clip_export
+
+    text = clip_export_from_subgoals(
+        ["Pick up the red mayonnaise jar with the left hand"]
+    )
+    result = lint_clip_export(text)
+    assert result.ok
+    assert "kitchen" in text.lower()
     bad = lint_clip_export("Make a sandwich")
     assert not bad.ok
     good = lint_clip_export(
