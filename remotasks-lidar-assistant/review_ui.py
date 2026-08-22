@@ -1,7 +1,8 @@
 """SensorFusionLab Review pane helpers (no Win32).
 
 The Review sidebar shows Grammar suggestions with Ignore / Use. Red timeline
-clips are fixed by clicking Use, never Submit.
+clips are fixed by clicking Use, never Submit. Empty clips show
+"click to add text".
 """
 
 from __future__ import annotations
@@ -10,6 +11,12 @@ import re
 from typing import Any
 
 WATCHED_RE = re.compile(r"Watched\s+(\d+)\s*%", re.I)
+EMPTY_CLIP_PHRASES = (
+    "click to add text",
+    "click to add",
+    "(empty clip)",
+    "empty clip",
+)
 
 
 def parse_watched_percent(text: str) -> int | None:
@@ -21,6 +28,20 @@ def parse_watched_percent(text: str) -> int | None:
 
 def ocr_text(words: list[dict[str, Any]]) -> str:
     return " ".join(str(word.get("text") or "") for word in words)
+
+
+def _norm(word: dict[str, Any] | str) -> str:
+    if isinstance(word, str):
+        return word.strip().lower()
+    return str(word.get("text") or "").strip().lower()
+
+
+def _center(word: dict[str, Any]) -> tuple[int, int]:
+    x = int(word.get("x") or 0)
+    y = int(word.get("y") or 0)
+    w = int(word.get("w") or 0)
+    h = int(word.get("h") or 0)
+    return x + w // 2, y + h // 2
 
 
 def find_review_use_clicks(
@@ -88,7 +109,11 @@ def find_word_click(
 
 
 def estimated_use_point(width: int, height: int) -> tuple[int, int]:
-    """Fallback click inside the right-hand Review card (Grammar Use)."""
+    """Fallback click inside the right-hand Review card (Grammar Use).
+
+    Kept for tests/layout docs. The engine must not click this guess and
+    count it as a successful caption write.
+    """
     tab = min(max(int(height * 0.16), 110), 160)
     x = int(width * 0.88)
     y = tab + int((height - tab) * 0.22)
@@ -125,13 +150,82 @@ def find_phrase_click(
     return None
 
 
-def _norm(word: dict[str, Any]) -> str:
-    return str(word.get("text") or "").strip().lower()
+def is_review_use_label(name: str) -> bool:
+    """True for the Grammar Review Use button (not Find & Replace / Submit)."""
+    n = (name or "").strip().casefold()
+    if not n or n in {"ignore", "similar", "review", "submit", "user"}:
+        return False
+    if "find" in n and "replace" in n:
+        return False
+    if "submit" in n:
+        return False
+    if n in {"use", "use suggestion", "apply"}:
+        return True
+    return n.startswith("use ") or n.endswith(" use")
 
 
-def _center(word: dict[str, Any]) -> tuple[int, int]:
-    x = int(word.get("x") or 0)
-    y = int(word.get("y") or 0)
-    w = int(word.get("w") or 0)
-    h = int(word.get("h") or 0)
-    return x + w // 2, y + h // 2
+def is_empty_clip_label(name: str) -> bool:
+    """True for a timeline clip that still needs a caption."""
+    n = (name or "").strip().casefold()
+    if not n:
+        return False
+    if "click to add" in n or "add text" in n:
+        return True
+    if n in {"(empty clip)", "empty clip", "empty"}:
+        return True
+    if "placeholder" in n:
+        return True
+    return False
+
+
+def is_quality_empty_error(name: str) -> bool:
+    """Quality Assistant row that jumps to a clip with no caption."""
+    n = (name or "").strip().casefold()
+    if "must contain text" in n:
+        return True
+    if "clipexport" in n and "text" in n:
+        return True
+    return False
+
+
+def is_quality_assistant_text(text: str) -> bool:
+    n = (text or "").casefold()
+    return "quality assistant" in n or "must contain text" in n
+
+
+def should_skip_watch(
+    watched_pct: int | None,
+    *,
+    use_ready: bool = False,
+    quality_ready: bool = False,
+) -> bool:
+    """Skip another 1x watch when Review is already on screen.
+
+    Empty clips alone do not skip the required first watch.
+    """
+    if watched_pct is not None and watched_pct >= 80:
+        return True
+    return bool(use_ready or quality_ready)
+
+
+def interesting_uia_names(names: list[str], limit: int = 60) -> list[str]:
+    """Prefer Review / timeline labels when logging the accessibility tree."""
+    keys = (
+        "use",
+        "ignore",
+        "click to add",
+        "add text",
+        "idle",
+        "quality",
+        "watched",
+        "play",
+        "submit",
+        "pending",
+        "sub-goal",
+        "review",
+        "empty",
+    )
+    ranked = [n for n in names if any(k in n.casefold() for k in keys)]
+    if ranked:
+        return ranked[:limit]
+    return names[:limit]

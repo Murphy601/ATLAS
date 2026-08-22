@@ -129,3 +129,12 @@ def test_drive_open_task_requires_windows(monkeypatch) -> None:
     monkeypatch.setattr(win_ui.sys, "platform", "linux")
     with pytest.raises(RuntimeError, match="Windows-only"):
         win_ui.drive_open_task()
+
+
+def test_empty_clip_and_use_helpers_match_screenshot_labels() -> None:
+    from review_ui import is_empty_clip_label, is_quality_empty_error, is_review_use_label
+
+    assert is_empty_clip_label("click to add text")
+    assert is_review_use_label("Use")
+    assert is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert not is_review_use_label("Ignore")

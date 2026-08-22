@@ -2,7 +2,12 @@ from review_ui import (
     estimated_use_point,
     find_phrase_click,
     find_review_use_clicks,
+    interesting_uia_names,
+    is_empty_clip_label,
+    is_quality_empty_error,
+    is_review_use_label,
     parse_watched_percent,
+    should_skip_watch,
 )
 
 
@@ -42,3 +47,32 @@ def test_find_click_to_add_text_on_timeline() -> None:
     assert hit is not None
     assert hit[0] < 400
     assert hit[1] > 500
+
+
+def test_use_and_empty_clip_labels() -> None:
+    assert is_review_use_label("Use")
+    assert is_review_use_label("Use suggestion")
+    assert not is_review_use_label("User")
+    assert not is_review_use_label("Submit")
+    assert not is_review_use_label("Find & Replace")
+    assert is_empty_clip_label("click to add text")
+    assert is_empty_clip_label("review 5.5s click to add text")
+    assert is_empty_clip_label("(empty clip)")
+    assert not is_empty_clip_label("Pick up the jar")
+
+
+def test_quality_empty_error_and_skip_watch() -> None:
+    assert is_quality_empty_error("ClipExport and Sub-goal clips must contain text")
+    assert not is_quality_empty_error("Sub-goals must be at least 10 words long")
+    assert should_skip_watch(100, use_ready=False, quality_ready=False)
+    assert should_skip_watch(None, use_ready=True, quality_ready=False)
+    assert should_skip_watch(None, use_ready=False, quality_ready=True)
+    assert not should_skip_watch(None, use_ready=False, quality_ready=False)
+    assert not should_skip_watch(12, use_ready=False, quality_ready=False)
+
+
+def test_interesting_uia_names_prefer_review_controls() -> None:
+    names = ["Chrome", "Address", "Use", "click to add text", "New Tab"]
+    out = interesting_uia_names(names)
+    assert "Use" in out
+    assert "click to add text" in out

@@ -37,8 +37,16 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 You should see a click like `Clicked video-center at 525,367` (y much larger than 50).
 A click at y=49 is the tab bar and will not play the video.
 
-You should see the IX window come forward and the video start. Caption typing into
-the page still needs readable timeline text; suggested caption fixes are printed
-even when the engine cannot type them.
+You should see the IX window come forward. After play, the engine must fill empty
+timeline cards (`click to add text` → `Idle`) and click Review **Use**. A log that
+only shows `Watching video... 90/90s` then `Filled 0 missing/red caption(s)` and
+`OCR words: 0` did **not** write captions — Chromium PrintWindow captures are blank,
+so the engine now:
 
+- reads the Chromium accessibility tree (same path that already found **Play**)
+- captures the real on-screen pixels (desktop BitBlt / screenshot), not PrintWindow
+- clicks **Use** and **click to add text** from those controls
+- never counts a guessed sidebar coordinate as a successful write
+
+Look for `Clicked UIA empty clip` / `Typed missing caption: Idle` / `Clicked UIA Review Use`.
 `--dry-run` plays and prints caption fixes without typing.
