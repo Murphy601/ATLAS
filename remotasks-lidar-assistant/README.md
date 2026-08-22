@@ -17,9 +17,12 @@ cd remotasks-lidar-assistant
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
-1. Open any IX profile yourself.
+1. Open any **IX Browser** profile yourself (not Google Chrome, not Gemini).
 2. Open the EGO task until you see **Focused Timeline**.
-3. Run `run.ps1` in a second PowerShell window. Leave IX open.
+3. Run `run.ps1` in a second PowerShell window. Leave the IX window visible.
+
+The engine ignores Google Chrome / Gemini tabs. If both are open, it drives the IX
+process (`...\IXBrowser\...\chrome.exe`), not `Google\Chrome\Application\chrome.exe`.
 
 Most IX profiles do **not** expose DevTools. In that case the engine stops scanning
 ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:

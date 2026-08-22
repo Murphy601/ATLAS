@@ -20,6 +20,14 @@ BROWSER_NAMES = {
     "chromium",
 }
 
+IX_PATH_MARKERS = ("ixbrowser", "ix-browser", "/ix browser/", "\\ix browser\\")
+STOCK_CHROME_MARKERS = (
+    "/google/chrome/",
+    "/google/chrome beta/",
+    "/microsoft/edge/",
+    "/brave software/",
+)
+
 PORT_RE = re.compile(r"--remote-debugging-port(?:=|\s+)(\d+)", re.I)
 USER_DIR_RE = re.compile(r'--user-data-dir(?:=|\s+)(?:"([^"]+)"|(\S+))', re.I)
 
@@ -72,6 +80,26 @@ def is_browser_process(name: str | None, command_line: str | None) -> bool:
     return "ixbrowser" in cmd or "chrome.exe" in cmd or "chromium" in cmd
 
 
+def _norm_path(value: str | None) -> str:
+    return (value or "").lower().replace("\\", "/")
+
+
+def is_ix_install(
+    name: str | None = None,
+    command_line: str | None = None,
+    exe_path: str | None = None,
+) -> bool:
+    """True for IX Browser (including chrome.exe launched from the IX install folder)."""
+    blob = " ".join(part for part in (name, command_line, exe_path) if part)
+    lowered = _norm_path(blob)
+    return any(marker.replace("\\", "/") in lowered for marker in IX_PATH_MARKERS)
+
+
+def is_stock_chrome_path(exe_path: str | None) -> bool:
+    lowered = _norm_path(exe_path)
+    return any(marker in lowered for marker in STOCK_CHROME_MARKERS)
+
+
 def probe_devtools(url: str, timeout: float = 0.6) -> bool:
     try:
         with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=timeout) as resp:
@@ -96,13 +124,14 @@ def _candidate_http_urls() -> list[str]:
     except ImportError:
         return found
 
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "exe"]):
         try:
             info = proc.info
             cmdline_list = info.get("cmdline") or []
             cmd = " ".join(str(part) for part in cmdline_list)
             name = info.get("name") or ""
-            if not is_browser_process(name, cmd):
+            exe = info.get("exe") or ""
+            if not is_ix_install(name, cmd, exe):
                 continue
             for url in command_line_cdp_urls(cmd):
                 add(url)
@@ -128,5 +157,8 @@ def discover_cdp_http_urls() -> list[str]:
     if live:
         logger.info("Found live DevTools on %s", live)
         return live
-    logger.info("No live DevTools endpoint (ignored non-DevTools ports: %s)", found)
+    if not found:
+        logger.info("No IX Browser debug port (Google Chrome listen ports are ignored)")
+    else:
+        logger.info("No live DevTools endpoint (ignored non-DevTools ports: %s)", found)
     return []

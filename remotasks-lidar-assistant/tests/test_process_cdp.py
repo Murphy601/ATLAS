@@ -49,3 +49,24 @@ def test_discover_cdp_http_urls_empty_when_port_is_not_devtools(monkeypatch) -> 
     )
     monkeypatch.setattr(process_cdp, "probe_devtools", lambda url: False)
     assert process_cdp.discover_cdp_http_urls() == []
+
+
+def test_is_ix_install_detects_folder_and_user_data() -> None:
+    assert process_cdp.is_ix_install(
+        name="chrome.exe",
+        exe_path=r"C:\Users\user\AppData\Local\IXBrowser\Application\chrome.exe",
+    )
+    assert process_cdp.is_ix_install(
+        command_line=r'chrome.exe --user-data-dir="C:\Users\user\AppData\Roaming\ixbrowser\p1"',
+    )
+    assert not process_cdp.is_ix_install(
+        name="chrome.exe",
+        exe_path=r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    )
+
+
+def test_is_stock_chrome_path() -> None:
+    assert process_cdp.is_stock_chrome_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+    assert not process_cdp.is_stock_chrome_path(
+        r"C:\Users\user\AppData\Local\IXBrowser\Application\chrome.exe"
+    )

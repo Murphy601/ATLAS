@@ -10,6 +10,7 @@ from typing import Any
 
 from caption_engine import lint_clips
 from ego_task import parse_clips_from_text
+from process_cdp import is_ix_install, is_stock_chrome_path
 import config
 
 logger = logging.getLogger("ego.win_ui")
@@ -19,9 +20,14 @@ TASK_HINTS = (
     "sub-goal",
     "subgoal",
     "ego_rectified",
-    "review",
-    "atlas",
     "clip export",
+    "ego_rectified_canonical",
+)
+
+REJECT_TITLE_TOKENS = (
+    "google chrome",
+    "google gemini",
+    "microsoft edge",
 )
 
 CHROME_CLASS = "Chrome_WidgetWin_1"
@@ -32,25 +38,47 @@ def say(msg: str) -> None:
     logger.info(msg)
 
 
-def score_window(title: str, class_name: str = "") -> int:
+def score_window(title: str, class_name: str = "", exe_path: str = "") -> int:
+    """Score a desktop window. Google Chrome / Gemini never win over IX Browser."""
     lowered = (title or "").lower()
+    if any(token in lowered for token in REJECT_TITLE_TOKENS):
+        return 0
+    if is_stock_chrome_path(exe_path) and not is_ix_install(exe_path=exe_path):
+        return 0
+
+    score = 0
+    ix = is_ix_install(exe_path=exe_path) or "ixbrowser" in lowered or "ix browser" in lowered
+    if ix:
+        score += 50
     class_l = (class_name or "").lower()
     chrome_like = class_name == CHROME_CLASS or class_l.startswith("chrome_widgetwin")
-    score = 0
-    if chrome_like:
-        score += 2
-    if "ixbrowser" in lowered or "ix browser" in lowered:
-        score += 8
-    elif " ix " in f" {lowered} " or lowered.startswith("ix ") or lowered.endswith(" ix"):
-        score += 4
+    if chrome_like and ix:
+        score += 5
     for hint in TASK_HINTS:
         if hint in lowered:
             score += 10
     if score == 0:
         return 0
-    if not chrome_like and "ix" not in lowered:
+    if not ix and not chrome_like:
         return 0
     return score
+
+
+def select_ix_window(windows: list[dict]) -> dict | None:
+    """Pick the IX Browser window from enumerated desktop windows."""
+    scored: list[tuple[int, dict]] = []
+    for window in windows:
+        points = score_window(
+            window.get("title") or "",
+            window.get("class_name") or "",
+            window.get("exe_path") or "",
+        )
+        if points > 0:
+            scored.append((points, window))
+    if not scored:
+        return None
+    scored.sort(key=lambda row: row[0], reverse=True)
+    return scored[0][1]
 
 
 def drive_open_task(write: bool = True, watch_seconds: float = 12.0) -> dict[str, Any]:
@@ -118,11 +146,21 @@ def _pick_ix_window() -> tuple[int, str]:
     from ctypes import wintypes
 
     user32 = ctypes.windll.user32
-    found: list[tuple[int, str, str, int]] = []
+    found: list[dict] = []
+    skipped: list[str] = []
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
     def callback(hwnd, _lparam):
         if not user32.IsWindowVisible(hwnd):
+            return True
+        ex_style = user32.GetWindowLongW(hwnd, -20)
+        if ex_style & 0x00000080:  # WS_EX_TOOLWINDOW
+            return True
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        width = rect.right - rect.left
+        height = rect.bottom - rect.top
+        if width < 400 or height < 300:
             return True
         length = user32.GetWindowTextLengthW(hwnd)
         title_buf = ctypes.create_unicode_buffer(length + 1)
@@ -131,17 +169,66 @@ def _pick_ix_window() -> tuple[int, str]:
         user32.GetClassNameW(hwnd, class_buf, 256)
         title = title_buf.value
         class_name = class_buf.value
-        points = score_window(title, class_name)
-        if points > 0:
-            found.append((hwnd, title, class_name, points))
+        exe_path = _hwnd_exe(hwnd)
+        row = {
+            "hwnd": int(hwnd),
+            "title": title,
+            "class_name": class_name,
+            "exe_path": exe_path,
+        }
+        points = score_window(title, class_name, exe_path)
+        if points <= 0:
+            if title and (
+                any(token in title.lower() for token in REJECT_TITLE_TOKENS)
+                or is_stock_chrome_path(exe_path)
+            ):
+                skipped.append(title)
+            return True
+        found.append(row)
         return True
 
     user32.EnumWindows(callback, 0)
-    if not found:
-        raise RuntimeError("Could not find an open IX/Chrome window. Leave the profile visible and retry.")
-    found.sort(key=lambda row: row[3], reverse=True)
-    hwnd, title, _cls, _score = found[0]
-    return int(hwnd), title
+    for title in skipped[:8]:
+        say(f"Skipping Google Chrome/Gemini window: {title}")
+    chosen = select_ix_window(found)
+    if chosen is None:
+        seen = skipped[:8] or [row.get("title") or "(no title)" for row in found[:8]]
+        raise RuntimeError(
+            "Could not find an IX Browser window. Leave the IX profile visible "
+            "(not Google Chrome / Gemini) with the EGO task on screen. "
+            f"Saw: {seen}"
+        )
+    exe = chosen.get("exe_path") or ""
+    say(f"IX process: {exe or '(path unknown)'}")
+    return int(chosen["hwnd"]), chosen.get("title") or ""
+
+
+def _hwnd_exe(hwnd: int) -> str:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    if not pid.value:
+        return ""
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+    if handle:
+        try:
+            size = wintypes.DWORD(32768)
+            buf = ctypes.create_unicode_buffer(size.value)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return buf.value
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        import psutil
+
+        return psutil.Process(int(pid.value)).exe()
+    except Exception:
+        return ""
 
 
 def _focus(hwnd: int) -> None:
