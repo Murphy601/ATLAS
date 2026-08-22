@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Set up (if needed) and attach the EGO engine to your already-open IX Browser tab.
@@ -79,7 +79,7 @@ if (-not $venvPython) {
     $venvPython = Join-Path $root "venv\Scripts\python.exe"
 }
 
-Write-Host "[Setup] Installing Python packages (EGO attach — Open3D is not required)..."
+Write-Host "[Setup] Installing Python packages (EGO attach; Open3D is not required)..."
 & $venvPython -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $venvPython -m pip install -r (Join-Path $root "requirements.txt")
