@@ -32,7 +32,8 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - clicks the **video** in the page (below the Chromium tab strip), then Space once
 - watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
-- clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
+- splits Idle **over 5s** by placing the playhead in that subgoal and pressing **K** (`click or press K to create`). Caption stays `Idle`. Never HTE
+- switches the top **Sub-goal** dropdown to **Clip Export** and types 1–2 environment sentences so Clip Export is filled in parallel with sub-goals
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 
 You should see a click like `Clicked video-center at 525,367` (y much larger than 50).
@@ -46,8 +47,9 @@ so the engine now:
 
 - reads the Chromium accessibility tree (same path that already found **Play**)
 - captures the real on-screen pixels (desktop BitBlt / screenshot), not PrintWindow
-- clicks **Use** on each remaining Grammar clip (opens **pending** / the Grammar row when Use hides)
-- fills **Clip Export** when Quality Assistant says it is empty
+- clicks **Use** on each remaining Grammar clip (opens the Grammar row when Use hides)
+- splits Idle **>5s** with **K** (PDF clipping rule; Quality Assistant "no idle more than 5s")
+- fills **Clip Export** on its own timeline (1–2 sentences, environment + task, never HTE)
 - never counts a guessed sidebar coordinate as a successful write
 
 Look for `Review pass`, `Clicked UIA empty clip` / `Typed missing caption: Idle` / `Clicked UIA Review Use`. Grammar should count down (`Grammar 2 clips` → `1` → gone).
