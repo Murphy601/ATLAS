@@ -1,7 +1,8 @@
-"""Paths and tunables for the Remotasks LiDAR assistant."""
+"""Paths and tunables. Default workflow attaches to IX Browser — it never launches Chrome."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -16,19 +17,19 @@ PORTAL_URL = "https://www.remotasks.com/lidarlite/"
 OVERLAY_HOST = "127.0.0.1"
 OVERLAY_PORT = 8765
 
-# Playwright: prefer installed Chrome (better against anti-bot) else bundled Chromium.
+# IX Browser / Chrome DevTools. You open the profile; the engine only attaches.
+CDP_URL = os.environ.get("CDP_URL", "http://127.0.0.1:9222")
+CDP_PORTS = range(9222, 9232)
+TASK_WAIT_SECONDS = float(os.environ.get("TASK_WAIT_SECONDS", "600"))
+ATTACH_WAIT_SECONDS = float(os.environ.get("ATTACH_WAIT_SECONDS", "180"))
+
 BROWSER_CHANNEL = "chrome"
 
-# Ground-plane RANSAC
 PLANE_DISTANCE_THRESHOLD = 0.12
 PLANE_RANSAC_N = 3
 PLANE_ITERATIONS = 400
-
-# DBSCAN clustering (Open3D units = metres if the cloud is metric)
 DBSCAN_EPS = 0.6
 DBSCAN_MIN_POINTS = 25
-
-# Drop tiny clusters that are likely noise
 MIN_CLUSTER_POINTS = 25
 MIN_EXTENT_M = 0.15
 

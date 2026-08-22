@@ -1,60 +1,42 @@
-# Remotasks LiDAR Assistant
+# EGO annotation engine (IX Browser attach)
 
-Local annotation helper for WebGL / LiDAR Lite tasks. It never injects JavaScript into the task page. Instead it:
+Local helper for the egocentric clipping/captioning tool. **It never launches Chrome.**
+You open IX Browser, log in, and open the task. When the Focused Timeline is on screen
+(Review, `ego_rectified_canonical`, Sub-goal, play control), the engine attaches and works that tab.
 
-1. Opens Remotasks in a **persistent Playwright Chrome profile** so you can log in once.
-2. Intercepts `.pcd` / `.bin` / point-cloud network payloads and saves them under `debug_captures/`.
-3. Runs **Open3D** ground removal + DBSCAN clustering and prints oriented cuboids `(x, y, z, dx, dy, dz, theta)`.
-4. Serves a **localhost-only** Flask + Three.js overlay of those boxes.
+It encodes the project spec:
 
-```text
-remotasks-lidar-assistant/
-├── config.py
-├── main.py
-├── browser_engine.py
-├── pcd_parser.py
-├── overlay.py
-├── debug_captures/
-└── requirements.txt
-```
+- Watch the **entire video first** (clicks Play / 1x, does not skip)
+- Subgoals **< 10s**, Clip Export **< 5 min**, idle **> 5s** isolated
+- Captions: imperative, named hand, `with` not `using`, `and` not `while`
+- Forbidden verbs/adjectives, grammar cheat-sheet prepositions (`pick up … from`)
+- **Does not touch** Hand Tracking Error autoflags
+- **Does not click Submit**
 
-## Setup
+## IX Browser (required)
 
-```bash
-cd remotasks-lidar-assistant
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install chromium
-```
-
-On Windows PowerShell:
+1. In the IX profile: enable **debugging port** `9222` (Advanced / Other).
+2. Start that profile yourself (this is your Chrome window).
+3. Open the EGO task until you see **Focused Timeline** and the play control.
+4. Then run the engine:
 
 ```powershell
 cd remotasks-lidar-assistant
 python -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt
 .\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe main.py
 ```
 
-## Run
+Optional: `$env:CDP_URL="http://127.0.0.1:9222"`
 
-```bash
-python main.py
+The Playwright Chromium install is only the client library talking over CDP. It will **not** open a second browser.
+
+Lint without attaching:
+
+```powershell
+python main.py --lint-text "Pick up the pants on the table with the left hand"
+python main.py --dry-run
 ```
 
-1. Complete login / 2FA in the Playwright window.
-2. Open a LiDAR Lite task.
-3. Watch cuboid JSON in the terminal and at `http://127.0.0.1:8765`.
-
-Analyze a captured file without the browser:
-
-```bash
-python main.py --analyze-only debug_captures/latest_frame.pcd --no-overlay
-```
-
-## Tests
-
-```bash
-python -m pytest -q
-```
+`--dry-run` still plays the video and prints caption fixes, but does not type into the page.

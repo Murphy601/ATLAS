@@ -1,4 +1,7 @@
-"""Persistent-context Playwright controller with point-cloud frame interception."""
+"""Browser connection. Default: attach to the IX/Chrome window YOU already opened.
+
+The engine never launches a browser. IX Browser must expose a CDP debugging port.
+"""
 
 from __future__ import annotations
 
@@ -9,11 +12,12 @@ from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.sync_api import BrowserContext, Page, Playwright, Response, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Response, sync_playwright
 
 import config
+from ego_task import is_ego_task_page
 
-logger = logging.getLogger("lidar.browser")
+logger = logging.getLogger("ego.browser")
 
 OnFrameSaved = Callable[[Path], None]
 
@@ -21,7 +25,7 @@ _EXT_RE = re.compile(r"\.(pcd|bin|ply)(?:$|\?)", re.IGNORECASE)
 
 
 class LidarBrowser:
-    """Launch Chrome with a sticky profile and save 3D frame payloads locally."""
+    """Attach to an already-open IX/Chrome window (CDP). Does not launch a browser."""
 
     def __init__(
         self,
@@ -35,63 +39,104 @@ class LidarBrowser:
         self.on_frame_saved = on_frame_saved
         self.headless = headless
         self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
         self._context: BrowserContext | None = None
+        self._cdp = False
         self._lock = threading.Lock()
         self.saved_frames: list[Path] = []
 
-    def launch(self) -> BrowserContext:
-        """Start a persistent Chromium/Chrome context so logins survive restarts."""
-        self.user_data_dir.mkdir(parents=True, exist_ok=True)
-        self.captures_dir.mkdir(parents=True, exist_ok=True)
+    def attach(self, cdp_url: str | None = None, timeout_s: float = 180.0) -> Browser:
+        """Connect to IX Browser / Chrome that you already opened. Never launches."""
+        import time
+        import urllib.error
+        import urllib.request
+
         self._playwright = sync_playwright().start()
-        launch_kwargs = {
-            "user_data_dir": str(self.user_data_dir),
-            "headless": self.headless,
-            "viewport": {"width": 1440, "height": 900},
-            "ignore_https_errors": False,
-            "args": ["--disable-blink-features=AutomationControlled"],
-        }
-        try:
-            self._context = self._playwright.chromium.launch_persistent_context(
-                channel=config.BROWSER_CHANNEL,
-                **launch_kwargs,
-            )
-            logger.info("Launched persistent context with channel=%s", config.BROWSER_CHANNEL)
-        except Exception as exc:
-            logger.warning(
-                "Chrome channel unavailable (%s); falling back to bundled Chromium",
-                exc,
-            )
-            self._context = self._playwright.chromium.launch_persistent_context(
-                **launch_kwargs,
-            )
-        self.intercept_frames()
-        return self._context
+        deadline = time.monotonic() + timeout_s
+        last_error: Exception | None = None
+        while time.monotonic() < deadline:
+            for url in _cdp_candidates(cdp_url):
+                try:
+                    with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=1.5) as resp:
+                        resp.read()
+                    self._browser = self._playwright.chromium.connect_over_cdp(url)
+                    self._cdp = True
+                    if self._browser.contexts:
+                        self._context = self._browser.contexts[0]
+                    logger.info("Attached to existing browser via %s", url)
+                    return self._browser
+                except Exception as exc:
+                    last_error = exc
+                    continue
+            time.sleep(1.0)
+        raise RuntimeError(
+            "Could not attach to IX Browser. Enable the profile debugging port "
+            f"(default {config.CDP_URL}) and keep the task window open. Last error: {last_error}"
+        )
+
+    def wait_for_task_page(self, timeout_s: float = 600.0) -> Page:
+        """Poll open tabs until the EGO Focused Timeline UI is visible."""
+        import time
+
+        if self._browser is None:
+            raise RuntimeError("Call attach() first")
+        deadline = time.monotonic() + timeout_s
+        logger.info("Waiting for an already-open EGO task tab (Focused Timeline)...")
+        while time.monotonic() < deadline:
+            for page in self.iter_pages():
+                if is_ego_task_page(page):
+                    logger.info("Found open task: %s", page.url)
+                    self._context = page.context
+                    return page
+            time.sleep(config.POLL_INTERVAL_SEC)
+        raise TimeoutError(
+            "No EGO task UI found. Open the task in IX Browser until you see "
+            "Focused Timeline / ego_rectified_canonical, then keep that tab focused."
+        )
+
+    def iter_pages(self) -> list[Page]:
+        pages: list[Page] = []
+        if self._browser is None:
+            return pages
+        for ctx in self._browser.contexts:
+            pages.extend(ctx.pages)
+        return pages
+
+    def launch(self) -> BrowserContext:
+        raise RuntimeError(
+            "The engine does not open Chrome. Start IX Browser yourself, open the task, "
+            "then run this script so it can attach."
+        )
 
     def intercept_frames(self) -> None:
         """Attach response listeners on current and future pages."""
-        if self._context is None:
-            raise RuntimeError("Call launch() before intercept_frames()")
-        for page in self._context.pages:
-            self._attach_page(page)
-        self._context.on("page", self._attach_page)
+        contexts = []
+        if self._browser is not None:
+            contexts = list(self._browser.contexts)
+        elif self._context is not None:
+            contexts = [self._context]
+        if not contexts:
+            raise RuntimeError("Call attach() before intercept_frames()")
+        for ctx in contexts:
+            for page in ctx.pages:
+                self._attach_page(page)
+            ctx.on("page", self._attach_page)
         logger.info("Frame interception armed")
 
     def goto(self, url: str) -> Page:
-        if self._context is None:
-            raise RuntimeError("Call launch() before goto()")
-        page = self._context.pages[0] if self._context.pages else self._context.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-        return page
+        raise RuntimeError("The engine does not navigate for you. Open the task in IX Browser yourself.")
 
     def close(self) -> None:
-        if self._context is not None:
-            self._context.close()
-            self._context = None
+        """Disconnect Playwright only. Never closes your IX Browser window."""
+        self._context = None
+        self._browser = None
         if self._playwright is not None:
-            self._playwright.stop()
+            try:
+                self._playwright.stop()
+            except Exception:
+                logger.debug("Playwright stop after CDP attach failed", exc_info=True)
             self._playwright = None
-        logger.info("Browser closed")
+        logger.info("Disconnected from IX Browser (window left open)")
 
     def _attach_page(self, page: Page) -> None:
         page.on("response", self._on_response)
@@ -157,3 +202,20 @@ class LidarBrowser:
         if head.startswith(b"# .PCD") or head.startswith(b"VERSION") or head.startswith(b"FIELDS"):
             return ".pcd"
         return ".bin"
+
+
+def _cdp_candidates(explicit: str | None) -> list[str]:
+    urls = []
+    if explicit:
+        urls.append(explicit)
+    urls.append(config.CDP_URL)
+    for port in config.CDP_PORTS:
+        urls.append(f"http://127.0.0.1:{port}")
+    # Preserve order, drop duplicates
+    seen: set[str] = set()
+    out: list[str] = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out

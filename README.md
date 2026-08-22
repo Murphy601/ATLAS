@@ -1,3 +1,5 @@
 # ATLAS
 
-New local tooling lives in [`remotasks-lidar-assistant/`](remotasks-lidar-assistant/README.md): a Playwright + Open3D helper for Remotasks LiDAR Lite tasks. It intercepts point-cloud frames, extracts 3D cuboids, and shows them on a localhost overlay (no DOM injection).
+EGO annotation engine: [`remotasks-lidar-assistant/`](remotasks-lidar-assistant/README.md)
+
+You open **IX Browser** and the task yourself. The engine attaches to that window, plays the video, and applies the clipping/captioning spec (no second Chrome, no Submit, no HTE edits).

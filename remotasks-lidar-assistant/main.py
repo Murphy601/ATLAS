@@ -1,4 +1,4 @@
-"""Orchestrate browser capture, cuboid analysis, and the local overlay."""
+"""Attach to the IX Browser tab you opened and work the EGO task on screen."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ import argparse
 import json
 import logging
 import sys
-import time
 from pathlib import Path
 
 import config
 from browser_engine import LidarBrowser
+from caption_engine import lint_subgoal
+from ego_task import apply_caption_fixes, play_open_video, read_clips, run_quality_assistant
 from overlay import start_overlay_thread
 from pcd_parser import PointCloudAnalyzer
 
@@ -18,7 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
-logger = logging.getLogger("lidar.main")
+logger = logging.getLogger("ego.main")
 
 
 def analyze_frame(path: Path) -> list[dict]:
@@ -30,43 +31,67 @@ def analyze_frame(path: Path) -> list[dict]:
     return cuboids
 
 
-def watch_captures(browser: LidarBrowser, stop_after: float | None = None) -> None:
-    seen_mtime: float | None = None
-    started = time.monotonic()
-    latest = config.LATEST_FRAME
-    logger.info("Waiting for captured frames in %s", config.DEBUG_CAPTURES)
-    logger.info("Log in manually in the Playwright window, then open a LiDAR Lite task.")
-    while True:
-        if latest.exists():
-            mtime = latest.stat().st_mtime
-            if seen_mtime is None or mtime > seen_mtime:
-                seen_mtime = mtime
-                try:
-                    analyze_frame(latest)
-                except Exception:
-                    logger.exception("Analysis failed for %s", latest)
-        if stop_after is not None and (time.monotonic() - started) >= stop_after:
-            break
-        time.sleep(config.POLL_INTERVAL_SEC)
+def _write_report(payload: dict) -> Path:
+    dest = config.ANALYSIS_RESULT
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return dest
+
+
+def run_ego_task(write: bool, run_linters: bool, cdp_url: str | None) -> dict:
+    logger.info("Open IX Browser yourself, then open the EGO task. The engine will not launch Chrome.")
+    browser = LidarBrowser()
+    try:
+        browser.attach(cdp_url=cdp_url, timeout_s=config.ATTACH_WAIT_SECONDS)
+        page = browser.wait_for_task_page(timeout_s=config.TASK_WAIT_SECONDS)
+        play_open_video(page)
+        clips = [clip.to_dict() for clip in read_clips(page)]
+        reports = apply_caption_fixes(page, clips, write=write)
+        linter_clicked = run_quality_assistant(page) if run_linters else False
+        payload = {
+            "mode": "ego",
+            "url": page.url,
+            "watched_video": True,
+            "clip_count": len(clips),
+            "wrote_captions": sum(1 for r in reports if r.get("wrote")),
+            "quality_assistant": linter_clicked,
+            "submitted": False,
+            "hte_edited": False,
+            "clips": reports,
+        }
+        dest = _write_report(payload)
+        print(json.dumps(payload, indent=2))
+        logger.info("Report: %s — IX window left open, task not submitted", dest)
+        return payload
+    finally:
+        browser.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Remotasks LiDAR Lite local annotation assistant")
-    parser.add_argument("--url", default=config.PORTAL_URL, help="Task portal URL")
-    parser.add_argument("--headless", action="store_true", help="Launch without a visible window")
-    parser.add_argument("--no-overlay", action="store_true", help="Do not start the localhost Three.js overlay")
+    parser = argparse.ArgumentParser(
+        description="EGO annotation engine: attach to your IX Browser task tab (never launches Chrome)"
+    )
+    parser.add_argument("--cdp-url", default=None, help="CDP URL (default http://127.0.0.1:9222)")
+    parser.add_argument("--dry-run", action="store_true", help="Lint clips but do not type into the page")
+    parser.add_argument("--no-linters", action="store_true", help="Do not click Quality Assistant")
+    parser.add_argument("--no-overlay", action="store_true", help="Do not start the localhost overlay")
     parser.add_argument(
         "--analyze-only",
         type=Path,
         help="Skip the browser and analyze an existing .pcd/.bin/.json file",
     )
-    parser.add_argument("--watch-seconds", type=float, default=None, help="Stop the watch loop after N seconds")
+    parser.add_argument("--lint-text", default=None, help="Lint a single subgoal caption and exit")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     config.DEBUG_CAPTURES.mkdir(parents=True, exist_ok=True)
+
+    if args.lint_text is not None:
+        result = lint_subgoal(args.lint_text)
+        print(json.dumps({"original": result.original, "rewritten": result.rewritten, "issues": [i.__dict__ for i in result.issues]}, indent=2))
+        return 0 if result.ok else 1
 
     if args.analyze_only is not None:
         analyze_frame(args.analyze_only)
@@ -76,15 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         start_overlay_thread()
         logger.info("Overlay: http://%s:%s", config.OVERLAY_HOST, config.OVERLAY_PORT)
 
-    browser = LidarBrowser(headless=args.headless)
-    try:
-        browser.launch()
-        browser.goto(args.url)
-        watch_captures(browser, stop_after=args.watch_seconds)
-    except KeyboardInterrupt:
-        logger.info("Stopped by user")
-    finally:
-        browser.close()
+    run_ego_task(write=not args.dry_run, run_linters=not args.no_linters, cdp_url=args.cdp_url)
     return 0
 
 
