@@ -27,6 +27,11 @@ from review_ui import (
     clip_export_cut_fractions,
     clip_export_end_fractions_from_status_rects,
     clip_export_end_fractions_from_times,
+    clip_export_interior_cut_fracs,
+    clip_export_visible_card_count,
+    duration_end_fractions,
+    long_card_interior_fracs,
+    pick_ocr_duration_centers,
     clip_durations_from_ocr,
     qa_end_mismatch_seconds,
     clip_export_needs_new_clip,
@@ -143,6 +148,7 @@ _CLIP_EXPORT_STUCK = False
 _CLIP_EXPORT_SNAPPED: list[float] = []
 _CLIP_EXPORT_END_FRACS: list[float] = []
 _CLIP_EXPORT_SENTENCES: list[str] = []
+_CLIP_EXPORT_WRITTEN_CARDS = 0
 _IDLE_SPLIT_STUCK = False
 _REWRITTEN_SNIPPETS: set[str] = set()
 
@@ -1262,6 +1268,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     """Overwrite Clip Export captions that mention hands and snap ends on Focused Timeline."""
     global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _CLIP_EXPORT_STUCK
     global _CLIP_EXPORT_SNAPPED, _CLIP_EXPORT_END_FRACS, _CLIP_EXPORT_SENTENCES
+    global _CLIP_EXPORT_WRITTEN_CARDS
     if _CLIP_EXPORT_STUCK:
         say("Clip Export editor did not keep text last pass; not repeating the same empty field")
         return {"wrote": 0, "text": "", "qa_remaining": True}
@@ -1287,18 +1294,26 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     sub_caps = [
         getattr(clip, "caption", "")
         for clip in harvested
-        if getattr(clip, "caption", "") and not is_clip_export_style_caption(getattr(clip, "caption", ""))
+        if getattr(clip, "caption", "")
+        and not is_clip_export_style_caption(getattr(clip, "caption", ""))
+        and not is_hte_clip_caption(getattr(clip, "caption", ""))
+        and not is_hte_label(getattr(clip, "caption", ""))
     ]
     if not sub_caps:
         sub_caps = [
             cap
             for cap in subgoal_captions_from_names(names)
             if not is_clip_export_style_caption(cap)
+            and not is_hte_clip_caption(cap)
+            and not is_hte_label(cap)
         ]
         sub_caps.extend(
             c
             for c in captions_from_ocr_blob(ocr_blob)
-            if c not in sub_caps and not is_clip_export_style_caption(c)
+            if c not in sub_caps
+            and not is_clip_export_style_caption(c)
+            and not is_hte_clip_caption(c)
+            and not is_hte_label(c)
         )
     blob.extend(sub_caps)
     fallback = clip_export_from_subgoals(blob)
@@ -1349,10 +1364,6 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         }
     if not missing and not end_mismatch and not hands and not empty_err and not short_err:
         say("Filling Clip Export from Sub-goal captions (no Clip Export Quality Assistant row this pass)")
-    say(
-        f"Clip Export will overwrite hands wording and snap Focused Timeline "
-        f"to {len(end_fracs)} Sub-goal end(s) ({n_slots} slot(s))"
-    )
     if not write:
         return {"wrote": 0, "text": uia_text, "qa_remaining": True}
 
@@ -1367,25 +1378,55 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     duplicate = any(is_clip_export_duplicate_timeline(n) for n in names)
     if duplicate:
         say("Not creating a second Clip Export track on Full Timeline")
-    left, top, _width, height = _window_rect(hwnd)
+    left, top, width, height = _window_rect(hwnd)
     chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
-    snap = should_snap_clip_export_ends(names, chip_count=len(chips_now), duplicate=duplicate)
-    if snap and end_fracs and (
+    export_ocr = ""
+    export_words: list[dict] = []
+    if not _OCR_BROKEN:
+        export_words, _ew, _eh = _ocr_window(hwnd, "clip_export_cards")
+        export_ocr = ocr_text(export_words)
+    card_durs = clip_durations_from_ocr(export_ocr)
+    visible = clip_export_visible_card_count(len(chips_now), len(card_durs))
+    existing_ends = duration_end_fractions(card_durs)
+    for frac in existing_ends:
+        if all(abs(frac - seen) > 0.02 for seen in _CLIP_EXPORT_SNAPPED):
+            _CLIP_EXPORT_SNAPPED.append(frac)
+    interior = clip_export_interior_cut_fracs(end_fracs, existing_ends)
+    if card_durs and any(d > 10 for d in card_durs):
+        interior.extend(
+            f
+            for f in long_card_interior_fracs(card_durs)
+            if all(abs(f - seen) > 0.03 for seen in interior)
+            and all(abs(f - seen) > 0.03 for seen in existing_ends)
+        )
+    say(
+        f"Clip Export has {visible} on-screen card(s) "
+        f"({', '.join(f'{d:g}s' for d in card_durs) or 'no durations'}); "
+        f"will write those cards and split inside long ones "
+        f"({len(interior)} interior cut(s), {n_slots} Sub-goal slot(s))"
+    )
+    snap = should_snap_clip_export_ends(names, chip_count=visible, duplicate=duplicate)
+    if snap and interior and (
         not _CLIP_EXPORT_ALIGNED
         or any(is_clip_export_end_mismatch(n) for n in names)
         or any(is_clip_export_missing_error(n) for n in names)
     ):
-        _align_clip_export_on_focused_timeline(hwnd, end_fracs, nodes)
+        _align_clip_export_on_focused_timeline(hwnd, interior, nodes)
         _CLIP_EXPORT_ALIGNED = True
         time.sleep(0.3)
         uia_text, nodes = _read_uia(hwnd)
+        chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+        visible = clip_export_visible_card_count(len(chips_now), len(card_durs))
     else:
-        if not snap:
-            say(
-                f"Clip Export already has {len(chips_now) or 'existing'} card(s); "
-                "not pressing K on Focused Timeline"
-            )
+        if not interior:
+            say("No interior Clip Export cut left; not pressing K on an existing card edge")
         _CLIP_EXPORT_ALIGNED = True
+    if snap and any(d > 10 for d in card_durs) and visible < max(n_slots, 4):
+        added = _split_long_clip_export_card(hwnd, export_words, nodes)
+        if added:
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+            visible = max(visible, len(chips_now))
 
     hands = any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes)
     dirty = any(
@@ -1397,19 +1438,15 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     empty_now = any(is_clip_export_empty_error(_uia_name(ctrl)) for ctrl in nodes)
     short_now = any(is_clip_export_short_error(_uia_name(ctrl)) for ctrl in nodes)
     wrote = 0
-    need_slots = (
-        not _CLIP_EXPORT_FILLED
-        or hands
-        or dirty
-        or empty
-        or missing_now
-        or empty_now
-        or short_now
-        or parallel
-    )
+    need_slots = visible > _CLIP_EXPORT_WRITTEN_CARDS or empty or empty_now or short_now
+    if not need_slots and dirty and _CLIP_EXPORT_WRITTEN_CARDS == 0:
+        need_slots = True
     if need_slots:
-        if n_slots >= 2 or empty or empty_now or short_now or missing_now:
-            wrote = _fill_each_clip_export_slot(hwnd, sentences, end_fracs, n_slots=n_slots)
+        if visible >= 1 or empty or empty_now or short_now or missing_now:
+            wrote = _fill_each_clip_export_slot(
+                hwnd, sentences, end_fracs, n_slots=visible, ocr_words=export_words
+            )
+            _CLIP_EXPORT_WRITTEN_CARDS = max(_CLIP_EXPORT_WRITTEN_CARDS, visible)
         elif _click_clip_export_caption_field(nodes, prefer_hands=True):
             say("Clicked the Clip Export caption that still mentions hands")
             _type_into_focused(fallback)
@@ -1642,6 +1679,40 @@ def _click_clip_export_caption_field(nodes: list[Any], *, prefer_hands: bool = F
 def _align_clip_export_cuts(hwnd: int, fracs: list[float], nodes: list[Any]) -> int:
     """Clip Export cuts belong on Focused Timeline; Full Timeline K does not create clips."""
     return _align_clip_export_on_focused_timeline(hwnd, fracs, nodes)
+
+
+def _split_long_clip_export_card(
+    hwnd: int, words: list[dict], nodes: list[Any]
+) -> int:
+    """K inside a 27s-style card using its duration chip, not a 14% bar guess."""
+    if not _ensure_clip_export_track(hwnd, nodes):
+        return 0
+    left, top, _w, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.62)
+    hits = pick_ocr_duration_centers(words or [], int(height * 0.62))
+    long_hits = [row for row in hits if row[2] > 10]
+    if not long_hits:
+        return 0
+    _x0, y0, dur = max(long_hits, key=lambda row: row[2])
+    chips_before = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
+    added = 0
+    for offset in (90, 180, 270):
+        x = left + _x0 + offset
+        _click_screen(x, top + y0)
+        say(f"Splitting {dur:g}s Clip Export card inside at {x},{top + y0}")
+        time.sleep(0.2)
+        if not _press_k_to_create(hwnd):
+            break
+        time.sleep(0.35)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+        chips_after = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
+        if should_stop_clip_export_k(chips_before, chips_after, names):
+            say("Long-card K did not add a Clip Export card; stopping")
+            break
+        added += 1
+        chips_before = chips_after
+    return added
 
 
 def _click_clip_export_end_ignore(hwnd: int, nodes: list[Any] | None = None) -> bool:
@@ -1887,22 +1958,24 @@ def _fill_each_clip_export_slot(
     sentences: list[str],
     end_fracs: list[float] | None = None,
     n_slots: int | None = None,
+    ocr_words: list[dict] | None = None,
 ) -> int:
     wrote = 0
     left, top, _width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
     _text, nodes = _read_uia(hwnd, verbose=False)
     chips = pick_clip_export_review_rects(_named_rects(nodes), min_y)
-    n = max(len(chips), int(n_slots or 0), 1)
+    duration_hits = pick_ocr_duration_centers(ocr_words or [], int(height * 0.62))
+    n = clip_export_visible_card_count(len(chips), len(duration_hits) or int(n_slots or 0))
     fallback_sentence = "The person works at an indoor table during a laundry folding task."
     sentences = list(sentences or [fallback_sentence])
     if len(sentences) < n:
         sentences = sentences + [sentences[-1] if sentences else fallback_sentence] * (
             n - len(sentences)
         )
-    mids = clip_export_slot_mid_fractions(end_fracs or [], n)
-    say(f"Filling {n} Clip Export slot(s) via the Review description box")
-    for i, sentence in enumerate(sentences):
+    say(f"Filling {n} visible Clip Export card(s) (not extra guessed slots)")
+    for i in range(n):
+        sentence = sentences[i]
         if not _ensure_clip_export_track(hwnd):
             say("Stopped Clip Export fill: Hand Tracking Error is selected")
             break
@@ -1911,15 +1984,17 @@ def _fill_each_clip_export_slot(
             x = int((rect[0] + rect[2]) / 2)
             y = int((rect[1] + rect[3]) / 2)
             _click_screen(x, y)
-            say(f"Clicked Clip Export done/review chip {i + 1}/{n} at {x},{y}")
+            say(f"Clicked Clip Export card {i + 1}/{n} at {x},{y}")
+        elif i < len(duration_hits):
+            x, y, dur = duration_hits[i]
+            _click_screen(left + x, top + y)
+            say(f"Clicked Clip Export {dur:g}s card {i + 1}/{n} at {left + x},{top + y}")
         else:
-            frac = mids[i] if i < len(mids) else (i + 0.45) / n
-            _click_focused_timeline_fraction(hwnd, frac)
+            say(f"No more visible Clip Export cards after {i}; not pasting into the same box")
+            break
         time.sleep(0.3)
         _text, nodes = _read_uia(hwnd, verbose=False)
-        names_slot = [_uia_name(ctrl) for ctrl in nodes]
-        force = i >= len(chips) or any(is_empty_clip_label(n) for n in names_slot)
-        if _write_clip_export_sentence(hwnd, nodes, sentence, force=force):
+        if _write_clip_export_sentence(hwnd, nodes, sentence, force=True):
             wrote += 1
         time.sleep(0.2)
     return wrote
@@ -2094,6 +2169,10 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
         for ctrl in nodes:
             name = _uia_name(ctrl)
             if is_hte_label(name):
+                if current == "hte":
+                    center = _ctrl_center(ctrl)
+                    if center:
+                        dropdowns.append((center[1], ctrl, name))
                 continue
             if is_timeline_kind_label(name) or name.strip().casefold() in {"sub-goal", "subgoal"}:
                 center = _ctrl_center(ctrl)
@@ -2144,12 +2223,43 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
     if not _OCR_BROKEN:
         words, img_w, img_h = _ocr_window(hwnd, "timeline_kind")
         left, top, _w, _h = _window_rect(hwnd)
+        if current == "hte":
+            hte_hit = find_phrase_click(
+                words,
+                "Hand Tracking Error",
+                img_w,
+                img_h,
+                y_min_frac=0.02,
+                y_max_frac=0.22,
+                x_max_frac=0.55,
+            )
+            if hte_hit:
+                _click_screen(left + hte_hit[0], top + hte_hit[1])
+                say("Opened timeline-kind dropdown (Hand Tracking Error)")
+                time.sleep(0.45)
+                _text, nodes = _read_uia(hwnd)
+                for ctrl in nodes:
+                    name = _uia_name(ctrl)
+                    if want == "clip export" and is_clip_export_tab(name):
+                        if _uia_click(ctrl):
+                            say("Selected Clip Export timeline")
+                            time.sleep(0.35)
+                            _wait_timeline_dropdown_closed(hwnd)
+                            return True
+                    if want == "sub-goal" and name.strip().casefold() in {"sub-goal", "subgoal"}:
+                        if _uia_click(ctrl):
+                            say("Selected Sub-goal timeline")
+                            time.sleep(0.35)
+                            _wait_timeline_dropdown_closed(hwnd)
+                            return True
+                words, img_w, img_h = _ocr_window(hwnd, "timeline_kind")
+        needle = "ClipExport" if want == "clip export" else "Sub-goal"
         hit = find_phrase_click(
-            words, kind, img_w, img_h, y_min_frac=0.02, y_max_frac=0.45, x_max_frac=0.55
+            words, needle, img_w, img_h, y_min_frac=0.02, y_max_frac=0.45, x_max_frac=0.55
         )
         if hit:
             _click_screen(left + hit[0], top + hit[1])
-            say(f"Clicked OCR timeline kind: {kind}")
+            say(f"Clicked OCR timeline kind: {needle}")
             _wait_timeline_dropdown_closed(hwnd)
             return True
     say(f"Could not switch timeline kind to {kind}")

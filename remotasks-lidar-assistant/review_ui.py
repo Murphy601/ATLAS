@@ -865,13 +865,99 @@ def qa_end_mismatch_seconds(names: list[str], fps: float = 30.0) -> list[float]:
 
 
 def clip_durations_from_ocr(blob: str) -> list[float]:
-    """Timeline card lengths like 9.9s / 3.1s. Ignore FPS and Watched 100."""
+    """Timeline card lengths like 9.9s / 27.0s / 5.3s. Ignore FPS and Watched 100."""
     vals: list[float] = []
     for raw in re.findall(r"(\d+(?:\.\d+)?)\s*s\b", blob or "", flags=re.I):
         val = float(raw)
-        if 0.4 <= val <= 20 and val not in {15.0, 60.0}:
+        if 0.4 <= val <= 180 and val not in {15.0, 60.0}:
             vals.append(val)
     return vals
+
+
+def duration_end_fractions(durations: list[float]) -> list[float]:
+    """Clip ends as fractions of the summed card lengths."""
+    if not durations:
+        return []
+    total = sum(max(float(d), 0.01) for d in durations) or 1.0
+    acc = 0.0
+    out: list[float] = []
+    for dur in durations[:-1]:
+        acc += max(float(dur), 0.01)
+        frac = acc / total
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+    return out
+
+
+def clip_export_interior_cut_fracs(
+    needed: list[float],
+    existing: list[float],
+    min_sep: float = 0.03,
+) -> list[float]:
+    """Sub-goal ends that are not already a Clip Export card edge."""
+    out: list[float] = []
+    for frac in needed or []:
+        f = max(0.04, min(0.96, float(frac)))
+        if any(abs(f - seen) < min_sep for seen in (existing or [])):
+            continue
+        if any(abs(f - seen) < min_sep for seen in out):
+            continue
+        out.append(round(f, 4))
+    return out
+
+
+def long_card_interior_fracs(
+    durations: list[float], max_ok: float = 10.0, step_s: float = 5.0
+) -> list[float]:
+    """A 27s Clip Export covers several Sub-goals; cut inside that card, not on its ends."""
+    if not durations:
+        return []
+    total = sum(max(float(d), 0.01) for d in durations) or 1.0
+    acc = 0.0
+    out: list[float] = []
+    for dur in durations:
+        start = acc
+        acc += max(float(dur), 0.01)
+        if float(dur) <= max_ok:
+            continue
+        t = start + max(float(step_s), 2.0)
+        while t < acc - 1.0:
+            frac = t / total
+            if 0.04 <= frac <= 0.96:
+                out.append(round(frac, 4))
+            t += max(float(step_s), 2.0)
+    return out
+
+
+def clip_export_visible_card_count(chip_count: int, duration_count: int) -> int:
+    """Write the cards on screen, not a guessed 9-slot list."""
+    return max(int(chip_count or 0), int(duration_count or 0), 1)
+
+
+def pick_ocr_duration_centers(
+    words: list[dict[str, Any]], min_y: int
+) -> list[tuple[int, int, float]]:
+    """Focused Timeline duration chips such as 9.9s / 27.0s / 5.3s."""
+    hits: list[tuple[int, int, float]] = []
+    for word in words or []:
+        text = str(word.get("text") or "").strip()
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)s", text, flags=re.I)
+        if not match:
+            continue
+        val = float(match.group(1))
+        if val < 0.4 or val > 180 or val in {15.0, 60.0}:
+            continue
+        cx, cy = _center(word)
+        if cy < min_y:
+            continue
+        hits.append((cx, cy, val))
+    hits.sort(key=lambda row: row[0])
+    out: list[tuple[int, int, float]] = []
+    for row in hits:
+        if out and row[0] - out[-1][0] < 80:
+            continue
+        out.append(row)
+    return out
 
 
 def should_open_subgoal_pending(names: list[str]) -> bool:

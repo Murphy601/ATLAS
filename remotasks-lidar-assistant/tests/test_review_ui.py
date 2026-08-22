@@ -441,6 +441,22 @@ def test_review_description_is_not_the_timeline_placeholder() -> None:
         ["All ClipExport end must match a Sub-goal end. On frames: 297."]
     ) == [9.9]
     assert 9.9 in clip_durations_from_ocr("9.9s 3.1s 7.6s Watched 100% 60 FPS")
+    from review_ui import (
+        clip_export_interior_cut_fracs,
+        clip_export_visible_card_count,
+        duration_end_fractions,
+        long_card_interior_fracs,
+    )
+
+    assert 27.0 in clip_durations_from_ocr("9.9s 27.0s 5.3s Watched 100% 60 FPS")
+    assert duration_end_fractions([9.9, 27.0, 5.3])[0] == round(9.9 / 42.2, 4)
+    assert clip_export_interior_cut_fracs([0.235, 0.50], [0.235]) == [0.50]
+    assert clip_export_interior_cut_fracs([0.235], [0.235]) == []
+    longs = long_card_interior_fracs([9.9, 27.0, 5.3])
+    assert longs
+    assert all(0.24 < f < 0.86 for f in longs)
+    assert clip_export_visible_card_count(2, 3) == 3
+    assert clip_export_visible_card_count(3, 0) == 3
 
 
 def test_click_to_add_text_prefers_compact_field_not_giant_box() -> None:

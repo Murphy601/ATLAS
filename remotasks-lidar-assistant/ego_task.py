@@ -245,6 +245,9 @@ def harvest_timeline_clips(
         text = re.sub(r"\s+", " ", cap or "").strip()
         if len(text) < 12 or is_not_timeline_caption(text):
             return
+        lowered = text.casefold()
+        if "missing_hand" in lowered or "hand tracking error" in lowered:
+            return
         key = text.casefold()
         for seen in captions:
             if key in seen.casefold() or seen.casefold() in key:
@@ -272,7 +275,7 @@ def harvest_timeline_clips(
         durs = []
         for raw in re.findall(r"(\d+(?:\.\d+)?)\s*s\b", ocr_blob or "", flags=re.I):
             val = float(raw)
-            if 0.4 <= val <= 20 and val not in {15.0, 60.0}:
+            if 0.4 <= val <= 180 and val not in {15.0, 60.0}:
                 durs.append(val)
 
     clips: list[TimelineClip] = []
