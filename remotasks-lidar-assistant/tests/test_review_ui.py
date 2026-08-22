@@ -276,6 +276,46 @@ def test_grammar_advance_and_remaining_work() -> None:
     insides = long_range_interior_fracs(9.9, 36.9, 40.0)
     assert insides
     assert all(0.28 < f < 0.88 for f in insides)
+    from review_ui import (
+        clip_export_inferred_card_fracs,
+        harvest_rewrites_to_apply,
+        needs_one_frame_nudge,
+        should_rewrite_every_clip_export_card,
+        should_skip_k_after_caption_fill,
+        timeline_length_from_ocr,
+    )
+
+    assert timeline_length_from_ocr("60 FPS (0-62)") == 62.0
+    mids = clip_export_inferred_card_fracs((9.9, 36.9, 27.0), 62.0, [])
+    assert len(mids) == 3
+    assert mids[0] < 0.2
+    assert 0.25 < mids[1] < 0.55
+    assert mids[2] > 0.65
+    assert should_skip_k_after_caption_fill(True)
+    assert not should_skip_k_after_caption_fill(False)
+    assert should_rewrite_every_clip_export_card(
+        ["All ClipExports must be fully filled in parallel with Sub-goals"],
+        garbled,
+    )
+    assert needs_one_frame_nudge([297], 296)
+    assert not needs_one_frame_nudge([297], 297)
+
+    class _Lint:
+        def __init__(self, original: str, rewritten: str) -> None:
+            self.original = original
+            self.rewritten = rewritten
+            self.changed = original != rewritten
+
+    harvest_items = [
+        {"skip_edit": False, "lint": _Lint("Shake the shirt with both hands", "Shake the shirt with both hands and hold the shirt with both hands")},
+        {"skip_edit": False, "lint": _Lint("Drop the pants with both hands and fold it with both hands", "Drop the pants with both hands and fold the pants with both hands")},
+        {"skip_edit": False, "lint": _Lint("Unstack the blouse with the left hand on the blouse", "Unstack the blouse with the left hand on the blouse")},
+        {"skip_edit": True, "lint": _Lint("missing_hand_predictions", "missing_hand_predictions")},
+    ]
+    todo = harvest_rewrites_to_apply(harvest_items)
+    assert len(todo) == 2
+    assert "Shake the shirt" in todo[0]["lint"].original
+    assert "Drop the pants" in todo[1]["lint"].original
     assert clip_export_other_caption_does_not_block_fill(
         [
             "The person unstacks the blouse at an indoor table during a laundry folding task.",

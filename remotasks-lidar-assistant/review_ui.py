@@ -910,6 +910,120 @@ def parse_timeline_fps(blob: str) -> float | None:
     return None
 
 
+FPS_SPAN_RE = re.compile(
+    r"FPS\s*\(\s*\d+(?:\.\d+)?\s*[-–]\s*(\d+(?:\.\d+)?)\s*\)", re.I
+)
+REVIEW_FRAMES_RE = re.compile(r"\(f(\d+)\s*[-–]\s*f(\d+)\)", re.I)
+
+
+def timeline_length_from_ocr(blob: str) -> float | None:
+    """OCR '60 FPS (0-62)' is a 62s video, not 60 seconds."""
+    match = FPS_SPAN_RE.search(blob or "")
+    if not match:
+        return None
+    val = float(match.group(1))
+    if 2 <= val <= 600:
+        return val
+    return None
+
+
+def review_start_frame_from_ocr(blob: str) -> int | None:
+    """Selected-card start in '9.9s - 36.9s (f296 - f1106)' is the previous card's end."""
+    match = REVIEW_FRAMES_RE.search(blob or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def qa_mismatch_frames(names: list[str]) -> list[int]:
+    frames: list[int] = []
+    for name in names or []:
+        if not is_clip_export_end_mismatch(name):
+            continue
+        for match in QA_FRAME_RE.finditer(name or ""):
+            for tok in match.group(1).split(","):
+                tok = tok.strip()
+                if tok.isdigit():
+                    frames.append(int(tok))
+    return frames
+
+
+def needs_one_frame_nudge(qa_frames: list[int], review_start_frame: int | None) -> bool:
+    """True when QA wants frame 297 and the current Clip Export ends at 296."""
+    if review_start_frame is None:
+        return False
+    return any(abs(int(frame) - int(review_start_frame)) == 1 for frame in qa_frames or [])
+
+
+def clip_export_inferred_card_fracs(
+    long_range: tuple[float, float, float] | None,
+    total_s: float,
+    existing_ends: list[float] | None = None,
+) -> list[float]:
+    """Midpoint of every Clip Export card, including ones UIA did not expose as done.
+
+    A selected 9.9s–36.9s card on a 62s video means three cards: before, the
+    27s middle, and after. UIA often only names two `done` chips.
+    """
+    span = max(float(total_s or 0.0), 1.0)
+    bounds = [0.0]
+    if long_range:
+        start, end, _dur = long_range
+        for t in (start, end):
+            frac = float(t) / span
+            if 0.02 < frac < 0.98 and all(abs(frac - seen) > 0.03 for seen in bounds):
+                bounds.append(round(frac, 4))
+    for frac in existing_ends or []:
+        val = float(frac)
+        if 0.02 < val < 0.98 and all(abs(val - seen) > 0.03 for seen in bounds):
+            bounds.append(round(val, 4))
+    bounds.append(1.0)
+    bounds.sort()
+    return [round((bounds[i] + bounds[i + 1]) / 2, 4) for i in range(len(bounds) - 1)]
+
+
+def should_skip_k_after_caption_fill(already_filled: bool) -> bool:
+    """After a caption is in the Review box, K types kkkk instead of splitting."""
+    return bool(already_filled)
+
+
+def should_rewrite_every_clip_export_card(names: list[str], ocr_blob: str = "") -> bool:
+    """Rewrite all on-screen Clip Export cards, not only the first UIA chip."""
+    blob = "\n".join([*(names or []), ocr_blob or ""])
+    if is_garbled_clip_export_caption(blob):
+        return True
+    if any(is_clip_export_placeholder(n) for n in names or []):
+        return True
+    if any(is_clip_export_missing_error(n) for n in names or []):
+        return True
+    if any(clip_export_caption_needs_rewrite(n) for n in names or []):
+        return True
+    if any(is_garbled_clip_export_caption(n) for n in names or []):
+        return True
+    return False
+
+
+def harvest_rewrites_to_apply(
+    items: list[dict], already: set[str] | None = None
+) -> list[dict]:
+    """Every lint-changed Sub-goal. Do not stop after the first issue."""
+    out: list[dict] = []
+    seen = set(already or [])
+    for item in items or []:
+        if item.get("skip_edit"):
+            continue
+        lint = item.get("lint")
+        if lint is None or not getattr(lint, "changed", False):
+            continue
+        original = getattr(lint, "original", "") or ""
+        key = " ".join(original.split()[:5]).casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 REVIEW_RANGE_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*s\s*[-–]\s*(\d+(?:\.\d+)?)\s*s"
     r"(?:[^.\d]{0,40}?(\d+(?:\.\d+)?)\s*s)?",
@@ -1012,9 +1126,16 @@ def long_card_interior_fracs(
     return out
 
 
-def clip_export_visible_card_count(chip_count: int, duration_count: int) -> int:
-    """Write the cards on screen, not a guessed 9-slot list."""
-    return max(int(chip_count or 0), int(duration_count or 0), 1)
+def clip_export_visible_card_count(
+    chip_count: int, duration_count: int, inferred_count: int = 0
+) -> int:
+    """Write every card on screen, including ones UIA did not name as done."""
+    return max(
+        int(chip_count or 0),
+        int(duration_count or 0),
+        int(inferred_count or 0),
+        1,
+    )
 
 
 def chip_end_fractions(

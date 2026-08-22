@@ -31,18 +31,27 @@ from review_ui import (
     clip_export_needs_more_cards,
     clip_export_visible_card_count,
     chip_end_fractions,
+    clip_export_inferred_card_fracs,
     duration_end_fractions,
+    harvest_rewrites_to_apply,
     long_card_interior_fracs,
+    needs_one_frame_nudge,
     parse_timeline_fps,
     pick_clip_export_status_rects,
     pick_ocr_duration_centers,
     pick_ocr_timeline_person_centers,
     clip_durations_from_ocr,
     is_garbled_clip_export_caption,
+    is_split_control_label,
     long_range_interior_fracs,
     qa_end_mismatch_seconds,
+    qa_mismatch_frames,
     review_clip_range_from_ocr,
+    review_start_frame_from_ocr,
     should_abort_clip_export_k,
+    should_rewrite_every_clip_export_card,
+    should_skip_k_after_caption_fill,
+    timeline_length_from_ocr,
     wide_card_cut_fracs,
     clip_export_needs_new_clip,
     clip_export_needs_parallel_splits,
@@ -393,8 +402,12 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             recap = {"wrote": 0, "text": ""}
             missing = {"wrote": 0, "text": ""}
             split = {"wrote": 0, "text": ""}
+            harvest_w = {"wrote": 0, "text": ""}
+            # Write every Sub-goal that still fails lint. Do not leave 5 of 7 untouched
+            # because Clip Export Quality Assistant is still red.
+            _switch_timeline_kind(hwnd, "sub-goal")
+            harvest_w = _apply_subgoal_harvest_rewrites(hwnd, write=write)
             if not clip_export_qa:
-                _switch_timeline_kind(hwnd, "sub-goal")
                 used = _apply_review_uses(hwnd, write=write, max_clicks=4)
                 recap = _recaption_false_idle(hwnd, write=write)
                 missing = _fill_missing_and_reds(hwnd, write=write)
@@ -408,13 +421,14 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
                 + int(exported["wrote"])
                 + int(split["wrote"])
                 + int(recap.get("wrote") or 0)
+                + int(harvest_w.get("wrote") or 0)
             )
             if missing.get("text"):
                 filled["text"] = missing["text"]
             say(
                 f"Pass {pass_i + 1}: Use {used['applied']}, filled {missing['wrote']}, "
                 f"false-idle {recap.get('wrote', 0)}, clip-export {exported['wrote']}, "
-                f"idle-split {split['wrote']}"
+                f"idle-split {split['wrote']}, sub-goal-rewrites {harvest_w.get('wrote', 0)}"
             )
             uia_now, _nodes_now = _read_uia(hwnd)
             ocr_now = ""
@@ -441,7 +455,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
                 if not fixable_review_work_remaining(screen_now) and not clip_export_qa:
                     say("No more Review / Quality Assistant work on screen.")
                     break
-            if used["applied"] + missing["wrote"] + exported["wrote"] + split["wrote"] + recap.get("wrote", 0) == 0:
+            if used["applied"] + missing["wrote"] + exported["wrote"] + split["wrote"] + recap.get("wrote", 0) + harvest_w.get("wrote", 0) == 0:
                 idle_rounds += 1
                 if not fixable_review_work_remaining(screen_now) and not clip_export_qa:
                     say("No more Review / Quality Assistant work on screen.")
@@ -475,6 +489,12 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         if not clips:
             clips = parse_clips_from_text(body) if body else []
         say(f"Read {len(clips)} timeline clip(s) from the window")
+        leftover = _apply_subgoal_harvest_rewrites(hwnd, write=write)
+        filled["wrote"] += int(leftover.get("wrote") or 0)
+        if leftover.get("wrote"):
+            _text_end, nodes_end = _read_uia(hwnd, verbose=False)
+            harvest_names = [_uia_name(ctrl) for ctrl in nodes_end]
+            clips = harvest_timeline_clips(harvest_names, harvest_ocr or body) or clips
         preview = re.sub(r"\s+", " ", body).strip()[:220]
         if preview:
             say(f"Page text preview: {preview}")
@@ -483,17 +503,19 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         wrote = int(review["applied"]) + int(filled["wrote"])
         for item in lint_clips([clip.to_dict() for clip in clips]):
             lint = item["lint"]
+            key = " ".join((lint.original or "").split()[:5]).casefold()
+            did_write = bool(key and key in _REWRITTEN_SNIPPETS)
             reports.append(
                 {
                     "index": item.get("index"),
                     "original": lint.original,
                     "rewritten": lint.rewritten,
                     "issues": [issue.__dict__ for issue in lint.issues],
-                    "wrote": False,
+                    "wrote": did_write,
                     "skipped": bool(item.get("skip_edit")),
                 }
             )
-            if write and lint.changed and not item.get("skip_edit") and review["applied"] == 0:
+            if write and lint.changed and not item.get("skip_edit") and not did_write:
                 say(f"Suggested caption fix: {lint.rewritten}")
 
         payload = {
@@ -752,6 +774,8 @@ def _press_k_to_create(hwnd: int, at: tuple[int, int] | None = None) -> bool:
         time.sleep(0.08)
         _click_screen(int(at[0]), int(at[1]))
         time.sleep(0.12)
+    if _click_split_control(hwnd):
+        return True
     _send_vk(0x4B)  # K
     say("Pressed K to create/split a clip (never HTE)")
     return True
@@ -1413,11 +1437,11 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         export_ocr = ocr_text(export_words)
     card_durs = clip_durations_from_ocr(export_ocr)
     person_hits = pick_ocr_timeline_person_centers(export_words, int(height * 0.62))
-    visible = clip_export_visible_card_count(
-        max(len(chips_now), len(person_hits)), len(card_durs)
-    )
     long_range = review_clip_range_from_ocr(export_ocr) or review_clip_range_from_ocr(
         " ".join(names)
+    )
+    total_s = timeline_length_from_ocr(export_ocr) or (
+        max(long_range[1] + 10.0, 40.0) if long_range else 0.0
     )
     bar = _focused_timeline_rect(hwnd, nodes)
     bar_left, bar_right = bar[0], bar[2]
@@ -1426,6 +1450,14 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         bar_right = left + int(width * 0.92)
     existing_ends = duration_end_fractions(card_durs) or chip_end_fractions(
         status_chips or chips_now, bar_left, bar_right
+    )
+    inferred_mids = clip_export_inferred_card_fracs(
+        long_range, total_s or (long_range[1] + 10.0 if long_range else 40.0), existing_ends
+    )
+    visible = clip_export_visible_card_count(
+        max(len(chips_now), len(person_hits)),
+        len(card_durs),
+        len(inferred_mids),
     )
     for frac in existing_ends:
         if all(abs(frac - seen) > 0.02 for seen in _CLIP_EXPORT_SNAPPED):
@@ -1448,26 +1480,34 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             and all(abs(f - seen) > 0.03 for seen in existing_ends)
         )
     if long_range and long_range[2] > 10:
-        total_s = max(long_range[1] + 4.0, sum(card_durs) if card_durs else 0.0)
+        cut_span = max(
+            float(total_s or 0.0),
+            long_range[1] + 4.0,
+            sum(card_durs) if card_durs else 0.0,
+        )
         say(
             f"Review shows a {long_range[2]:g}s Clip Export from "
-            f"{long_range[0]:g}s to {long_range[1]:g}s; cutting inside that card"
+            f"{long_range[0]:g}s to {long_range[1]:g}s; will write that card and its neighbors"
         )
         interior.extend(
             f
-            for f in long_range_interior_fracs(long_range[0], long_range[1], total_s)
+            for f in long_range_interior_fracs(long_range[0], long_range[1], cut_span)
             if all(abs(f - seen) > 0.03 for seen in interior)
             and all(abs(f - seen) > 0.03 for seen in existing_ends)
         )
     say(
         f"Clip Export has {visible} on-screen card(s) "
         f"({', '.join(f'{d:g}s' for d in card_durs) or 'no durations'}); "
-        f"will write those cards and split inside long ones "
+        f"will write every card "
         f"({len(interior)} interior cut(s), {n_slots} Sub-goal slot(s))"
     )
     snap = should_snap_clip_export_ends(names, chip_count=visible, duplicate=duplicate)
     cards_before_split = visible
-    if snap and interior and (
+    skip_k = should_skip_k_after_caption_fill(_CLIP_EXPORT_FILLED)
+    if skip_k:
+        say("Clip Export text is already in the Review box; not pressing K (that types kkkk)")
+        _CLIP_EXPORT_ALIGNED = True
+    elif snap and interior and (
         not _CLIP_EXPORT_ALIGNED
         or any(is_clip_export_end_mismatch(n) for n in names)
         or any(is_clip_export_missing_error(n) for n in names)
@@ -1479,19 +1519,25 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         uia_text, nodes = _read_uia(hwnd)
         named = _named_rects(nodes)
         chips_now = pick_clip_export_review_rects(named, min_y)
-        visible = clip_export_visible_card_count(len(chips_now), len(card_durs))
+        visible = clip_export_visible_card_count(
+            len(chips_now), len(card_durs), len(inferred_mids)
+        )
     else:
         if not interior:
             say("No interior Clip Export cut left; not pressing K on an existing card edge")
         _CLIP_EXPORT_ALIGNED = True
-    if snap and clip_export_needs_more_cards(visible, n_slots, names):
+    if (
+        not skip_k
+        and snap
+        and clip_export_needs_more_cards(visible, n_slots, names)
+    ):
         added = _split_long_clip_export_card(
             hwnd, export_words, nodes, end_fracs=end_fracs
         )
         if added:
             _text, nodes = _read_uia(hwnd, verbose=False)
             chips_now = pick_clip_export_review_rects(_named_rects(nodes), min_y)
-            visible = max(visible, len(chips_now))
+            visible = max(visible, len(chips_now), len(inferred_mids))
     if visible > cards_before_split:
         _CLIP_EXPORT_WRITTEN_CARDS = 0
         say(f"Clip Export now has {visible} card(s) after split; will write each one")
@@ -1506,18 +1552,36 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         or is_clip_export_placeholder(_uia_name(ctrl))
         for ctrl in nodes
     )
-    if dirty:
-        say("Clip Export caption is garbled, a placeholder, or still mentions hands; rewriting every card")
+    rewrite_all = should_rewrite_every_clip_export_card(
+        [_uia_name(ctrl) for ctrl in nodes], export_ocr
+    )
+    if dirty or rewrite_all:
+        say("Rewriting every visible Clip Export card (not only the first chip)")
     empty = any(is_empty_clip_label(_uia_name(ctrl)) for ctrl in nodes)
     missing_now = any(is_clip_export_missing_error(_uia_name(ctrl)) for ctrl in nodes)
     empty_now = any(is_clip_export_empty_error(_uia_name(ctrl)) for ctrl in nodes)
     short_now = any(is_clip_export_short_error(_uia_name(ctrl)) for ctrl in nodes)
     wrote = 0
-    need_slots = visible > _CLIP_EXPORT_WRITTEN_CARDS or empty or empty_now or short_now or dirty
+    need_slots = (
+        rewrite_all
+        or visible > _CLIP_EXPORT_WRITTEN_CARDS
+        or empty
+        or empty_now
+        or short_now
+        or dirty
+        or missing_now
+    )
     if need_slots:
-        if visible >= 1 or empty or empty_now or short_now or missing_now:
+        if visible >= 1 or empty or empty_now or short_now or missing_now or rewrite_all:
             wrote = _fill_each_clip_export_slot(
-                hwnd, sentences, end_fracs, n_slots=visible, ocr_words=export_words
+                hwnd,
+                sentences,
+                end_fracs,
+                n_slots=visible,
+                ocr_words=export_words,
+                long_range=long_range,
+                total_s=total_s,
+                existing_ends=existing_ends,
             )
             _CLIP_EXPORT_WRITTEN_CARDS = max(_CLIP_EXPORT_WRITTEN_CARDS, visible)
         elif _click_clip_export_caption_field(nodes, prefer_hands=True):
@@ -1549,7 +1613,12 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     if not any(is_clip_export_end_mismatch(_uia_name(ctrl)) for ctrl in nodes):
         _click_clip_export_end_ignore(hwnd, nodes)
     else:
-        say("Leaving Clip Export end-match warning; ends still need a Sub-goal snap")
+        qa_frames = qa_mismatch_frames([_uia_name(ctrl) for ctrl in nodes])
+        start_frame = review_start_frame_from_ocr(export_ocr)
+        if needs_one_frame_nudge(qa_frames, start_frame):
+            _nudge_clip_export_end_one_frame(hwnd, nodes)
+        else:
+            say("Leaving Clip Export end-match warning; ends still need a Sub-goal snap")
     time.sleep(0.2)
     used_export = _apply_review_uses(hwnd, write=write, max_clicks=3)
     if used_export.get("applied"):
@@ -1723,6 +1792,14 @@ def _align_clip_export_on_focused_timeline(
             say("Focused Timeline K landed on Hand Tracking Error; stopping")
             break
         if should_stop_clip_export_k(chips_before, chips_after, names_after):
+            if _click_split_control(hwnd, nodes):
+                time.sleep(0.3)
+                _text, nodes = _read_uia(hwnd, verbose=False)
+                chips_after = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
+                if chips_after > chips_before:
+                    cuts += 1
+                    chips_before = chips_after
+                    continue
             say(
                 f"K at {int(frac * 100)}% did not add a card (already an edge); "
                 "trying the next Sub-goal end inside the long card"
@@ -2112,12 +2189,113 @@ def _fill_clip_export_from_qa_errors(hwnd: int, sentence: str) -> int:
     return wrote
 
 
+def _nudge_clip_export_end_one_frame(hwnd: int, nodes: list[Any]) -> bool:
+    """QA wants frame 297; the current Clip Export ends at 296. Nudge one frame right."""
+    left, top, _width, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.62)
+    chips = [
+        rect
+        for rect in pick_clip_export_status_rects(_named_rects(nodes), min_y)
+        if rect[0] >= left + 70
+    ]
+    if not chips:
+        chips = [
+            rect
+            for rect in pick_clip_export_review_rects(_named_rects(nodes), min_y)
+            if rect[0] >= left + 70
+        ]
+    if not chips:
+        return False
+    rect = min(chips, key=lambda row: row[0])
+    x = int(rect[2] + 4)
+    y = int((rect[1] + rect[3]) / 2)
+    _click_screen(x, y)
+    time.sleep(0.1)
+    _send_vk(0x27)
+    say("Nudged Clip Export end one frame to match the Sub-goal end (297)")
+    return True
+
+
+def _click_split_control(hwnd: int, nodes: list[Any] | None = None) -> bool:
+    """Use the on-screen Split control instead of typing K into the Review box."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    for ctrl in nodes:
+        if not is_split_control_label(_uia_name(ctrl)):
+            continue
+        if _uia_click(ctrl):
+            say("Clicked Split (not typing K into the caption)")
+            time.sleep(0.25)
+            return True
+    return False
+
+
+def _apply_subgoal_harvest_rewrites(hwnd: int, write: bool = True) -> dict:
+    """Write every Sub-goal that still fails lint, not only the first issue."""
+    _switch_timeline_kind(hwnd, "sub-goal")
+    time.sleep(0.35)
+    uia_text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    ocr_blob = ""
+    if not _OCR_BROKEN:
+        words, _iw, _ih = _ocr_window(hwnd, "subgoal_harvest_write")
+        ocr_blob = ocr_text(words)
+    clips = harvest_timeline_clips(names, ocr_blob)
+    items = lint_clips([clip.to_dict() for clip in clips])
+    todo = harvest_rewrites_to_apply(items, _REWRITTEN_SNIPPETS)
+    if not todo:
+        say("No Sub-goal caption still needs a rewrite")
+        return {"wrote": 0, "text": uia_text}
+    say(f"Writing {len(todo)} Sub-goal caption fix(es) (every clip with an issue, not one)")
+    wrote = 0
+    left, top, _width, height = _window_rect(hwnd)
+    for item in todo:
+        lint = item["lint"]
+        snippet = " ".join((lint.original or "").split()[:6])
+        if not write or not snippet:
+            continue
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        clicked = False
+        for ctrl in nodes:
+            name = _uia_name(ctrl)
+            if snippet.lower() not in name.lower():
+                continue
+            center = _ctrl_center(ctrl)
+            if center and center[1] < top + height * 0.55:
+                continue
+            if _uia_click(ctrl):
+                clicked = True
+                break
+            if center:
+                _click_screen(center[0], center[1])
+                clicked = True
+                break
+        if not clicked:
+            say(f"Could not click Sub-goal '{snippet[:50]}'; skipping that write")
+            continue
+        time.sleep(0.25)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        _click_review_description_box(hwnd, nodes)
+        _paste_into_focused(lint.rewritten)
+        _commit_caption_field()
+        _blur_caption(hwnd, nodes)
+        key = " ".join((lint.original or "").split()[:5]).casefold()
+        _REWRITTEN_SNIPPETS.add(key)
+        wrote += 1
+        say(f"Wrote Sub-goal {wrote}/{len(todo)}: {lint.rewritten}")
+        time.sleep(0.3)
+    return {"wrote": wrote, "text": uia_text}
+
+
 def _fill_each_clip_export_slot(
     hwnd: int,
     sentences: list[str],
     end_fracs: list[float] | None = None,
     n_slots: int | None = None,
     ocr_words: list[dict] | None = None,
+    long_range: tuple[float, float, float] | None = None,
+    total_s: float | None = None,
+    existing_ends: list[float] | None = None,
 ) -> int:
     wrote = 0
     left, top, _width, height = _window_rect(hwnd)
@@ -2130,43 +2308,53 @@ def _fill_each_clip_export_slot(
     ]
     duration_hits = pick_ocr_duration_centers(ocr_words or [], int(height * 0.62))
     person_hits = pick_ocr_timeline_person_centers(ocr_words or [], int(height * 0.62))
-    n = clip_export_visible_card_count(
-        max(len(chips), len(person_hits)),
-        len(duration_hits) or int(n_slots or 0),
-    )
+    span = float(total_s or 0.0)
+    if long_range:
+        span = max(span, long_range[1] + 10.0, 40.0)
+    inferred = clip_export_inferred_card_fracs(long_range, span or 62.0, existing_ends)
+    if not inferred and end_fracs:
+        inferred = clip_export_slot_mid_fractions(end_fracs, max(int(n_slots or 0), 1))
+    targets: list[tuple[int, int, str]] = []
+    for i, rect in enumerate(chips):
+        x = int((rect[0] + rect[2]) / 2)
+        y = int((rect[1] + rect[3]) / 2)
+        targets.append((x, y, f"chip {i + 1}"))
+    for x, y, dur in duration_hits:
+        sx, sy = left + x, top + y
+        if any(abs(sx - tx) < 80 for tx, _ty, _label in targets):
+            continue
+        targets.append((sx, sy, f"{dur:g}s"))
+    for x, y in person_hits:
+        sx, sy = left + x, top + y
+        if any(abs(sx - tx) < 80 for tx, _ty, _label in targets):
+            continue
+        targets.append((sx, sy, "person"))
+    for frac in inferred:
+        x, y = _focused_timeline_xy(hwnd, frac, nodes)
+        if any(abs(x - tx) < 80 for tx, _ty, _label in targets):
+            continue
+        targets.append((x, y, f"{int(frac * 100)}%"))
+    targets.sort(key=lambda row: row[0])
+    n = max(len(targets), int(n_slots or 0), 1)
     fallback_sentence = "The person works at an indoor table during a laundry folding task."
     sentences = list(sentences or [fallback_sentence])
     if len(sentences) < n:
         sentences = sentences + [sentences[-1] if sentences else fallback_sentence] * (
             n - len(sentences)
         )
-    say(f"Filling {n} visible Clip Export card(s) (not extra guessed slots)")
-    for i in range(n):
+    say(f"Filling {len(targets)} Clip Export card(s) (every visible segment, not one)")
+    for i, (x, y, label) in enumerate(targets):
         sentence = sentences[i]
         if not _ensure_clip_export_track(hwnd):
             say("Stopped Clip Export fill: Hand Tracking Error is selected")
             break
-        if i < len(chips):
-            rect = chips[i]
-            x = int((rect[0] + rect[2]) / 2)
-            y = int((rect[1] + rect[3]) / 2)
-            _click_screen(x, y)
-            say(f"Clicked Clip Export card {i + 1}/{n} at {x},{y}")
-        elif i < len(duration_hits):
-            x, y, dur = duration_hits[i]
-            _click_screen(left + x, top + y)
-            say(f"Clicked Clip Export {dur:g}s card {i + 1}/{n} at {left + x},{top + y}")
-        elif i < len(person_hits):
-            x, y = person_hits[i]
-            _click_screen(left + x, top + y)
-            say(f"Clicked Clip Export card {i + 1}/{n} at {left + x},{top + y}")
-        else:
-            say(f"No more visible Clip Export cards after {i}; not pasting into the same box")
-            break
+        _click_screen(x, y)
+        say(f"Clicked Clip Export card {i + 1}/{len(targets)} ({label}) at {x},{y}")
         time.sleep(0.3)
         _text, nodes = _read_uia(hwnd, verbose=False)
         if _write_clip_export_sentence(hwnd, nodes, sentence, force=True):
             wrote += 1
+        _blur_caption(hwnd, nodes)
         time.sleep(0.2)
     return wrote
 
@@ -2935,8 +3123,6 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
         for cap in captions_from_ocr_blob(body):
             clip_dicts.append({"caption": cap, "kind": "subgoal", "duration_s": None})
     for item in lint_clips(clip_dicts):
-        if wrote >= 3:
-            break
         lint = item["lint"]
         if item.get("skip_edit") or not lint.changed:
             continue
