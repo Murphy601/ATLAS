@@ -81,6 +81,7 @@ def test_clip_export_from_kitchen_subgoals() -> None:
     assert "laundry" in laundry.lower() or "table" in laundry.lower()
     assert "kitchen" not in laundry.lower()
     assert "hand" not in laundry.lower()
+    assert "household" not in laundry.lower()
     assert lint_clip_export(laundry).ok
     assert len(laundry.split()) >= 15
 
@@ -179,6 +180,12 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
     assert "kitchen" in text.lower()
     assert "hand" not in text.lower()
     assert lint_clip_export(text).ok
+    laundry_slot = clip_export_sentence_for_subgoal("Shake the shirt with both hands")
+    assert laundry_slot.startswith("The person")
+    assert "shirt" in laundry_slot.lower()
+    assert "hand" not in laundry_slot.lower()
+    assert "household" not in laundry_slot.lower()
+    assert lint_clip_export(laundry_slot).ok
     idle = clip_export_sentence_for_subgoal("Idle")
     assert "kitchen" in idle.lower()
     assert "hand" not in idle.lower()

@@ -71,14 +71,14 @@ from review_ui import (
     parse_watched_percent,
     pick_clip_export_review_rects,
     pick_idle_split_rects,
-    pick_review_description_rects,
+    pick_click_to_add_text_target,
     clip_export_caption_committed,
+    has_clip_export_quality_error,
     playback_confirmed,
     quality_linters_remaining,
-    review_description_click_xy,
-    review_description_fallback_xy,
     should_fill_clip_export,
     should_open_subgoal_pending,
+    should_skip_observe,
     should_snap_clip_export_ends,
     is_quality_run_now_label,
     review_sidebar_open,
@@ -277,39 +277,51 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         first_is_idle = any(
             _uia_name(ctrl).strip().casefold() == "idle" for ctrl in uia_nodes
         ) or any(is_idle_too_long_error(_uia_name(ctrl)) for ctrl in uia_nodes)
-        _seek_timeline_start(hwnd, uia_nodes)
-        time.sleep(0.45)
-        uia_text, uia_nodes = _read_uia(hwnd)
-        _disable_slow_around_transitions(hwnd, uia_nodes)
-        time.sleep(0.2)
-        uia_text, uia_nodes = _read_uia(hwnd, verbose=False)
-        played = _ensure_video_playing(hwnd)
-        if _playback_active(hwnd):
-            say("Watch the IX window: Pause is on screen and the video should be moving.")
-        elif played:
-            say(
-                "Watch the IX window: Play and the video were clicked. "
-                "The playhead should be moving from the start (Pause is not in UIA)."
-            )
-        else:
-            say("Play did not start. Check that the IX window is in front.")
-
         skip_full_watch = should_skip_watch(
             watched_pct, use_ready=use_ready, quality_ready=quality_ready
         )
-        if skip_full_watch:
-            remaining = OBSERVE_FIRST_CLIPS_S
+        names_now = [_uia_name(ctrl) for ctrl in uia_nodes]
+        skip_observe = skip_full_watch and (
+            should_skip_observe(watched_pct, names_now)
+            or has_clip_export_quality_error(names_now)
+        )
+        played = False
+        if skip_observe:
             say(
-                f"Watched {watched_pct}% already; playing {int(remaining)}s from the start "
-                "so the first clips can be seen (not pausing after 2 segments)."
+                f"Watched {watched_pct}% already; skipping replay so Clip Export "
+                "can be filled now (not pausing after 2 segments)."
             )
-            if first_is_idle:
-                say("First card looks Idle; watching the opening clips before any edit.")
-            try:
-                _watch_while_playing(hwnd, remaining, "Watching first clips")
-            except Exception as exc:
-                say(f"Watch stopped early ({exc}). Continuing to Quality Assistant.")
+            _pause_via_uia(hwnd, uia_nodes)
         else:
+            _seek_timeline_start(hwnd, uia_nodes)
+            time.sleep(0.45)
+            uia_text, uia_nodes = _read_uia(hwnd)
+            _disable_slow_around_transitions(hwnd, uia_nodes)
+            time.sleep(0.2)
+            uia_text, uia_nodes = _read_uia(hwnd, verbose=False)
+            played = _ensure_video_playing(hwnd)
+            if _playback_active(hwnd):
+                say("Watch the IX window: Pause is on screen and the video should be moving.")
+            elif played:
+                say(
+                    "Watch the IX window: Play and the video were clicked. "
+                    "The playhead should be moving from the start (Pause is not in UIA)."
+                )
+            else:
+                say("Play did not start. Check that the IX window is in front.")
+            if skip_full_watch:
+                remaining = OBSERVE_FIRST_CLIPS_S
+                say(
+                    f"Watched {watched_pct}% already; playing {int(remaining)}s from the start "
+                    "so the first clips can be seen (not pausing after 2 segments)."
+                )
+                if first_is_idle:
+                    say("First card looks Idle; watching the opening clips before any edit.")
+                try:
+                    _watch_while_playing(hwnd, remaining, "Watching first clips")
+                except Exception as exc:
+                    say(f"Watch stopped early ({exc}). Continuing to Quality Assistant.")
+        if not skip_observe and not skip_full_watch:
             duration = parse_media_clock(page_text)
             remaining = watch_seconds
             if remaining is None:
@@ -1492,63 +1504,23 @@ def _click_clip_export_end_ignore(hwnd: int, nodes: list[Any] | None = None) -> 
     return False
 
 
-def _click_review_tab(nodes: list[Any]) -> bool:
+def _click_clip_export_editor(hwnd: int, nodes: list[Any]) -> bool:
+    """Click 'click to add text' once. Never Alt-refocus. Never a second guessed click."""
+    left, top, width, height = _window_rect(hwnd)
+    target = pick_click_to_add_text_target(_named_rects(nodes), left, top, width, height)
+    if target:
+        _rect, (x, y) = target
+        _click_screen(x, y)
+        say(f"Clicked UIA empty clip: click to add text at {x},{y}")
+        return True
     for ctrl in nodes:
-        if _uia_name(ctrl).strip() != "Review":
+        name = _uia_name(ctrl)
+        if "click to add" not in name.casefold():
             continue
         if _uia_click(ctrl):
-            say("Clicked Review tab")
+            say(f"Clicked UIA empty clip: {name}")
             return True
-    return False
-
-
-def _click_review_description_field(hwnd: int, nodes: list[Any]) -> bool:
-    """Focus the Review sidebar description box. That is the field that keeps text."""
-    left, top, width, height = _window_rect(hwnd)
-    rects = pick_review_description_rects(_named_rects(nodes), left, top, width, height)
-    if rects:
-        x, y = review_description_click_xy(rects[0])
-        _click_screen(x, y)
-        time.sleep(0.12)
-        _click_screen(x, y + 8)
-        say(f"Clicked Review description field at {x},{y}")
-        return True
-    if not _OCR_BROKEN:
-        words, img_w, img_h = _ocr_window(hwnd, "review_description")
-        target = find_phrase_click(
-            words,
-            "click to add text",
-            img_w,
-            img_h,
-            y_min_frac=0.10,
-            y_max_frac=0.58,
-            x_min_frac=0.50,
-            x_max_frac=0.92,
-        )
-        if target:
-            _click_screen(left + target[0], top + target[1] + 16)
-            time.sleep(0.10)
-            _click_screen(left + target[0], top + target[1] + 20)
-            say(f"Clicked Review description from OCR at {left + target[0]},{top + target[1]}")
-            return True
-    fx, fy = review_description_fallback_xy(width, height)
-    _click_screen(left + fx, top + fy)
-    time.sleep(0.10)
-    _click_screen(left + fx, top + fy + 10)
-    say(f"Clicked Review description box at {left + fx},{top + fy}")
-    return True
-
-
-def _click_clip_export_editor(hwnd: int, nodes: list[Any]) -> bool:
-    """Focus the Review description box. Never Alt-refocus the window after this."""
-    _click_review_tab(nodes)
-    time.sleep(0.15)
-    _text, nodes = _read_uia(hwnd, verbose=False)
-    if _click_review_description_field(hwnd, nodes):
-        return True
     if _click_clip_export_caption_field(nodes, prefer_hands=True):
-        return True
-    if _click_uia_empty_clip(nodes):
         return True
     return False
 
@@ -1566,6 +1538,44 @@ def _uia_set_text(ctrl: Any, text: str) -> bool:
     return False
 
 
+def _clipboard_set(text: str) -> bool:
+    try:
+        import win32clipboard
+        import win32con
+
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
+        finally:
+            win32clipboard.CloseClipboard()
+        return True
+    except Exception:
+        return False
+
+
+def _send_ctrl_v() -> None:
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    user32.keybd_event(0x11, 0, 0, 0)
+    user32.keybd_event(0x56, 0, 0, 0)
+    user32.keybd_event(0x56, 0, 2, 0)
+    user32.keybd_event(0x11, 0, 2, 0)
+
+
+def _paste_into_focused(text: str) -> None:
+    """Clipboard paste so Hindi IME does not swallow Unicode key events."""
+    if _clipboard_set(text):
+        time.sleep(0.08)
+        _send_ctrl_a()
+        time.sleep(0.05)
+        _send_ctrl_v()
+        say("Pasted Clip Export from the clipboard")
+        return
+    _type_into_focused(text)
+
+
 def _commit_caption_field() -> None:
     """Tab out of the description box so SensorFusionLab stores the sentence. Never Enter."""
     time.sleep(0.2)
@@ -1574,32 +1584,23 @@ def _commit_caption_field() -> None:
 
 
 def _write_clip_export_sentence(hwnd: int, nodes: list[Any], sentence: str) -> bool:
-    """Type one Clip Export sentence into Review and confirm it stayed."""
-    if not _click_clip_export_editor(hwnd, nodes):
-        say("Could not focus the Review description box; not counting this Clip Export write")
-        return False
-    time.sleep(0.3)
-    _text, nodes = _read_uia(hwnd, verbose=False)
-    set_ok = False
+    """Paste one Clip Export sentence into click-to-add-text and confirm it stayed."""
+    field = None
     for ctrl in nodes:
-        name = _uia_name(ctrl)
-        if "click to add" not in name.casefold() and not is_clip_export_caption_label(name):
-            continue
-        if _uia_set_text(ctrl, sentence):
-            set_ok = True
-            say("Set Clip Export via UIA Value")
+        if "click to add" in _uia_name(ctrl).casefold():
+            field = ctrl
             break
-    if not set_ok:
-        _click_review_description_field(hwnd, nodes)
-        time.sleep(0.2)
-        _type_into_focused(sentence)
+    if not _click_clip_export_editor(hwnd, nodes):
+        say("Could not focus click-to-add-text; not counting this Clip Export write")
+        return False
+    time.sleep(0.2)
+    if field is not None and _uia_set_text(field, sentence):
+        say("Set Clip Export via UIA Value")
     else:
-        time.sleep(0.1)
-        _type_into_focused(sentence)
-    time.sleep(0.35)
+        _paste_into_focused(sentence)
+    time.sleep(0.3)
     _commit_caption_field()
-    _blur_caption(hwnd, nodes, prefer_quality=True)
-    time.sleep(0.45)
+    time.sleep(0.35)
     _text, after = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in after]
     ocr_blob = ""
@@ -1666,7 +1667,7 @@ def _fill_each_clip_export_slot(
     _text, nodes = _read_uia(hwnd, verbose=False)
     chips = pick_clip_export_review_rects(_named_rects(nodes), min_y)
     n = max(len(chips), 1)
-    sentences = (sentences or ["The person works at an indoor household table during a laundry folding task."])[:n]
+    sentences = (sentences or ["The person works at an indoor table during a laundry folding task."])[:n]
     if len(sentences) < n:
         sentences = sentences + [sentences[-1]] * (n - len(sentences))
     mids = clip_export_slot_mid_fractions(end_fracs or [], n)

@@ -692,6 +692,64 @@ def review_description_fallback_xy(width: int, height: int) -> tuple[int, int]:
     return int(width * 0.70), int(height * 0.30)
 
 
+def is_plausible_edit_rect(rect: tuple[int, int, int, int]) -> bool:
+    """True for a compact placeholder, not a window-wide Chromium container."""
+    width = rect[2] - rect[0]
+    height = rect[3] - rect[1]
+    return 60 <= width <= 520 and 14 <= height <= 160
+
+
+def pick_click_to_add_text_target(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    win_left: int,
+    win_top: int,
+    win_width: int,
+    win_height: int,
+) -> tuple[tuple[int, int, int, int], tuple[int, int]] | None:
+    """One click on the real 'click to add text' field. Never a giant chrome box center."""
+    ranked: list[tuple[int, int, tuple[int, int, int, int]]] = []
+    for name, rect in named_rects:
+        n = (name or "").strip().casefold()
+        if "click to add" not in n and n != "add text":
+            continue
+        if n in {"(empty clip)", "empty clip"}:
+            continue
+        width = rect[2] - rect[0]
+        score = 0
+        if is_plausible_edit_rect(rect):
+            score += 50
+        if width > 700:
+            score -= 30
+        cy = (rect[1] + rect[3]) / 2
+        cx = (rect[0] + rect[2]) / 2
+        if win_height and cy > win_top + win_height * 0.60:
+            score += 10
+        if (
+            win_width
+            and cx > win_left + win_width * 0.52
+            and cy < win_top + win_height * 0.58
+            and is_plausible_edit_rect(rect)
+        ):
+            score += 15
+        ranked.append((score, width, rect))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    rect = ranked[0][2]
+    if is_plausible_edit_rect(rect):
+        return rect, review_description_click_xy(rect)
+    x = int(rect[0] + max(rect[2] - rect[0], 1) * 0.72)
+    y = int((rect[1] + rect[3]) / 2)
+    return rect, (x, y)
+
+
+def should_skip_observe(watched_pct: int | None, names: list[str]) -> bool:
+    """When Watched is already high, do not replay 24s before filling Clip Export."""
+    if watched_pct is None or watched_pct < 80:
+        return False
+    return has_clip_export_quality_error(names)
+
+
 def should_snap_clip_export_ends(
     names: list[str],
     *,

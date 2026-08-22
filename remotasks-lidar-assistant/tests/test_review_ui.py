@@ -337,6 +337,35 @@ def test_review_description_is_not_the_timeline_placeholder() -> None:
     assert should_snap_clip_export_ends(["ClipExport", "Focused Timeline"], chip_count=0)
 
 
+def test_click_to_add_text_prefers_compact_field_not_giant_box() -> None:
+    from review_ui import pick_click_to_add_text_target, should_skip_observe
+
+    giant = (40, 80, 1500, 900)
+    compact = (90, 820, 260, 854)
+    hit = pick_click_to_add_text_target(
+        [
+            ("click to add text", giant),
+            ("click to add text", compact),
+            ("(empty clip)", (40, 200, 200, 240)),
+        ],
+        win_left=0,
+        win_top=0,
+        win_width=1575,
+        win_height=1050,
+    )
+    assert hit is not None
+    rect, (x, y) = hit
+    assert rect == compact
+    assert 90 < x < 260
+    assert y >= 820
+    qa = [
+        "Text Annotation 9c1a: ClipExport and Sub-goal clips must contain text. On frames: 1, 297, 1107."
+    ]
+    assert should_skip_observe(100, qa)
+    assert not should_skip_observe(40, qa)
+    assert not should_skip_observe(100, ["Sub-goal", "Play"])
+
+
 def test_same_card_pending_is_not_the_idle_split_boundary() -> None:
     from review_ui import idle_card_split_xy, pick_idle_split_rects
 
