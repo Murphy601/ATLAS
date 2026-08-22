@@ -125,4 +125,23 @@ def test_trailing_period_and_min_words():
     )
     assert not result.rewritten.endswith(".")
     assert " and " in result.rewritten.lower()
+    assert "and hold" in result.rewritten.lower()
     assert any(i.code == "trailing_punct" for i in result.issues)
+
+
+def test_clip_export_sentence_is_third_person_kitchen() -> None:
+    from caption_engine import captions_from_ocr_blob, clip_export_sentence_for_subgoal, lint_clip_export
+
+    text = clip_export_sentence_for_subgoal("Pick up the red mayonnaise jar with the left hand")
+    assert text.startswith("The person picks up")
+    assert "kitchen" in text.lower()
+    assert lint_clip_export(text).ok
+    idle = clip_export_sentence_for_subgoal("Idle")
+    assert "kitchen" in idle.lower()
+    blob = (
+        "Open the refrigerator door with the left hand. "
+        "Hold the red mayonnaise jar with the left hand"
+    )
+    caps = captions_from_ocr_blob(blob)
+    assert any("." in cap for cap in caps)
+    assert any("refrigerator" in cap.lower() for cap in caps)

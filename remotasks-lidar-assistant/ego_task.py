@@ -56,9 +56,51 @@ class TimelineClip:
     pending: bool
     kind: str = "subgoal"
     raw: str = ""
+    start_s: float | None = None
+    end_s: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _parse_range_cards(focused: str) -> list[TimelineClip]:
+    """Parse SensorFusionLab cards like '0s - 5.1s (5.1s) Move both hands...'."""
+    clips: list[TimelineClip] = []
+    pattern = re.compile(
+        r"(?P<start>\d+(?:\.\d+)?)s\s*[-–]\s*(?P<end>\d+(?:\.\d+)?)s"
+        r"(?:\s*\((?P<dur>\d+(?:\.\d+)?)s\))?"
+        r"\s*(?:edited|pending|review|idle)?\s*"
+        r"(?P<cap>[A-Z].+?)"
+        r"(?=(?:\d+(?:\.\d+)?)s\s*[-–]\s*(?:\d+(?:\.\d+)?)s"
+        r"|\b(?:edited|pending|review)\s+"
+        r"|click or press"
+        r"|Full Timeline"
+        r"|Watched"
+        r"|$)",
+        re.S,
+    )
+    for match in pattern.finditer(focused or ""):
+        caption = re.sub(r"\s+", " ", match.group("cap")).strip()
+        caption = re.sub(r"\b(edited|pending|review|idle)\s*$", "", caption, flags=re.I).strip()
+        if not caption or CREATE_HINT.lower() in caption.lower():
+            continue
+        if is_not_timeline_caption(caption):
+            continue
+        start_s = float(match.group("start"))
+        end_s = float(match.group("end"))
+        duration = float(match.group("dur")) if match.group("dur") else max(end_s - start_s, 0.0)
+        clips.append(
+            TimelineClip(
+                index=len(clips),
+                caption=caption,
+                duration_s=duration,
+                pending="pending" in (match.group(0).lower()),
+                raw=match.group(0).strip(),
+                start_s=start_s,
+                end_s=end_s,
+            )
+        )
+    return clips
 
 
 def is_ego_task_page(page: Page) -> bool:
@@ -110,6 +152,9 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
         )
     if clips:
         return clips
+    range_clips = _parse_range_cards(focused)
+    if range_clips:
+        return range_clips
     # Looser fallback: duration then following sentence
     loose = re.compile(r"(pending\s*)?(\d+(?:\.\d+)?)s\s+([A-Z][^|\n]{8,200})")
     for match in loose.finditer(focused):

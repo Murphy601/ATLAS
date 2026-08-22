@@ -225,6 +225,7 @@ def lint_subgoal(caption: str, duration_s: float | None = None) -> LintResult:
     if _MID_PERIOD.search(text):
         issues.append(LintIssue("mid_period", "Join subgoal actions with and, not a period"))
         text = _MID_PERIOD.sub(" and ", text)
+        text = re.sub(r"\band ([A-Z])", lambda m: "and " + m.group(1).lower(), text)
     if _TRAIL_PUNCT.search(text.strip()):
         issues.append(LintIssue("trailing_punct", "Descriptions must end in letters, not periods or commas"))
         text = _TRAIL_PUNCT.sub("", text.strip())
@@ -330,6 +331,88 @@ def action_caption_for_mislabeled_idle(captions: list[str]) -> str:
     text = re.sub(r"\bthe the\b", "the", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text[0].upper() + text[1:]
+
+
+def captions_from_ocr_blob(text: str) -> list[str]:
+    """Pull imperative hand captions out of messy OCR, including period-joined cards."""
+    if not text:
+        return []
+    blob = text.replace("\u00a0", " ")
+    out: list[str] = []
+    joined = re.compile(
+        r"((?:[A-Z][^.!?\n]{8,160}(?:left hand|right hand|both hands)[^.!?\n]{0,40})"
+        r"(?:\.\s+[A-Z][^.!?\n]{8,160}(?:left hand|right hand|both hands)[^.!?\n]{0,40})+)"
+    )
+    for match in joined.finditer(blob):
+        cap = re.sub(r"\s+", " ", match.group(1)).strip()
+        if cap and not is_not_timeline_caption(cap):
+            out.append(cap)
+    single = re.compile(
+        r"([A-Z][^.!?\n]{8,160}(?:left hand|right hand|both hands)[^.!?\n]{0,80})"
+    )
+    for match in single.finditer(blob):
+        cap = re.sub(r"\s+", " ", match.group(1)).strip()
+        if not cap or is_not_timeline_caption(cap):
+            continue
+        if any(cap in existing or existing in cap for existing in out):
+            continue
+        out.append(cap)
+    return out
+
+
+def _third_person_verb(verb: str) -> str:
+    word = (verb or "").strip().lower()
+    irregular = {
+        "put": "puts",
+        "hold": "holds",
+        "pick": "picks",
+        "have": "has",
+        "stand": "stands",
+        "sit": "sits",
+    }
+    if word in irregular:
+        return irregular[word]
+    if word.endswith("y") and len(word) > 2 and word[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    if word.endswith(("s", "sh", "ch", "x", "z", "o")):
+        return word + "es"
+    if word.endswith("s"):
+        return word
+    return word + "s"
+
+
+def clip_export_sentence_for_subgoal(caption: str) -> str:
+    """One third-person Clip Export sentence for a single Sub-goal span."""
+    raw = (caption or "").strip()
+    if not raw or raw.lower() in guidelines.NO_DESCRIPTION_NEEDED or raw.lower().startswith("idle"):
+        return "The person stands idle at a kitchen counter and waits between actions."
+    cleaned = lint_subgoal(raw).rewritten
+    if cleaned.lower() == "idle":
+        return "The person stands idle at a kitchen counter and waits between actions."
+    words = cleaned.split()
+    verb = words[0]
+    rest = words[1:]
+    if rest and rest[0].lower() == "up":
+        tp_verb = "picks up"
+        rest = rest[1:]
+    elif rest and rest[0].lower() == "down":
+        tp_verb = f"{_third_person_verb(verb)} down"
+        rest = rest[1:]
+    else:
+        tp_verb = _third_person_verb(verb)
+    body = " ".join([tp_verb, *rest]).strip()
+    blob = cleaned.lower()
+    if "kitchen" in blob or "counter" in blob:
+        sentence = f"The person {body}."
+    elif "refrigerator" in blob or "fridge" in blob:
+        sentence = f"The person {body} at the refrigerator."
+    else:
+        sentence = f"The person {body} at a kitchen counter."
+    sentence = re.sub(r"\s+", " ", sentence).strip()
+    sentence = sentence[0].upper() + sentence[1:]
+    if not sentence.endswith("."):
+        sentence += "."
+    return sentence
 
 
 def clip_export_from_subgoals(captions: list[str]) -> str:

@@ -177,3 +177,39 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
             "Text Annotation Sub-goal 4a01: No idle time should be more than 5s, please split it into smaller segments",
         ]
     )
+
+
+def test_playback_and_false_idle_helpers() -> None:
+    from review_ui import (
+        clip_export_cut_fractions,
+        clip_export_needs_parallel_splits,
+        full_timeline_xy,
+        playback_confirmed,
+        should_recaption_false_idle,
+        should_split_overlong_idle,
+    )
+
+    assert playback_confirmed(["Pause", "Review"])
+    assert not playback_confirmed(["Play", "Playback speed (away from transitions)"])
+    names = [
+        "Error All Sub-goal descriptions must contain left hand, right hand or both hands within, unless they're Idle 1 clip",
+        "Error Please make sure the text matches with the format expected 1 clip",
+        "Error Sub-goals must be at least 10 words long 1 clip",
+        "Error No idle time should be more than 5s, please split it into smaller segments",
+        "pending",
+    ]
+    assert should_recaption_false_idle(names)
+    assert not should_split_overlong_idle(names)
+    assert should_split_overlong_idle(
+        ["Error No idle time should be more than 5s, please split it into smaller segments", "Idle"]
+    )
+    assert clip_export_needs_parallel_splits(
+        ["All ClipExports must be fully filled in parallel with Sub-goals", "ClipExport"],
+        7,
+    )
+    fracs = clip_export_cut_fractions([5.1, 3.1, 1.8, 3.9], 4)
+    assert fracs[0] < fracs[-1]
+    assert 0.2 < fracs[0] < 0.5
+    x, y = full_timeline_xy((80, 940, 120, 970), 0.02, (0, 0, 1575, 1050))
+    assert x > 80
+    assert y > 940

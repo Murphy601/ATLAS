@@ -164,6 +164,76 @@ def is_pause_control_label(name: str) -> bool:
     return n in {"pause", "pause video"} or n.startswith("pause ")
 
 
+def playback_confirmed(names: list[str]) -> bool:
+    """True only when Pause is visible. A Play click alone does not mean the video is playing."""
+    return any(is_pause_control_label(n) for n in names)
+
+
+def is_timeline_status_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"pending", "edited", "review", "idle"}
+
+
+def should_recaption_false_idle(names: list[str]) -> bool:
+    """QA is rejecting Idle (missing hands / 10 words / format), so rewrite; do not K-split."""
+    action_errors = any(is_false_idle_review_error(n) for n in names)
+    idle_long = any(is_idle_too_long_error(n) for n in names)
+    idle_name = any((n or "").strip().casefold() == "idle" for n in names)
+    if action_errors and (idle_name or idle_long):
+        return True
+    return bool(idle_name and action_errors)
+
+
+def should_split_overlong_idle(names: list[str]) -> bool:
+    """Split only a true Idle >5s. False-Idle action clips must be recaptioned instead."""
+    if any(is_false_idle_review_error(n) for n in names):
+        return False
+    return any(is_idle_too_long_error(n) for n in names)
+
+
+def full_timeline_xy(
+    bar_rect: tuple[int, int, int, int],
+    frac: float,
+    window_rect: tuple[int, int, int, int],
+) -> tuple[int, int]:
+    """Click inside the Full Timeline *bar*, not the left-edge label or the window chrome."""
+    left, top, right, bottom = bar_rect
+    wleft, _wtop, ww, _wh = window_rect
+    if (right - left) < 200:
+        left = wleft + int(ww * 0.08)
+        right = wleft + int(ww * 0.92)
+        y = int((top + bottom) / 2) + 16
+    else:
+        y = int((top + bottom) / 2)
+    frac = min(max(frac, 0.02), 0.98)
+    x = int(left + (right - left) * frac)
+    return x, y
+
+
+def clip_export_cut_fractions(durations: list[float] | None, n_segments: int) -> list[float]:
+    """Interior cut points so Clip Export lines up with each Sub-goal span."""
+    if durations and len(durations) >= 2:
+        total = sum(max(float(d), 0.01) for d in durations) or 1.0
+        acc = 0.0
+        out: list[float] = []
+        for dur in durations[:-1]:
+            acc += max(float(dur), 0.01)
+            out.append(min(max(acc / total, 0.04), 0.96))
+        return out
+    n = max(int(n_segments), 2)
+    return [i / n for i in range(1, n)]
+
+
+def clip_export_needs_parallel_splits(names: list[str], subgoal_count: int) -> bool:
+    """One filled Clip Export is not enough when QA still wants clips in parallel."""
+    if not any(is_clip_export_missing_error(n) for n in names):
+        return False
+    if subgoal_count >= 2:
+        return True
+    pending = sum(1 for n in names if is_pending_clip_label(n))
+    return pending <= 1
+
+
 def is_review_use_label(name: str) -> bool:
     """True for the Grammar Review Use button (not Find & Replace / Submit)."""
     n = (name or "").strip().casefold()

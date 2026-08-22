@@ -11,19 +11,24 @@ from typing import Any
 
 from caption_engine import (
     action_caption_for_mislabeled_idle,
+    captions_from_ocr_blob,
     clip_export_from_subgoals,
+    clip_export_sentence_for_subgoal,
     is_not_timeline_caption,
     lint_clips,
+    lint_subgoal,
     subgoal_captions_from_names,
 )
 from ego_task import parse_clips_from_text
 from process_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from review_ui import (
     EMPTY_CLIP_PHRASES,
+    clip_export_cut_fractions,
     clip_export_needs_new_clip,
     find_phrase_click,
     find_review_use_clicks,
     find_word_click,
+    full_timeline_xy,
     idle_card_split_xy,
     interesting_uia_names,
     is_clip_export_missing_error,
@@ -42,17 +47,20 @@ from review_ui import (
     is_quality_assistant_text,
     is_quality_empty_error,
     is_review_use_label,
-    is_split_control_label,
     is_timeline_kind_label,
+    is_timeline_status_label,
     ocr_text,
     parse_grammar_clip_count,
     parse_watched_percent,
     pick_idle_split_rects,
+    playback_confirmed,
     quality_linters_remaining,
     review_sidebar_open,
     review_work_remaining,
     selected_timeline_kind,
+    should_recaption_false_idle,
     should_skip_watch,
+    should_split_overlong_idle,
     timeline_dropdown_is_open,
 )
 import config
@@ -86,6 +94,7 @@ MAX_WATCH_S = 300.0
 OBSERVE_FIRST_CLIPS_S = 24.0
 CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
 _OCR_BROKEN = False
+_CLIP_EXPORT_ALIGNED = False
 
 
 def say(msg: str) -> None:
@@ -171,6 +180,9 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
     if sys.platform != "win32":
         raise RuntimeError("Desktop IX control is Windows-only")
 
+    global _CLIP_EXPORT_ALIGNED
+    _CLIP_EXPORT_ALIGNED = False
+
     say("DevTools is not exposed on this IX profile. Controlling the window you already opened...")
     say("Look at IX now: that window will come forward and the video should play.")
     _ensure_dpi_aware()
@@ -207,57 +219,44 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             _uia_name(ctrl).strip().casefold() == "idle" for ctrl in uia_nodes
         ) or any(is_idle_too_long_error(_uia_name(ctrl)) for ctrl in uia_nodes)
         _seek_timeline_start(hwnd, uia_nodes)
-        time.sleep(0.3)
+        time.sleep(0.45)
         uia_text, uia_nodes = _read_uia(hwnd)
-        already_playing = any(is_pause_control_label(_uia_name(ctrl)) for ctrl in uia_nodes)
-        played = False
-        remaining = 0.0
-        if already_playing:
-            say("Video is already playing (Pause is on screen).")
-            played = True
-        else:
-            played = _play_via_uia(uia_nodes)
-            if not played:
-                played = _play_video(hwnd)
+        played = _ensure_video_playing(hwnd)
+        if _playback_active(hwnd):
+            say("Watch the IX window: Pause is on screen and the video should be moving.")
+        elif played:
             say(
-                "Watch the IX window: Play was clicked and the video should be playing now."
-                if played
-                else "Sent play input; check the IX window."
+                "Watch the IX window: Play and the video were clicked. "
+                "The playhead should be moving from the start (Pause is not in UIA)."
             )
+        else:
+            say("Play did not start. Check that the IX window is in front.")
 
         skip_full_watch = should_skip_watch(
             watched_pct, use_ready=use_ready, quality_ready=quality_ready
         )
         if skip_full_watch:
-            remaining = OBSERVE_FIRST_CLIPS_S if first_is_idle else 8.0
+            remaining = OBSERVE_FIRST_CLIPS_S
             say(
                 f"Watched already on screen; playing {int(remaining)}s from the start "
                 "so the first clips can be seen (not pausing after 2 segments)."
             )
-            elapsed = 0.0
-            while elapsed < remaining:
-                step = min(5.0, remaining - elapsed)
-                time.sleep(step)
-                elapsed += step
-                say(f"Watching first clips... {int(elapsed)}/{int(remaining)}s")
+            if first_is_idle:
+                say("First card looks Idle; watching the opening clips before any edit.")
+            _watch_while_playing(hwnd, remaining, "Watching first clips")
         else:
             duration = parse_media_clock(page_text)
             remaining = watch_seconds
             if remaining is None:
                 remaining = duration if duration and duration > 2 else DEFAULT_WATCH_S
             remaining = min(max(float(remaining), 8.0), MAX_WATCH_S)
-            elapsed = 0.0
-            while elapsed < remaining:
-                step = min(5.0, remaining - elapsed)
-                time.sleep(step)
-                elapsed += step
-                say(f"Watching video... {int(elapsed)}/{int(remaining)}s")
+            _watch_while_playing(hwnd, remaining, "Watching video")
 
         review = {"applied": 0, "text": page_text}
         filled = {"wrote": 0, "text": page_text}
         idle_rounds = 0
-        for pass_i in range(2):
-            say(f"Review pass {pass_i + 1}/2")
+        for pass_i in range(4):
+            say(f"Review pass {pass_i + 1}/4")
             _pause_via_uia(hwnd)
             _close_timeline_dropdown(hwnd)
             _switch_timeline_kind(hwnd, "sub-goal")
@@ -307,7 +306,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
                     say("No more Review / Quality Assistant work on screen.")
                     break
                 if idle_rounds >= 2:
-                    say("Stopped after two passes with no new Use/fill.")
+                    say("Stopped after two idle passes with no new Use/fill.")
                     break
                 if not _advance_review_target(hwnd):
                     say("Grammar/Quality work remains but no next clip control was found.")
@@ -628,7 +627,7 @@ def _iter_uia_controls(target: Any, limit: int = 6000):
         return
 
 
-def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
+def _read_uia(hwnd: int, verbose: bool = True) -> tuple[str, list[Any]]:
     nodes: list[Any] = []
     texts: list[str] = []
     try:
@@ -644,7 +643,8 @@ def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
             except Exception:
                 continue
         if target is None:
-            say("UIA: SensorFusionLab window handle not found")
+            if verbose:
+                say("UIA: SensorFusionLab window handle not found")
             return "", []
         for ctrl in _iter_uia_controls(target):
             nodes.append(ctrl)
@@ -652,13 +652,15 @@ def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
             if name:
                 texts.append(name)
     except Exception as exc:
-        say(f"UIA read failed: {exc}")
+        if verbose:
+            say(f"UIA read failed: {exc}")
         logger.debug("UIA read skipped", exc_info=True)
     named = [t for t in texts if t]
-    say(f"UIA named controls: {len(named)}")
-    preview = interesting_uia_names(named)
-    if preview:
-        say("UIA names: " + " | ".join(preview))
+    if verbose:
+        say(f"UIA named controls: {len(named)}")
+        preview = interesting_uia_names(named)
+        if preview:
+            say("UIA names: " + " | ".join(preview))
     try:
         dest = config.DEBUG_CAPTURES / "uia_names.txt"
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -666,6 +668,94 @@ def _read_uia(hwnd: int) -> tuple[str, list[Any]]:
     except Exception:
         logger.debug("Could not write uia_names.txt", exc_info=True)
     return "\n".join(texts), nodes
+
+
+def _click_toolbar_play(hwnd: int, nodes: list[Any]) -> bool:
+    """Click the player Play button, not a leftover Play on the timeline."""
+    left, top, _width, height = _window_rect(hwnd)
+    ranked: list[tuple[int, Any, str]] = []
+    fallback: list[tuple[int, Any, str]] = []
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if not is_play_control_label(name):
+            continue
+        center = _ctrl_center(ctrl)
+        if not center:
+            continue
+        if center[1] <= top + int(height * 0.55):
+            ranked.append((center[1], ctrl, name))
+        else:
+            fallback.append((center[1], ctrl, name))
+    ordered = sorted(ranked) + sorted(fallback)
+    for _y, ctrl, name in ordered:
+        try:
+            if _uia_click(ctrl):
+                say(f"Clicked UIA play control: {name}")
+                return True
+        except Exception:
+            logger.debug("UIA play click failed", exc_info=True)
+    return False
+
+
+def _ensure_video_playing(hwnd: int) -> bool:
+    """Seek is not enough. Click Play, then the video, without toggling a clip that already started."""
+    _text, nodes = _read_uia(hwnd)
+    if playback_confirmed([_uia_name(ctrl) for ctrl in nodes]):
+        say("Playback confirmed (Pause is on screen).")
+        return True
+    clicked_play = _click_toolbar_play(hwnd, nodes)
+    time.sleep(0.9)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    if playback_confirmed([_uia_name(ctrl) for ctrl in nodes]):
+        say("Playback confirmed after toolbar Play.")
+        return True
+    left, top, width, height = _window_rect(hwnd)
+    x, y, label = page_click_points(left, top, width, height)[0]
+    _click_screen(x, y)
+    say(f"Clicked {label} at {x},{y} (below tab strip) because Pause is not in UIA")
+    time.sleep(0.9)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    if playback_confirmed([_uia_name(ctrl) for ctrl in nodes]):
+        say("Playback confirmed after clicking the video.")
+        return True
+    if not clicked_play:
+        _send_space(hwnd)
+        say("Sent Space (play) to the IX page")
+        time.sleep(0.8)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        if playback_confirmed([_uia_name(ctrl) for ctrl in nodes]):
+            say("Playback confirmed after Space.")
+            return True
+    else:
+        say(
+            "Play was clicked and the video was clicked. Pause is not exposed in UIA; "
+            "not sending Space so the clip is not toggled off."
+        )
+    return clicked_play
+
+
+def _watch_while_playing(hwnd: int, seconds: float, label: str) -> float:
+    """Sleep while the video should be playing. Re-click Play only if Pause was seen and then vanished."""
+    elapsed = 0.0
+    remaining = max(float(seconds), 1.0)
+    saw_pause = _playback_active(hwnd)
+    while elapsed < remaining:
+        step = min(5.0, remaining - elapsed)
+        time.sleep(step)
+        elapsed += step
+        active = _playback_active(hwnd)
+        if active:
+            saw_pause = True
+        elif saw_pause:
+            say("Pause disappeared; clicking Play so the video keeps moving.")
+            _ensure_video_playing(hwnd)
+        say(f"{label}... {int(elapsed)}/{int(remaining)}s")
+    return elapsed
+
+
+def _playback_active(hwnd: int) -> bool:
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    return playback_confirmed([_uia_name(ctrl) for ctrl in nodes])
 
 
 def _play_via_uia(nodes: list[Any]) -> bool:
@@ -730,47 +820,84 @@ def _named_rects(nodes: list[Any]) -> list[tuple[str, tuple[int, int, int, int]]
     return out
 
 
-def _seek_timeline_start(hwnd: int, nodes: list[Any] | None = None) -> None:
-    """Put the playhead at the first clip so Play starts at 0s, not mid-video."""
-    if nodes is None:
-        _text, nodes = _read_uia(hwnd)
+def _full_timeline_rect(hwnd: int, nodes: list[Any]) -> tuple[int, int, int, int]:
     left, top, width, height = _window_rect(hwnd)
-    y = int(top + height * 0.90)
+    window = (left, top, width, height)
     for ctrl in nodes:
         if _uia_name(ctrl).strip().casefold() != "full timeline":
             continue
-        center = _ctrl_center(ctrl)
-        if center:
-            y = center[1] + 16
-            break
-    x = int(left + width * 0.06)
+        try:
+            rect = ctrl.rectangle()
+            return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        except Exception:
+            continue
+    return (left, int(top + height * 0.90), left + width, int(top + height * 0.96))
+
+
+def _click_full_timeline_fraction(hwnd: int, frac: float, nodes: list[Any] | None = None) -> tuple[int, int]:
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    left, top, width, height = _window_rect(hwnd)
+    bar = _full_timeline_rect(hwnd, nodes)
+    x, y = full_timeline_xy(bar, frac, (left, top, width, height))
     _click_screen(x, y)
+    return x, y
+
+
+def _seek_timeline_start(hwnd: int, nodes: list[Any] | None = None) -> None:
+    """Put the playhead at the first clip so Play starts at 0s, not mid-video or the end."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd)
+    x, y = _click_full_timeline_fraction(hwnd, 0.02, nodes)
     say(f"Seeked Full Timeline to the start at {x},{y}")
+    if _click_first_timeline_card(hwnd, nodes):
+        time.sleep(0.2)
+        _click_full_timeline_fraction(hwnd, 0.02, nodes)
+
+
+def _click_first_timeline_card(hwnd: int, nodes: list[Any]) -> bool:
+    left, top, _width, height = _window_rect(hwnd)
+    hits: list[tuple[int, Any]] = []
+    for ctrl in nodes:
+        if not is_timeline_status_label(_uia_name(ctrl)):
+            continue
+        center = _ctrl_center(ctrl)
+        if not center:
+            continue
+        if center[1] > top + height * 0.62:
+            hits.append((center[0], ctrl))
+    if not hits:
+        return False
+    hits.sort(key=lambda row: row[0])
+    if _uia_click(hits[0][1]):
+        say("Clicked the first Focused Timeline card (start of the video)")
+        return True
+    return False
 
 
 def _recaption_false_idle(hwnd: int, write: bool = True) -> dict:
     """Replace a first-clip Idle that actually has action. Never Submit. Never HTE."""
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
-    idle_on_timeline = any(n.strip().casefold() == "idle" for n in names)
-    rejected = any(is_false_idle_review_error(n) for n in names) or any(
-        is_idle_too_long_error(n) for n in names
-    )
-    if not idle_on_timeline or not rejected:
+    if not should_recaption_false_idle(names):
         return {"wrote": 0, "text": uia_text}
     blob = list(names)
     if not _OCR_BROKEN:
         words, _w, _h = _ocr_window(hwnd, "false_idle")
         blob.append(ocr_text(words))
     blob.extend(subgoal_captions_from_names(names))
+    blob.extend(captions_from_ocr_blob("\n".join(blob)))
     caption = action_caption_for_mislabeled_idle(blob)
     if not write:
         return {"wrote": 0, "text": caption}
     if not _click_idle_caption_field(hwnd, nodes):
-        say("Could not focus the Idle caption field to replace it with an action")
-        return {"wrote": 0, "text": uia_text}
+        if not _click_first_timeline_card(hwnd, nodes):
+            say("Could not focus the Idle caption field to replace it with an action")
+            return {"wrote": 0, "text": uia_text}
+        say("Focused the first timeline card to replace false Idle")
     time.sleep(0.2)
     _type_into_focused(caption)
+    _blur_caption(hwnd, nodes)
     say(f"Replaced false Idle with action: {caption}")
     time.sleep(0.45)
     return {"wrote": 1, "text": caption}
@@ -898,11 +1025,21 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         return {"wrote": 0, "text": uia_text}
 
     blob = list(names)
+    ocr_blob = ""
     if not _OCR_BROKEN:
         words, _img_w, _img_h = _ocr_window(hwnd, "subgoals_for_export")
-        blob.append(ocr_text(words))
+        ocr_blob = ocr_text(words)
+        blob.append(ocr_blob)
     blob.extend(subgoal_captions_from_names(names))
-    text = clip_export_from_subgoals(blob)
+    harvested = parse_clips_from_text(ocr_blob) if ocr_blob else []
+    if not harvested:
+        harvested_caps = captions_from_ocr_blob(ocr_blob) or subgoal_captions_from_names(names)
+    else:
+        harvested_caps = [clip.caption for clip in harvested]
+    sentences = [clip_export_sentence_for_subgoal(cap) for cap in harvested_caps if cap]
+    fallback = clip_export_from_subgoals(blob)
+    if not sentences:
+        sentences = [fallback]
     if not write:
         return {"wrote": 0, "text": uia_text}
 
@@ -911,17 +1048,93 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     time.sleep(0.45)
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
+    pending = sum(1 for n in names if is_pending_clip_label(n) or is_empty_clip_label(n))
+    n_segments = len(sentences) if len(sentences) >= 2 else 6
+    if len(sentences) < n_segments:
+        sentences = list(sentences) + [fallback] * (n_segments - len(sentences))
+    global _CLIP_EXPORT_ALIGNED
+    if not _CLIP_EXPORT_ALIGNED and pending <= 1:
+        durations = [clip.duration_s or 3.0 for clip in harvested] if harvested else None
+        wrote_cuts = _align_clip_export_cuts(hwnd, n_segments, durations, nodes)
+        _CLIP_EXPORT_ALIGNED = True
+        if wrote_cuts:
+            time.sleep(0.35)
+            uia_text, nodes = _read_uia(hwnd)
+    wrote = _fill_each_clip_export_slot(hwnd, sentences[:n_segments])
+    if wrote == 0:
+        wrote = _type_one_clip_export(hwnd, nodes, fallback)
+    time.sleep(0.3)
+    _switch_timeline_kind(hwnd, "sub-goal")
+    _close_timeline_dropdown(hwnd)
+    return {"wrote": wrote, "text": fallback}
+
+
+def _align_clip_export_cuts(
+    hwnd: int,
+    n_segments: int,
+    durations: list[float] | None,
+    nodes: list[Any],
+) -> int:
+    """K-split Clip Export at each Sub-goal boundary so clips run in parallel. Never HTE."""
+    fracs = clip_export_cut_fractions(durations, n_segments)
+    if not fracs:
+        return 0
+    _pause_via_uia(hwnd, nodes)
+    cuts = 0
+    for frac in fracs[:8]:
+        x, y = _click_full_timeline_fraction(hwnd, frac, nodes)
+        say(f"Clip Export cut at {int(frac * 100)}% ({x},{y})")
+        time.sleep(0.2)
+        _press_k_to_create(hwnd)
+        cuts += 1
+        time.sleep(0.35)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    say(f"Split Clip Export into {cuts + 1} segments in parallel with sub-goals")
+    return cuts
+
+
+def _fill_each_clip_export_slot(hwnd: int, sentences: list[str]) -> int:
+    wrote = 0
+    n = max(len(sentences), 1)
+    for i, sentence in enumerate(sentences):
+        frac = (i + 0.45) / n
+        _click_full_timeline_fraction(hwnd, frac)
+        time.sleep(0.25)
+        uia_text, nodes = _read_uia(hwnd, verbose=False)
+        clicked = _click_bottom_pending(hwnd, nodes) or _click_uia_empty_clip(nodes)
+        if not clicked and not _OCR_BROKEN:
+            words, img_w, img_h = _ocr_window(hwnd, f"clip_export_{i}")
+            left, top, _w, _h = _window_rect(hwnd)
+            for phrase in ("click to add text", "the person", "focus annotation"):
+                target = find_phrase_click(words, phrase, img_w, img_h, y_min_frac=0.10)
+                if target:
+                    _focus(hwnd)
+                    _click_screen(left + target[0], top + target[1])
+                    clicked = True
+                    break
+        if not clicked:
+            say(f"Typing Clip Export {i + 1}/{n} into the focused field")
+        time.sleep(0.15)
+        _type_into_focused(sentence)
+        _blur_caption(hwnd, nodes)
+        wrote += 1
+        say(f"Typed Clip Export {i + 1}/{n}: {sentence}")
+        time.sleep(0.3)
+    return wrote
+
+
+def _type_one_clip_export(hwnd: int, nodes: list[Any], text: str) -> int:
     clicked = False
+    names = [_uia_name(ctrl) for ctrl in nodes]
     if not clip_export_needs_new_clip(names):
         clicked = _click_bottom_pending(hwnd, nodes)
         if not clicked:
             clicked = _click_uia_empty_clip(nodes)
         if not clicked and not _OCR_BROKEN:
             words, img_w, img_h = _ocr_window(hwnd, "clip_export")
-            preview = ocr_text(words)
             left, top, _w, _h = _window_rect(hwnd)
             phrases = ("the person", "focus annotation", "click to add text")
-            if not is_clip_export_placeholder(preview):
+            if not is_clip_export_placeholder(ocr_text(words)):
                 phrases = ("focus annotation", "the person", "click to add text")
             for phrase in phrases:
                 target = find_phrase_click(words, phrase, img_w, img_h, y_min_frac=0.10)
@@ -954,14 +1167,11 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         if not clicked:
             say("Clip Export span created; typing into the focused field")
             clicked = True
-
     time.sleep(0.2)
     _type_into_focused(text)
+    _blur_caption(hwnd, nodes)
     say(f"Typed Clip Export: {text}")
-    time.sleep(0.4)
-    _switch_timeline_kind(hwnd, "sub-goal")
-    _close_timeline_dropdown(hwnd)
-    return {"wrote": 1, "text": text}
+    return 1
 
 
 def _click_bottom_pending(hwnd: int, nodes: list[Any]) -> bool:
@@ -1005,6 +1215,11 @@ def _span_clip_export(hwnd: int, nodes: list[Any]) -> None:
 def _split_long_idle(hwnd: int, write: bool = True) -> dict:
     """Split Idle >5s with K, per clipping spec. Never HTE. Never Submit."""
     uia_text, nodes = _read_uia(hwnd)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    if not should_split_overlong_idle(names):
+        if any(is_false_idle_review_error(n) for n in names):
+            say("Not splitting: Quality Assistant says this Idle clip has action")
+        return {"wrote": 0, "text": uia_text}
     target = None
     for ctrl in nodes:
         if is_idle_too_long_error(_uia_name(ctrl)):
@@ -1237,6 +1452,21 @@ def _type_into_focused(text: str) -> None:
     _send_ctrl_a()
     time.sleep(0.05)
     _send_unicode(text)
+
+
+def _blur_caption(hwnd: int, nodes: list[Any] | None = None) -> None:
+    """Leave the caption field so Quality Assistant re-runs. Never Submit. Never Enter."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    for ctrl in nodes:
+        if _uia_name(ctrl).strip().casefold() == "focused timeline":
+            center = _ctrl_center(ctrl)
+            if center:
+                _click_screen(center[0], center[1])
+                time.sleep(0.15)
+                return
+    _send_vk(0x09)
+    time.sleep(0.1)
 
 
 def _read_window_text(hwnd: int) -> str:
@@ -1576,7 +1806,12 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
         uia_text, nodes = _read_uia(hwnd)
 
     body = "\n".join(part for part in (uia_text, ocr_text(words)) if part)
-    for item in lint_clips([clip.to_dict() for clip in parse_clips_from_text(body)]):
+    parsed = parse_clips_from_text(body)
+    clip_dicts = [clip.to_dict() for clip in parsed]
+    if not clip_dicts:
+        for cap in captions_from_ocr_blob(body):
+            clip_dicts.append({"caption": cap, "kind": "subgoal", "duration_s": None})
+    for item in lint_clips(clip_dicts):
         lint = item["lint"]
         if item.get("skip_edit") or not lint.changed:
             continue
@@ -1604,6 +1839,10 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
             hit = find_phrase_click(
                 words, snippet, img_w, img_h, y_min_frac=0.48, y_max_frac=0.96
             )
+        if hit is None:
+            hit = find_phrase_click(
+                words, snippet, img_w, img_h, y_min_frac=0.12, y_max_frac=0.62, x_max_frac=0.98
+            )
         if not hit:
             continue
         say(f"Clicked red clip to edit: {snippet}")
@@ -1614,6 +1853,7 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
             _click_screen(left + hit[0], top + hit[1])
         time.sleep(0.2)
         _type_into_focused(lint.rewritten)
+        _blur_caption(hwnd, nodes)
         wrote += 1
         say(f"Typed caption fix: {lint.rewritten}")
         time.sleep(0.35)

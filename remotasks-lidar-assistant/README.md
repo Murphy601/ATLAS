@@ -33,9 +33,12 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
 - **pauses only after watching the first clips** (~24s from the start). It does not stop after 2 segments.
-- if the first card says **Idle** but Review flags missing hands / 10 words / format (the clip has action), it **replaces Idle** with a 10+ word hand caption grounded in the next sub-goal (mayonnaise jar / kitchen counter). It does not split a mislabeled action into smaller Idle pieces
+- **Play is confirmed by Pause on screen.** If UIA still shows Play, the engine clicks the video (below the tab strip). It does not send Space after a Play click, so the clip is not toggled off. A 24s wait with the playhead frozen is not a watch.
+- seeks Full Timeline using the bar (not the left-edge label) and the first Focused Timeline card so playback starts at 0s
+- if Quality Assistant says missing hands / 10 words / format on an Idle clip, it **replaces Idle** with a 10+ word hand caption. It does **not** K-split that action into smaller Idle pieces
 - splits Idle **over 5s** only when the clip is truly Idle (no action). Caption stays `Idle`. Never HTE
-- switches the top **Sub-goal** dropdown to **ClipExport** and types 1–2 kitchen/environment sentences into the **existing pending / Focus annotation** field. It does **not** press K when a Clip Export clip already exists (K at the playhead makes a short clip that is not in parallel with sub-goals)
+- switches the top **Sub-goal** dropdown to **ClipExport**, **K-splits at each sub-goal boundary**, and types a third-person kitchen sentence into **each** parallel clip. One sentence in a single existing field does not clear `All ClipExports must be fully filled in parallel with Sub-goals`
+- rewrites sub-goals that join actions with a **period** (`...left hand. Hold...` → `...left hand and hold...`)
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 
 You should see a click like `Clicked video-center at 525,367` (y much larger than 50).

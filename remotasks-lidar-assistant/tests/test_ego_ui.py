@@ -77,3 +77,30 @@ click or press K to create
     assert "mayonnaise" in clips[0].caption
     assert all("QUALITY ASSISTANT" not in c.caption for c in clips)
     assert all("Shortcuts" not in c.caption for c in clips)
+
+
+def test_parses_sensorfusionlab_range_cards() -> None:
+    text = """
+Focused Timeline
+0s - 5.1s (5.1s)
+Move both hands toward the red mayonnaise jar on the kitchen counter
+edited
+5.1s - 8.2s (3.1s)
+Pick up the red mayonnaise jar with the left hand
+pending
+13.9s - 17.0s (3.1s)
+Open the refrigerator door with the left hand. Hold the red mayonnaise jar with the left hand and hold the blue container with the right hand
+19.8s - 22.0s (2.2s)
+Pour the black bucket from the right to the left hand. Put the blue container into the middle layer of the refrigerator with the right hand
+click or press K to create
+Full Timeline
+Watched 100%
+"""
+    clips = parse_clips_from_text(text)
+    assert len(clips) >= 4
+    assert clips[0].start_s == 0.0
+    assert clips[0].end_s == 5.1
+    assert "mayonnaise" in clips[0].caption.lower()
+    fridge = [c for c in clips if "refrigerator door" in c.caption.lower()]
+    assert fridge
+    assert "." in fridge[0].caption
