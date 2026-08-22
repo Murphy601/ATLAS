@@ -461,21 +461,29 @@ def clip_export_sentence_for_subgoal(caption: str) -> str:
     cleaned = re.sub(r"\bwith both hands\b", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\bwith the (?:left|right) hand\b", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\bhandling\b", "moving", cleaned, flags=re.I)
+    cleaned = re.sub(r"\band hold(?:s)? the [a-z]+\b", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bon the (blouse|shirt|pants)\b", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
     if not cleaned or _HAND_SUBSTRING.search(cleaned):
         return ""
-    words = cleaned.split()
-    verb = words[0]
-    rest = words[1:]
-    if rest and rest[0].lower() == "up":
-        tp_verb = "picks up"
-        rest = rest[1:]
-    elif rest and rest[0].lower() == "down":
-        tp_verb = f"{_third_person_verb(verb)} down"
-        rest = rest[1:]
-    else:
-        tp_verb = _third_person_verb(verb)
-    body = " ".join([tp_verb, *rest]).strip()
+    parts = re.split(r"\s+and\s+", cleaned, flags=re.I)
+    bodies: list[str] = []
+    for part in parts:
+        words = part.split()
+        if not words:
+            continue
+        verb = words[0]
+        rest = words[1:]
+        if rest and rest[0].lower() == "up":
+            tp_verb = "picks up"
+            rest = rest[1:]
+        elif rest and rest[0].lower() == "down":
+            tp_verb = f"{_third_person_verb(verb)} down"
+            rest = rest[1:]
+        else:
+            tp_verb = _third_person_verb(verb)
+        bodies.append(" ".join([tp_verb, *rest]).strip())
+    body = " and ".join(bodies)
     blob = cleaned.lower()
     laundry = any(tok in blob for tok in ("shirt", "blouse", "pants", "laundry", "fold", "table"))
     if "kitchen" in blob or "counter" in blob:

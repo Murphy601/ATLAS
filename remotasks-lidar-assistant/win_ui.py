@@ -27,6 +27,8 @@ from review_ui import (
     clip_export_cut_fractions,
     clip_export_end_fractions_from_status_rects,
     clip_export_end_fractions_from_times,
+    clip_durations_from_ocr,
+    qa_end_mismatch_seconds,
     clip_export_needs_new_clip,
     clip_export_needs_parallel_splits,
     clip_export_slot_mid_fractions,
@@ -339,15 +341,17 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         review = {"applied": 0, "text": page_text}
         filled = {"wrote": 0, "text": page_text}
         idle_rounds = 0
+        clip_export_qa = False
         for pass_i in range(4):
             say(f"Review pass {pass_i + 1}/4")
             _pause_via_uia(hwnd)
             _close_timeline_dropdown(hwnd)
             _text_pass, nodes_pass = _read_uia(hwnd, verbose=False)
             names_pass = [_uia_name(ctrl) for ctrl in nodes_pass]
-            exported = {"wrote": 0, "text": ""}
-            if should_fill_clip_export(names_pass, already_filled=_CLIP_EXPORT_FILLED):
+            exported = {"wrote": 0, "text": "", "qa_remaining": False}
+            if should_fill_clip_export(names_pass, already_filled=_CLIP_EXPORT_FILLED) or clip_export_qa:
                 exported = _fill_clip_export(hwnd, write=write)
+                clip_export_qa = bool(exported.get("qa_remaining"))
             _switch_timeline_kind(hwnd, "sub-goal")
             used = _apply_review_uses(hwnd, write=write, max_clicks=4)
             recap = _recaption_false_idle(hwnd, write=write)
@@ -385,12 +389,12 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             )
             names_now = [line for line in (uia_now or "").splitlines() if line.strip()]
             if not quality_linters_remaining(names_now) and used["applied"] == 0:
-                if not review_work_remaining(body_now):
+                if not review_work_remaining(body_now) and not clip_export_qa:
                     say("No more Review / Quality Assistant work on screen.")
                     break
             if used["applied"] + missing["wrote"] + exported["wrote"] + split["wrote"] + recap.get("wrote", 0) == 0:
                 idle_rounds += 1
-                if not review_work_remaining(body_now):
+                if not review_work_remaining(body_now) and not clip_export_qa:
                     say("No more Review / Quality Assistant work on screen.")
                     break
                 if idle_rounds >= 2:
@@ -1214,7 +1218,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _CLIP_EXPORT_STUCK
     if _CLIP_EXPORT_STUCK:
         say("Clip Export editor did not keep text last pass; not repeating the same empty field")
-        return {"wrote": 0, "text": ""}
+        return {"wrote": 0, "text": "", "qa_remaining": True}
     uia_text, nodes = _read_uia(hwnd)
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
     missing = any(is_clip_export_missing_error(n) for n in names) or is_clip_export_missing_error(
@@ -1223,7 +1227,11 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     end_mismatch = any(is_clip_export_end_mismatch(n) for n in names)
     hands = any(is_clip_export_hands_error(n) for n in names)
     if not should_fill_clip_export(names, already_filled=_CLIP_EXPORT_FILLED):
-        return {"wrote": 0, "text": uia_text}
+        return {
+            "wrote": 0,
+            "text": uia_text,
+            "qa_remaining": has_clip_export_quality_error(names),
+        }
     empty_err = any(is_clip_export_empty_error(n) for n in names) or is_clip_export_empty_error(
         uia_text
     )
@@ -1245,7 +1253,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     blob.extend(sub_caps)
     fallback = clip_export_from_subgoals(blob)
     n_cards = count_subgoal_spans(names, ocr_blob)
-    end_fracs = _subgoal_end_fractions(hwnd, nodes, harvested)
+    end_fracs = _subgoal_end_fractions(hwnd, nodes, harvested, names, ocr_blob)
     n_slots = max(n_cards or 1, len(sub_caps) or 1, (len(end_fracs) + 1) if end_fracs else 1)
     sentences = clip_export_slot_sentences(sub_caps or blob, n_slots, fallback)
     say(
@@ -1253,7 +1261,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         f"to {len(end_fracs)} Sub-goal end(s) ({n_slots} slot(s))"
     )
     if not write:
-        return {"wrote": 0, "text": uia_text}
+        return {"wrote": 0, "text": uia_text, "qa_remaining": True}
 
     for ctrl in nodes:
         name = _uia_name(ctrl)
@@ -1279,15 +1287,18 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         say("Not creating a second Clip Export track on Full Timeline")
     left, top, _width, height = _window_rect(hwnd)
     chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
-    if should_snap_clip_export_ends(names, chip_count=len(chips_now), duplicate=duplicate) and (
-        not _CLIP_EXPORT_ALIGNED and end_fracs
+    snap = should_snap_clip_export_ends(names, chip_count=len(chips_now), duplicate=duplicate)
+    if snap and end_fracs and (
+        not _CLIP_EXPORT_ALIGNED
+        or any(is_clip_export_end_mismatch(n) for n in names)
+        or any(is_clip_export_missing_error(n) for n in names)
     ):
         _align_clip_export_on_focused_timeline(hwnd, end_fracs, nodes)
         _CLIP_EXPORT_ALIGNED = True
         time.sleep(0.3)
         uia_text, nodes = _read_uia(hwnd)
     else:
-        if not should_snap_clip_export_ends(names, chip_count=len(chips_now), duplicate=duplicate):
+        if not snap:
             say(
                 f"Clip Export already has {len(chips_now) or 'existing'} card(s); "
                 "not pressing K on Focused Timeline"
@@ -1336,7 +1347,6 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             _CLIP_EXPORT_STUCK = True
         if wrote:
             _CLIP_EXPORT_FILLED = True
-            _click_quality_run_now(hwnd, nodes)
         if any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes):
             say("Clip Export still mentions hands; retyping without hand/handling")
             _click_clip_export_caption_field(nodes, prefer_hands=True)
@@ -1345,13 +1355,28 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             wrote = 1
             say(f"Typed Clip Export: {fallback}")
     _click_clip_export_end_ignore(hwnd, nodes)
+    time.sleep(0.2)
+    used_export = _apply_review_uses(hwnd, write=write, max_clicks=3)
+    if used_export.get("applied"):
+        say(f"Clicked Clip Export Grammar Use {used_export['applied']} time(s)")
+        wrote += int(used_export["applied"])
+    _click_quality_run_now(hwnd)
     time.sleep(0.3)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names_left = [_uia_name(ctrl) for ctrl in nodes]
+    qa_remaining = has_clip_export_quality_error(names_left)
     _switch_timeline_kind(hwnd, "sub-goal")
     _close_timeline_dropdown(hwnd)
-    return {"wrote": wrote, "text": fallback}
+    return {"wrote": wrote, "text": fallback, "qa_remaining": qa_remaining}
 
 
-def _subgoal_end_fractions(hwnd: int, nodes: list[Any], harvested: list[Any]) -> list[float]:
+def _subgoal_end_fractions(
+    hwnd: int,
+    nodes: list[Any],
+    harvested: list[Any],
+    names: list[str] | None = None,
+    ocr_blob: str = "",
+) -> list[float]:
     """Cut Clip Export at real Sub-goal ends, never at 16/33/50% guesses."""
     end_times: list[float] = []
     durations: list[float] = []
@@ -1367,7 +1392,12 @@ def _subgoal_end_fractions(hwnd: int, nodes: list[Any], harvested: list[Any]) ->
             dur = float(end) - float(start)
         if dur and float(dur) > 0.05:
             durations.append(float(dur))
-    fracs = clip_export_end_fractions_from_times(end_times)
+    for sec in qa_end_mismatch_seconds(names or []):
+        if all(abs(sec - seen) > 0.15 for seen in end_times):
+            end_times.append(sec)
+    durations.extend(clip_durations_from_ocr(ocr_blob))
+    total = sum(durations) if len(durations) >= 2 else None
+    fracs = clip_export_end_fractions_from_times(end_times, total)
     if fracs:
         return fracs
     if len(durations) >= 2:
@@ -1520,8 +1550,6 @@ def _click_clip_export_editor(hwnd: int, nodes: list[Any]) -> bool:
         if _uia_click(ctrl):
             say(f"Clicked UIA empty clip: {name}")
             return True
-    if _click_clip_export_caption_field(nodes, prefer_hands=True):
-        return True
     return False
 
 
@@ -1590,7 +1618,16 @@ def _write_clip_export_sentence(hwnd: int, nodes: list[Any], sentence: str) -> b
         if "click to add" in _uia_name(ctrl).casefold():
             field = ctrl
             break
+    names_now = [_uia_name(ctrl) for ctrl in nodes]
+    if any(is_clip_export_caption_label(n) for n in names_now) and not any(
+        is_empty_clip_label(n) for n in names_now
+    ):
+        say("Clip Export chip already has a The-person sentence; not overwriting it")
+        return True
     if not _click_clip_export_editor(hwnd, nodes):
+        if any(is_clip_export_caption_label(n) for n in names_now):
+            say("Clip Export chip already has text; leaving it")
+            return True
         say("Could not focus click-to-add-text; not counting this Clip Export write")
         return False
     time.sleep(0.2)

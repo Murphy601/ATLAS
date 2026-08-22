@@ -413,14 +413,18 @@ def clip_export_end_fractions_from_status_rects(
     return out
 
 
-def clip_export_end_fractions_from_times(end_times: list[float]) -> list[float]:
+def clip_export_end_fractions_from_times(
+    end_times: list[float], total_s: float | None = None
+) -> list[float]:
     """Interior Clip Export K-cuts from Sub-goal end seconds (not equal-percentage guesses)."""
-    if len(end_times) < 2:
+    if not end_times:
         return []
-    total = max(float(end_times[-1]), 0.01)
+    last = max(float(end_times[-1]), 0.01)
+    span = float(total_s) if total_s and total_s > last + 0.2 else last
+    cuts = list(end_times) if total_s and total_s > last + 0.2 else list(end_times[:-1])
     out: list[float] = []
-    for end in end_times[:-1]:
-        frac = float(end) / total
+    for end in cuts:
+        frac = float(end) / span
         if 0.04 <= frac <= 0.96:
             out.append(round(frac, 4))
     return out
@@ -743,11 +747,10 @@ def pick_click_to_add_text_target(
     return rect, (x, y)
 
 
-def should_skip_observe(watched_pct: int | None, names: list[str]) -> bool:
-    """When Watched is already high, do not replay 24s before filling Clip Export."""
-    if watched_pct is None or watched_pct < 80:
-        return False
-    return has_clip_export_quality_error(names)
+def should_skip_observe(watched_pct: int | None, names: list[str] | None = None) -> bool:
+    """When Watched is already high, do not replay 24s. QA rows are often missing from UIA."""
+    del names
+    return watched_pct is not None and watched_pct >= 80
 
 
 def should_snap_clip_export_ends(
@@ -756,9 +759,16 @@ def should_snap_clip_export_ends(
     chip_count: int = 0,
     duplicate: bool = False,
 ) -> bool:
-    """K-split only when Clip Export has no cards yet. Empty review chips already exist."""
-    if duplicate or any(is_clip_export_duplicate_timeline(n) for n in names):
-        return False
+    """K-split on Focused Timeline when ends or parallel slots are still wrong.
+
+    A second Full Timeline track is a different problem. Focused Timeline K does
+    not create another Clip Export type.
+    """
+    del duplicate
+    if any(is_clip_export_end_mismatch(n) for n in names):
+        return True
+    if any(is_clip_export_missing_error(n) for n in names):
+        return True
     if chip_count >= 2:
         return False
     if any(is_clip_export_review_chip(n) for n in names) and any(is_empty_clip_label(n) for n in names):
@@ -766,6 +776,34 @@ def should_snap_clip_export_ends(
     if any(is_clip_export_empty_error(n) or is_clip_export_short_error(n) for n in names):
         return False
     return True
+
+
+QA_FRAME_RE = re.compile(r"on frames?:\s*([\d,\s]+)", re.I)
+
+
+def qa_end_mismatch_seconds(names: list[str], fps: float = 30.0) -> list[float]:
+    """Frame 297 at 30 fps is the 9.9s first Sub-goal end."""
+    times: list[float] = []
+    rate = max(float(fps or 30.0), 1.0)
+    for name in names:
+        if not is_clip_export_end_mismatch(name):
+            continue
+        for match in QA_FRAME_RE.finditer(name or ""):
+            for tok in match.group(1).split(","):
+                tok = tok.strip()
+                if tok.isdigit():
+                    times.append(round(int(tok) / rate, 3))
+    return times
+
+
+def clip_durations_from_ocr(blob: str) -> list[float]:
+    """Timeline card lengths like 9.9s / 3.1s. Ignore FPS and Watched 100."""
+    vals: list[float] = []
+    for raw in re.findall(r"(\d+(?:\.\d+)?)\s*s\b", blob or "", flags=re.I):
+        val = float(raw)
+        if 0.4 <= val <= 20 and val not in {15.0, 60.0}:
+            vals.append(val)
+    return vals
 
 
 def should_open_subgoal_pending(names: list[str]) -> bool:
@@ -866,6 +904,7 @@ def quality_linters_remaining(names: list[str]) -> bool:
         or is_clip_export_empty_error(n)
         or is_clip_export_short_error(n)
         or is_clip_export_duplicate_timeline(n)
+        or is_clip_export_end_mismatch(n)
         or is_false_idle_review_error(n)
         for n in names
     )
@@ -996,6 +1035,8 @@ def review_work_remaining(text: str) -> bool:
     if "at least 15" in n or "15 word" in n:
         return True
     if "more than one timeline" in n:
+        return True
+    if "end must match" in n:
         return True
     return False
 

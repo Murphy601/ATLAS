@@ -335,6 +335,21 @@ def test_review_description_is_not_the_timeline_placeholder() -> None:
     assert not should_snap_clip_export_ends(empty_names, chip_count=3, duplicate=True)
     assert not should_open_subgoal_pending(empty_names)
     assert should_snap_clip_export_ends(["ClipExport", "Focused Timeline"], chip_count=0)
+    assert should_snap_clip_export_ends(
+        ["All ClipExport end must match a Sub-goal end. On frames: 297."],
+        chip_count=3,
+        duplicate=True,
+    )
+    assert should_snap_clip_export_ends(
+        ["All ClipExports must be fully filled in parallel with Sub-goals"],
+        chip_count=3,
+    )
+    from review_ui import clip_durations_from_ocr, qa_end_mismatch_seconds
+
+    assert qa_end_mismatch_seconds(
+        ["All ClipExport end must match a Sub-goal end. On frames: 297."]
+    ) == [9.9]
+    assert 9.9 in clip_durations_from_ocr("9.9s 3.1s 7.6s Watched 100% 60 FPS")
 
 
 def test_click_to_add_text_prefers_compact_field_not_giant_box() -> None:
@@ -363,7 +378,7 @@ def test_click_to_add_text_prefers_compact_field_not_giant_box() -> None:
     ]
     assert should_skip_observe(100, qa)
     assert not should_skip_observe(40, qa)
-    assert not should_skip_observe(100, ["Sub-goal", "Play"])
+    assert should_skip_observe(100, ["Sub-goal", "Play"])
 
 
 def test_same_card_pending_is_not_the_idle_split_boundary() -> None:

@@ -183,9 +183,20 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
     laundry_slot = clip_export_sentence_for_subgoal("Shake the shirt with both hands")
     assert laundry_slot.startswith("The person")
     assert "shirt" in laundry_slot.lower()
+    assert "hold the shirt" not in laundry_slot.lower()
     assert "hand" not in laundry_slot.lower()
     assert "household" not in laundry_slot.lower()
     assert lint_clip_export(laundry_slot).ok
+    blouse = clip_export_sentence_for_subgoal("Unstack the blouse with the left hand on the blouse")
+    assert "unstacks the blouse" in blouse.lower()
+    assert "on the blouse" not in blouse.lower()
+    assert lint_clip_export(blouse).ok
+    pants = clip_export_sentence_for_subgoal(
+        "Drop the pants with both hands and fold it with both hands"
+    )
+    assert "drops the pants" in pants.lower()
+    assert "folds" in pants.lower()
+    assert lint_clip_export(pants).ok
     idle = clip_export_sentence_for_subgoal("Idle")
     assert "kitchen" in idle.lower()
     assert "hand" not in idle.lower()
