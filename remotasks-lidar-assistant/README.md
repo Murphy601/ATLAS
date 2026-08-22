@@ -17,9 +17,10 @@ cd remotasks-lidar-assistant
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
 
-1. Open any **IX Browser** profile yourself (not Google Chrome, not Gemini).
+1. Click **Open** on the IX profile so **SensorFusionLab** Chromium is visible
+   (not the profile list / Edit Notes dashboard).
 2. Open the EGO task until you see **Focused Timeline**.
-3. Run `run.ps1` in a second PowerShell window. Leave the IX window visible.
+3. Run `run.ps1` in a second PowerShell window. Leave the Chromium task window visible.
 
 The engine ignores Google Chrome / Gemini tabs. If both are open, it drives the IX
 process (`...\IXBrowser\...\chrome.exe`), not `Google\Chrome\Application\chrome.exe`.

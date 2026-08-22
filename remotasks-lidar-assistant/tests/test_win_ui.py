@@ -20,7 +20,11 @@ IX_TASK = {
 
 
 def test_score_window_prefers_ix_and_task_words() -> None:
-    ix = score_window("IX Browser - Profile 1 - Review", "Chrome_WidgetWin_1")
+    ix = score_window(
+        "SensorFusionLab - Chromium",
+        "Chrome_WidgetWin_1",
+        r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe",
+    )
     chrome = score_window("Google Chrome", "Chrome_WidgetWin_1")
     assert ix > chrome
     assert ix >= 3
@@ -84,6 +88,39 @@ def test_sensorfusionlab_title_scores_as_ix_task() -> None:
         r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe",
     )
     assert score > 50
+
+
+def test_rejects_ix_profile_manager_not_chromium() -> None:
+    dashboard = score_window(
+        "Edit Notes",
+        "Chrome_WidgetWin_1",
+        r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe",
+    )
+    manager = score_window(
+        "Dashboard / Browser Profile / Profile List",
+        "Chrome_WidgetWin_1",
+        r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe",
+    )
+    assert dashboard == 0
+    assert manager == 0
+
+
+def test_select_chromium_not_profile_manager() -> None:
+    manager = {
+        "title": "Edit Notes",
+        "class_name": "Chrome_WidgetWin_1",
+        "exe_path": r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe",
+    }
+    task = {
+        "hwnd": 7,
+        "title": "SensorFusionLab - क्रोमियम",
+        "class_name": "Chrome_WidgetWin_1",
+        "exe_path": r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe",
+    }
+    chosen = select_ix_window([manager, task])
+    assert chosen is not None
+    assert chosen["title"].startswith("SensorFusionLab")
+    assert "ixBrowser-Resources" in chosen["exe_path"]
 
 
 def test_drive_open_task_requires_windows(monkeypatch) -> None:

@@ -11,7 +11,7 @@ from typing import Any
 
 from caption_engine import lint_clips
 from ego_task import parse_clips_from_text
-from process_cdp import is_ix_install, is_stock_chrome_path
+from process_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from review_ui import (
     estimated_use_point,
     find_phrase_click,
@@ -41,6 +41,8 @@ REJECT_TITLE_TOKENS = (
     "microsoft edge",
 )
 
+HINDI_CHROMIUM = "क्रोमियम"
+
 CHROME_CLASS = "Chrome_WidgetWin_1"
 TAB_STRIP_MIN = 110
 TAB_STRIP_MAX = 160
@@ -55,27 +57,32 @@ def say(msg: str) -> None:
 
 
 def score_window(title: str, class_name: str = "", exe_path: str = "") -> int:
-    """Score a desktop window. Google Chrome / Gemini never win over IX Browser."""
+    """Score a desktop window. Prefer IX Chromium (SensorFusionLab), never the profile manager."""
     lowered = (title or "").lower()
     if any(token in lowered for token in REJECT_TITLE_TOKENS):
         return 0
-    if is_stock_chrome_path(exe_path) and not is_ix_install(exe_path=exe_path):
+    if is_ix_launcher(title, exe_path):
+        return 0
+    if is_stock_chrome_path(exe_path) and not is_ix_chromium_exe(exe_path):
         return 0
 
     score = 0
-    ix = is_ix_install(exe_path=exe_path) or "ixbrowser" in lowered or "ix browser" in lowered
-    if ix:
-        score += 50
+    if is_ix_chromium_exe(exe_path):
+        score += 80
+    if "sensorfusionlab" in lowered or "sensorfusion" in lowered:
+        score += 40
+    if HINDI_CHROMIUM in (title or "") or "chromium" in lowered:
+        score += 20
     class_l = (class_name or "").lower()
     chrome_like = class_name == CHROME_CLASS or class_l.startswith("chrome_widgetwin")
-    if chrome_like and ix:
+    if chrome_like and is_ix_chromium_exe(exe_path):
         score += 5
     for hint in TASK_HINTS:
         if hint in lowered:
             score += 10
     if score == 0:
         return 0
-    if not ix and not chrome_like:
+    if not is_ix_chromium_exe(exe_path) and "sensorfusionlab" not in lowered:
         return 0
     return score
 
@@ -266,6 +273,7 @@ def _pick_ix_window() -> tuple[int, str]:
             if title and (
                 any(token in title.lower() for token in REJECT_TITLE_TOKENS)
                 or is_stock_chrome_path(exe_path)
+                or is_ix_launcher(title, exe_path)
             ):
                 skipped.append(title)
             return True
@@ -274,13 +282,14 @@ def _pick_ix_window() -> tuple[int, str]:
 
     user32.EnumWindows(callback, 0)
     for title in skipped[:8]:
-        say(f"Skipping Google Chrome/Gemini window: {title}")
+        say(f"Skipping non-task window: {title}")
     chosen = select_ix_window(found)
     if chosen is None:
         seen = skipped[:8] or [row.get("title") or "(no title)" for row in found[:8]]
         raise RuntimeError(
-            "Could not find an IX Browser window. Leave the IX profile visible "
-            "(not Google Chrome / Gemini) with the EGO task on screen. "
+            "Could not find the IX Chromium task window (SensorFusionLab). "
+            "The profile manager / Edit Notes dashboard is not the task. "
+            "Click Open on the profile, leave SensorFusionLab visible, then retry. "
             f"Saw: {seen}"
         )
     exe = chosen.get("exe_path") or ""

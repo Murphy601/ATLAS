@@ -95,6 +95,43 @@ def is_ix_install(
     return any(marker.replace("\\", "/") in lowered for marker in IX_PATH_MARKERS)
 
 
+def is_ix_chromium_exe(exe_path: str | None) -> bool:
+    """The open profile Chromium (SensorFusionLab), not the IX dashboard/launcher."""
+    path = _norm_path(exe_path)
+    name = path.rsplit("/", 1)[-1]
+    if name in {"ixbrowser.exe", "ix browser.exe"}:
+        return False
+    if name not in {"chrome.exe", "chromium.exe"}:
+        return False
+    return "ixbrowser" in path or "ix-browser" in path
+
+
+def is_ix_launcher(title: str | None = None, exe_path: str | None = None) -> bool:
+    """IX profile manager / Edit Notes dashboard — not the task Chromium."""
+    lowered = (title or "").lower()
+    path = _norm_path(exe_path)
+    name = path.rsplit("/", 1)[-1]
+    if name in {"ixbrowser.exe", "ix browser.exe"}:
+        return True
+    tokens = (
+        "edit notes",
+        "profile list",
+        "create profile",
+        "browser profile",
+        "proxy resources",
+        "extension management",
+        "team management",
+        "purchase plan",
+        "synchronizer",
+        "please enter content",
+    )
+    if any(token in lowered for token in tokens):
+        return True
+    if "dashboard" in lowered and "profile" in lowered:
+        return True
+    return False
+
+
 def is_stock_chrome_path(exe_path: str | None) -> bool:
     lowered = _norm_path(exe_path)
     return any(marker in lowered for marker in STOCK_CHROME_MARKERS)
@@ -132,7 +169,9 @@ def _candidate_http_urls() -> list[str]:
                 cmd = " ".join(str(part) for part in cmdline_list)
                 name = info.get("name") or ""
                 exe = info.get("exe") or ""
-                if not is_ix_install(name, cmd, exe):
+                if is_ix_launcher(name, exe):
+                    continue
+                if not is_ix_chromium_exe(exe):
                     continue
                 for url in command_line_cdp_urls(cmd):
                     add(url)

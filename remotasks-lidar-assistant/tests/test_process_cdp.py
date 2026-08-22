@@ -72,6 +72,17 @@ def test_is_stock_chrome_path() -> None:
     )
 
 
+def test_ix_chromium_exe_not_launcher() -> None:
+    assert process_cdp.is_ix_chromium_exe(
+        r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe"
+    )
+    assert not process_cdp.is_ix_chromium_exe(
+        r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe"
+    )
+    assert process_cdp.is_ix_launcher("Edit Notes", r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe")
+    assert process_cdp.is_ix_launcher("Dashboard / Browser Profile / Profile List", "")
+
+
 def test_ix_devtools_file_urls_from_appdata(tmp_path: Path, monkeypatch) -> None:
     profile = tmp_path / "ixbrowser" / "profile"
     profile.mkdir(parents=True)
