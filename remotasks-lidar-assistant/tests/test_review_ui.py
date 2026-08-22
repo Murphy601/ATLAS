@@ -584,8 +584,22 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
                 "The person stands at an indoor table and folds shirts, pants, and a blouse during a laundry task",
             ]
         )
-        == "sub-goal"
+        == "clip export"
     )
+    from review_ui import clip_export_track_ready
+
+    live = [
+        "ClipExport",
+        "ClipExport",
+        "Play",
+        "Focused Timeline",
+        "Sub-goal",
+        "done",
+        "done",
+        "All ClipExports must be fully filled in parallel with Sub-goals",
+    ]
+    assert clip_export_track_ready(live)
+    assert selected_timeline_kind(live) == "clip export"
     assert (
         selected_timeline_kind(
             [
@@ -620,6 +634,9 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
         ["Hand Tracking Error", "pending", "missing_hand_predictions"]
     )
     assert not should_abort_clip_export_k(["ClipExport", "done", "done"])
+    assert not should_abort_clip_export_k(
+        ["ClipExport", "ClipExport", "Focused Timeline", "Sub-goal", "done", "done"]
+    )
     assert (
         focused_timeline_kind(
             ["ClipExport", "ClipExport", "Focused Timeline", "Sub-goal", "done"]

@@ -1160,12 +1160,16 @@ def focused_timeline_kind(names: list[str]) -> str | None:
 
 
 def selected_timeline_kind(names: list[str]) -> str | None:
-    """Focused Timeline kind when the dropdown is closed. None if the menu is open."""
+    """Toolbar kind when the dropdown is closed. None if the menu is open.
+
+    'Sub-goal' after Focused Timeline is the Full Timeline track label, not the
+    selected kind. Header ClipExport must win so fill is not aborted.
+    """
     if timeline_dropdown_is_open(names):
         return None
     focused = focused_timeline_kind(names)
-    if focused:
-        return focused
+    if focused == "hte" and not any(is_clip_export_tab(n) for n in names or []):
+        return "hte"
     for name in names:
         if is_clip_export_missing_error(name):
             continue
@@ -1175,16 +1179,31 @@ def selected_timeline_kind(names: list[str]) -> str | None:
             return "clip export"
         if (name or "").strip().casefold() in {"sub-goal", "subgoal"}:
             return "sub-goal"
-    return None
+    return focused
+
+
+def clip_export_track_ready(names: list[str]) -> bool:
+    """True when Clip Export can be filled. A Sub-goal chip under Focused Timeline is the other track."""
+    if any(is_hte_clip_caption(n) for n in names or []):
+        return False
+    if focused_timeline_kind(names or []) == "hte" and not any(
+        is_clip_export_tab(n) or is_clip_export_style_caption(n) for n in names or []
+    ):
+        return False
+    return any(is_clip_export_tab(n) for n in names or []) or any(
+        is_clip_export_style_caption(n) for n in names or []
+    )
 
 
 def should_abort_clip_export_k(names: list[str]) -> bool:
-    """Stop the whole K loop only if the track became Hand Tracking Error."""
-    if selected_timeline_kind(names) == "hte":
+    """Stop the whole K loop only if Hand Tracking Error clips are on the focused track."""
+    if any(is_hte_clip_caption(n) for n in names or []):
         return True
-    if focused_timeline_kind(names) == "hte":
+    if focused_timeline_kind(names or []) == "hte" and not any(
+        is_clip_export_style_caption(n) for n in names or []
+    ):
         return True
-    return any(is_hte_clip_caption(n) for n in names)
+    return False
 
 
 def should_stop_clip_export_k(

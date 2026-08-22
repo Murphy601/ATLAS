@@ -107,6 +107,7 @@ from review_ui import (
     review_sidebar_open,
     review_work_remaining,
     selected_timeline_kind,
+    clip_export_track_ready,
     should_stop_clip_export_k,
     should_recaption_false_idle,
     should_skip_watch,
@@ -1380,8 +1381,12 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         return {"wrote": 0, "text": uia_text, "qa_remaining": True}
 
     if not _ensure_clip_export_track(hwnd, nodes):
-        say("Cannot fill Clip Export while Hand Tracking Error is selected")
-        return {"wrote": 0, "text": uia_text, "qa_remaining": True}
+        names_now = [_uia_name(ctrl) for ctrl in nodes]
+        if clip_export_track_ready(names_now):
+            say("Clip Export track is on screen; filling it (Focused Timeline still lists Sub-goal)")
+        else:
+            say("Cannot fill Clip Export while Hand Tracking Error is selected")
+            return {"wrote": 0, "text": uia_text, "qa_remaining": True}
     _text, nodes = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in nodes]
     _focus_filled_clip_export_track(hwnd, nodes)
@@ -1917,31 +1922,27 @@ def _ensure_clip_export_track(hwnd: int, nodes: list[Any] | None = None) -> bool
     if nodes is None:
         _text, nodes = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in nodes]
-    kind = selected_timeline_kind(names)
-    if kind == "hte" or any(is_hte_clip_caption(n) for n in names):
+    if any(is_hte_clip_caption(n) for n in names):
         say("Hand Tracking Error is selected; switching to Clip Export")
         _switch_timeline_kind(hwnd, "clip export")
         time.sleep(0.3)
         _text, nodes = _read_uia(hwnd, verbose=False)
         names = [_uia_name(ctrl) for ctrl in nodes]
-        kind = selected_timeline_kind(names)
-    if kind == "hte" or any(is_hte_clip_caption(n) for n in names):
+    if any(is_hte_clip_caption(n) for n in names):
         say("Still on Hand Tracking Error; not creating or typing HTE clips")
         return False
-    if kind != "clip export":
-        if _click_full_timeline_clip_export_track(hwnd, nodes):
-            time.sleep(0.25)
-            _text, nodes = _read_uia(hwnd, verbose=False)
-            names = [_uia_name(ctrl) for ctrl in nodes]
-            kind = selected_timeline_kind(names)
-        if kind != "clip export":
-            _switch_timeline_kind(hwnd, "clip export")
-            time.sleep(0.3)
-            _text, nodes = _read_uia(hwnd, verbose=False)
-            names = [_uia_name(ctrl) for ctrl in nodes]
-            if selected_timeline_kind(names) != "clip export":
-                return False
-    return True
+    if clip_export_track_ready(names):
+        return True
+    _switch_timeline_kind(hwnd, "clip export")
+    time.sleep(0.3)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    if clip_export_track_ready(names):
+        return True
+    if selected_timeline_kind(names) == "clip export":
+        return True
+    say("Clip Export switch did not stick; not treating that as Hand Tracking Error")
+    return False
 
 
 def _click_full_timeline_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
@@ -1966,17 +1967,14 @@ def _click_full_timeline_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
 
 def _focus_filled_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
     """Click a timeline chip (not the Review caption) so K hits Clip Export, not a text box."""
-    _click_full_timeline_clip_export_track(hwnd, nodes)
-    _text, nodes = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in nodes]
-    kind = focused_timeline_kind(names) or selected_timeline_kind(names)
-    if kind == "hte":
+    if not clip_export_track_ready(names):
+        _click_full_timeline_clip_export_track(hwnd, nodes)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+    if any(is_hte_clip_caption(n) for n in names):
         say("Focused Timeline is Hand Tracking Error; not clicking that track")
         return False
-    if kind != "clip export":
-        _switch_timeline_kind(hwnd, "clip export")
-        time.sleep(0.25)
-        _text, nodes = _read_uia(hwnd, verbose=False)
     left, top, _width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
     chips = pick_clip_export_status_rects(_named_rects(nodes), min_y)
@@ -2281,13 +2279,41 @@ def _split_long_idle(hwnd: int, write: bool = True) -> dict:
     return {"wrote": wrote, "text": uia_text}
 
 
+def _dropdown_kind_ctrl(nodes: list[Any], want: str) -> Any | None:
+    """ClipExport / Sub-goal row from the open 3-item menu only. Never a Full Timeline track."""
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    if not timeline_dropdown_is_open(names):
+        return None
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if is_hte_label(name):
+            continue
+        if want == "clip export" and is_clip_export_tab(name):
+            return ctrl
+        if want == "sub-goal" and name.strip().casefold() in {"sub-goal", "subgoal"}:
+            return ctrl
+    return None
+
+
+def _wait_kind_dropdown_open(hwnd: int, tries: int = 6) -> list[Any]:
+    """The 3-item menu often lags one UIA read behind the click."""
+    nodes: list[Any] = []
+    for _attempt in range(max(int(tries), 1)):
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+        if timeline_dropdown_is_open(names):
+            return nodes
+        time.sleep(0.2)
+    return nodes
+
+
 def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
     """Open the Sub-goal dropdown and pick Clip Export or Sub-goal. Never HTE."""
     want = "clip export" if kind.strip().casefold() in {"clip export", "clipexport", "clip_export"} else "sub-goal"
     _text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
     current = selected_timeline_kind(names)
-    if current == want:
+    if current == want or (want == "clip export" and clip_export_track_ready(names)):
         say(f"Already on {want} timeline")
         return True
     if not timeline_dropdown_is_open(names):
@@ -2305,62 +2331,22 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
                 if center:
                     dropdowns.append((center[1], ctrl, name))
         dropdowns.sort(key=lambda row: row[0])
-        ft_y = None
-        for ctrl in nodes:
-            if _uia_name(ctrl).strip().casefold() != "focused timeline":
-                continue
-            center = _ctrl_center(ctrl)
-            if center:
-                ft_y = center[1]
-                break
         chosen = dropdowns[0] if dropdowns else None
-        if dropdowns and ft_y is not None:
-            below = [row for row in dropdowns if row[0] >= ft_y - 30]
-            if below:
-                chosen = min(below, key=lambda row: row[0])
-            else:
-                chosen = min(dropdowns, key=lambda row: abs(row[0] - ft_y))
         if chosen:
             _uia_click(chosen[1])
             say(f"Opened timeline-kind dropdown ({chosen[2]})")
-            time.sleep(0.4)
-            _text, nodes = _read_uia(hwnd)
-    export_ctrl = None
-    subgoal_hits: list[tuple[int, Any]] = []
-    for ctrl in nodes:
-        name = _uia_name(ctrl)
-        if is_hte_label(name):
-            continue
-        n = name.strip().casefold()
-        if want == "clip export" and is_clip_export_tab(name) and export_ctrl is None:
-            export_ctrl = ctrl
-        if n in {"sub-goal", "subgoal"}:
-            center = _ctrl_center(ctrl)
-            if center:
-                subgoal_hits.append((center[1], ctrl))
-    if want == "clip export" and export_ctrl is not None:
-        if _uia_click(export_ctrl):
-            say("Selected Clip Export timeline")
-            time.sleep(0.35)
-            _wait_timeline_dropdown_closed(hwnd)
-            _text, nodes = _read_uia(hwnd, verbose=False)
-            got = selected_timeline_kind([_uia_name(ctrl) for ctrl in nodes])
-            if got == "hte":
-                say("Dropdown landed on Hand Tracking Error; not staying there")
-                return False
-            return True
-    if want == "sub-goal" and subgoal_hits:
-        subgoal_hits.sort(key=lambda row: -row[0])
-        if _uia_click(subgoal_hits[0][1]):
-            say("Selected Sub-goal timeline")
-            time.sleep(0.35)
-            _wait_timeline_dropdown_closed(hwnd)
-            _text, nodes = _read_uia(hwnd, verbose=False)
-            got = selected_timeline_kind([_uia_name(ctrl) for ctrl in nodes])
-            if got == "hte":
-                say("Dropdown landed on Hand Tracking Error; not staying there")
-                return False
-            return True
+            nodes = _wait_kind_dropdown_open(hwnd)
+    menu = _dropdown_kind_ctrl(nodes, want)
+    if menu is not None and _uia_click(menu):
+        say(f"Selected {'Clip Export' if want == 'clip export' else 'Sub-goal'} timeline")
+        time.sleep(0.4)
+        _wait_timeline_dropdown_closed(hwnd, allow_escape=False)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names_after = [_uia_name(ctrl) for ctrl in nodes]
+        if any(is_hte_clip_caption(n) for n in names_after):
+            say("Dropdown landed on Hand Tracking Error; not staying there")
+            return False
+        return True
     if not _OCR_BROKEN:
         words, img_w, img_h = _ocr_window(hwnd, "timeline_kind")
         left, top, _w, _h = _window_rect(hwnd)
@@ -2385,13 +2371,13 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
                         if _uia_click(ctrl):
                             say("Selected Clip Export timeline")
                             time.sleep(0.35)
-                            _wait_timeline_dropdown_closed(hwnd)
+                            _wait_timeline_dropdown_closed(hwnd, allow_escape=False)
                             return True
                     if want == "sub-goal" and name.strip().casefold() in {"sub-goal", "subgoal"}:
                         if _uia_click(ctrl):
                             say("Selected Sub-goal timeline")
                             time.sleep(0.35)
-                            _wait_timeline_dropdown_closed(hwnd)
+                            _wait_timeline_dropdown_closed(hwnd, allow_escape=False)
                             return True
                 words, img_w, img_h = _ocr_window(hwnd, "timeline_kind")
         needle = "ClipExport" if want == "clip export" else "Sub-goal"
@@ -2401,19 +2387,22 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
         if hit:
             _click_screen(left + hit[0], top + hit[1])
             say(f"Clicked OCR timeline kind: {needle}")
-            _wait_timeline_dropdown_closed(hwnd)
+            _wait_timeline_dropdown_closed(hwnd, allow_escape=False)
             return True
     say(f"Could not switch timeline kind to {kind}")
     return False
 
 
-def _wait_timeline_dropdown_closed(hwnd: int) -> None:
-    time.sleep(0.3)
-    _text, nodes = _read_uia(hwnd)
-    names = [_uia_name(ctrl) for ctrl in nodes]
-    if not timeline_dropdown_is_open(names):
-        return
-    _close_timeline_dropdown(hwnd, nodes)
+def _wait_timeline_dropdown_closed(hwnd: int, allow_escape: bool = False) -> None:
+    """Wait for the 3-item menu to close. Escape cancels the selection we just made."""
+    for _attempt in range(5):
+        time.sleep(0.2)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+        if not timeline_dropdown_is_open(names):
+            return
+    if allow_escape:
+        _close_timeline_dropdown(hwnd)
 
 
 def _click_focused_timeline(hwnd: int, nodes: list[Any]) -> None:
