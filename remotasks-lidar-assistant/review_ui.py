@@ -621,6 +621,38 @@ def is_pending_clip_label(name: str) -> bool:
     return n == "pending" or n.startswith("pending ")
 
 
+def is_clip_export_review_chip(name: str) -> bool:
+    """Focused Timeline chip on Clip Export. Exact 'review', not the Review tab."""
+    return (name or "").strip() == "review"
+
+
+def pick_clip_export_review_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+) -> list[tuple[int, int, int, int]]:
+    """Left-to-right Clip Export cards on Focused Timeline (not the Review tab)."""
+    chips: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        if not is_clip_export_review_chip(name):
+            continue
+        _left, top, _right, bottom = rect
+        if (top + bottom) / 2 < min_y:
+            continue
+        chips.append(rect)
+    chips.sort(key=lambda row: (row[0], row[1]))
+    out: list[tuple[int, int, int, int]] = []
+    for rect in chips:
+        if out and rect[0] - out[-1][0] < MIN_IDLE_NEIGHBOR_GAP:
+            continue
+        out.append(rect)
+    return out
+
+
+def clip_export_caption_committed(names: list[str]) -> bool:
+    """True when a Clip Export field shows a saved The-person sentence."""
+    return any(is_clip_export_caption_label(n) for n in names)
+
+
 def is_split_control_label(name: str) -> bool:
     n = (name or "").strip().casefold()
     if not n or is_idle_too_long_error(n):

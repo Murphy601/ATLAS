@@ -252,6 +252,37 @@ def test_idle_card_split_is_between_idle_label_and_next_pending() -> None:
     assert x90 < next_pending[0]
 
 
+def test_clip_export_review_chips_are_not_the_review_tab() -> None:
+    from review_ui import (
+        clip_export_caption_committed,
+        is_clip_export_review_chip,
+        pick_clip_export_review_rects,
+    )
+
+    assert is_clip_export_review_chip("review")
+    assert not is_clip_export_review_chip("Review")
+    assert not is_clip_export_review_chip("pending")
+    chips = pick_clip_export_review_rects(
+        [
+            ("Review", (1200, 80, 1280, 110)),
+            ("review", (80, 820, 130, 858)),
+            ("review", (110, 818, 160, 856)),
+            ("review", (420, 818, 470, 856)),
+            ("review", (900, 818, 950, 856)),
+        ],
+        min_y=700,
+    )
+    assert len(chips) == 3
+    assert chips[0][0] == 80
+    assert chips[1][0] == 420
+    assert clip_export_caption_committed(
+        [
+            "The person stands at a household table and folds shirts, pants, and a blouse during a laundry task."
+        ]
+    )
+    assert not clip_export_caption_committed(["(empty clip)", "click to add text", "Review"])
+
+
 def test_same_card_pending_is_not_the_idle_split_boundary() -> None:
     from review_ui import idle_card_split_xy, pick_idle_split_rects
 
