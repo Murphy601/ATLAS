@@ -305,6 +305,7 @@ def test_grammar_advance_and_remaining_work() -> None:
     )
     from review_ui import (
         filter_ocr_person_card_hits,
+        is_clip_export_placeholder,
         should_nudge_end_match,
         should_refill_clip_export_after_write,
     )
@@ -326,6 +327,54 @@ def test_grammar_advance_and_remaining_work() -> None:
         [(61, 738), (191, 738), (400, 850)], 0, 0, 1050
     )
     assert overlay_hits == [(400, 850)]
+    laundry = (
+        "The person stands at an indoor table and folds shirts, pants, "
+        "and a blouse during a laundry task."
+    )
+    assert not is_clip_export_placeholder(laundry)
+    assert not clip_export_caption_needs_rewrite(
+        "The person folds the pants and the shirt at an indoor table during a laundry folding task."
+    )
+    assert not should_rewrite_every_clip_export_card(
+        ["All ClipExports must be fully filled in parallel with Sub-goals", laundry]
+    )
+
+
+def test_clip_export_playhead_split_and_every_slot() -> None:
+    from review_ui import (
+        clip_export_card_click_fracs,
+        clip_export_cuts_inside_long_card,
+        is_clip_export_placeholder,
+        one_frame_nudge_frac,
+        qa_frame_end_frac,
+        review_frame_rate,
+        should_split_despite_filled,
+        should_split_long_clip_export,
+    )
+
+    long_range = (9.9, 36.9, 27.0)
+    parallel = ["All ClipExports must be fully filled in parallel with Sub-goals"]
+    assert should_split_long_clip_export(long_range, 4, 9, parallel)
+    assert not should_split_long_clip_export(long_range, 9, 9, ["ClipExport", "done"])
+    assert should_split_despite_filled(True, True)
+    assert not should_split_despite_filled(True, False)
+    ends = [9.9 / 62.0, 18.0 / 62.0, 27.0 / 62.0, 36.9 / 62.0]
+    inside = clip_export_cuts_inside_long_card(long_range, 62.0, ends)
+    assert inside
+    assert all(0.18 < f < 0.58 for f in inside)
+    assert all(abs(f - 9.9 / 62.0) > 0.02 for f in inside)
+    fracs = clip_export_card_click_fracs(ends, 5, long_range, 62.0, [])
+    assert len(fracs) == 5
+    equal = clip_export_card_click_fracs([], 9, None, 62.0, [])
+    assert len(equal) == 9
+    assert review_frame_rate("60 FPS (0-62)") == 30.0
+    assert review_frame_rate("60 FPS (0-62) 9.9s - 36.9s (f296 - f1106) · 27.0s") == 30.0
+    assert qa_frame_end_frac(297, 62.0, 30.0) == round((297 / 30.0) / 62.0, 4)
+    assert one_frame_nudge_frac(62.0, 30.0) < 0.002
+    assert is_clip_export_placeholder("Focus annotation The person stands at")
+    assert not is_clip_export_placeholder(
+        "The person stands at an indoor table and folds shirts, pants, and a blouse during a laundry task."
+    )
 
     class _Lint:
         def __init__(self, original: str, rewritten: str) -> None:

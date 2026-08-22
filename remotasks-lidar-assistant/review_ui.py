@@ -606,7 +606,7 @@ def clip_export_caption_needs_rewrite(name: str) -> bool:
         return True
     if " on the blouse" in n or " on the shirt" in n or " on the pants" in n:
         return True
-    if re.search(r"\bhold the\b", n) or re.search(r"\bfold the\b", n):
+    if re.search(r"\bhold the\b", n):
         return True
     return False
 
@@ -992,6 +992,98 @@ def clip_export_inferred_card_fracs(
 def should_skip_k_after_caption_fill(already_filled: bool) -> bool:
     """After a caption is in the Review box, K types kkkk instead of splitting."""
     return bool(already_filled)
+
+
+def should_split_despite_filled(already_filled: bool, needs_split: bool) -> bool:
+    """A written Review caption must not block K-splitting the 27s card."""
+    del already_filled
+    return bool(needs_split)
+
+
+def should_split_long_clip_export(
+    long_range: tuple[float, float, float] | None,
+    visible: int,
+    n_slots: int,
+    names: list[str] | None = None,
+) -> bool:
+    """True when a long Clip Export still covers more than one Sub-goal."""
+    if not long_range or float(long_range[2]) <= 10:
+        return False
+    if any(is_clip_export_missing_error(n) for n in names or []):
+        return True
+    return clip_export_needs_more_cards(visible, n_slots, names or [])
+
+
+def clip_export_cuts_inside_long_card(
+    long_range: tuple[float, float, float] | None,
+    total_s: float,
+    end_fracs: list[float] | None = None,
+) -> list[float]:
+    """Sub-goal ends strictly inside a 27s card, never its 9.9s / 36.9s edges."""
+    if not long_range or float(long_range[2]) <= 10:
+        return []
+    span = max(float(total_s or 0.0), float(long_range[1]), 1.0)
+    start_f = float(long_range[0]) / span
+    end_f = float(long_range[1]) / span
+    out: list[float] = []
+    for frac in end_fracs or []:
+        f = float(frac)
+        if start_f + 0.025 < f < end_f - 0.025 and all(abs(f - seen) > 0.025 for seen in out):
+            out.append(round(f, 4))
+    return out
+
+
+def clip_export_card_click_fracs(
+    end_fracs: list[float] | None,
+    n_slots: int,
+    long_range: tuple[float, float, float] | None = None,
+    total_s: float = 0.0,
+    existing_ends: list[float] | None = None,
+) -> list[float]:
+    """Playhead midpoint of every Clip Export slot that should exist. No 4-card cap."""
+    n = max(int(n_slots or 0), 1)
+    if end_fracs:
+        return clip_export_slot_mid_fractions(end_fracs, n)
+    inferred = clip_export_inferred_card_fracs(
+        long_range, float(total_s or 62.0), existing_ends
+    )
+    if len(inferred) >= n:
+        return inferred[:n]
+    return clip_export_slot_mid_fractions(existing_ends or [], n)
+
+
+def review_frame_rate(
+    ocr_blob: str = "",
+    long_range: tuple[float, float, float] | None = None,
+    start_frame: int | None = None,
+) -> float:
+    """Frame clock for QA 'On frames: 297'. Header '60 FPS (0-62)' is playback + length."""
+    start_s = float(long_range[0]) if long_range else None
+    ranged = review_clip_range_from_ocr(ocr_blob or "")
+    if ranged and start_s is None:
+        start_s = float(ranged[0])
+    frame = start_frame if start_frame is not None else review_start_frame_from_ocr(ocr_blob or "")
+    if start_s and start_s > 0.2 and frame:
+        rate = float(frame) / float(start_s)
+        if 20 <= rate <= 70:
+            return float(round(rate))
+    parsed = parse_timeline_fps(ocr_blob or "")
+    span = timeline_length_from_ocr(ocr_blob or "")
+    if parsed and parsed >= 50 and span and span > 30:
+        return 30.0
+    return float(parsed or 30.0)
+
+
+def qa_frame_end_frac(frame: int, total_s: float, fps: float) -> float:
+    """297 at 30 fps on a 62s video is 9.9s, the first Sub-goal end."""
+    span = max(float(total_s or 0.0), 1.0)
+    return round(min(0.96, max(0.04, (int(frame) / max(float(fps or 30.0), 1.0)) / span)), 4)
+
+
+def one_frame_nudge_frac(total_s: float, fps: float) -> float:
+    """One video frame as a Focused Timeline fraction, not ~1 second."""
+    span = max(float(total_s or 0.0), 1.0)
+    return (1.0 / max(float(fps or 30.0), 1.0)) / span
 
 
 def should_rewrite_every_clip_export_card(names: list[str], ocr_blob: str = "") -> bool:
@@ -1551,12 +1643,18 @@ def clip_export_needs_new_clip(names: list[str]) -> bool:
 
 
 def is_clip_export_placeholder(text: str) -> bool:
-    n = (text or "").casefold()
+    """True for an unfinished stub, not a 15-word laundry Clip Export already written."""
+    n = (text or "").casefold().strip()
     if "kitchen" in n or "refrigerator" in n:
         return False
-    if "the person stands at" in n:
+    if "focus annotation" in n:
         return True
     if "indoor room" in n and "household demonstration" in n:
+        return True
+    words = n.split()
+    if n in {"the person stands at", "the person stands at an indoor table"}:
+        return True
+    if n.startswith("the person stands at") and len(words) < 12:
         return True
     return False
 

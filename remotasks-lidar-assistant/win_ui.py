@@ -31,9 +31,16 @@ from review_ui import (
     clip_export_needs_more_cards,
     clip_export_visible_card_count,
     chip_end_fractions,
+    clip_export_card_click_fracs,
+    clip_export_cuts_inside_long_card,
     clip_export_inferred_card_fracs,
     duration_end_fractions,
     filter_ocr_person_card_hits,
+    one_frame_nudge_frac,
+    qa_frame_end_frac,
+    review_frame_rate,
+    should_split_despite_filled,
+    should_split_long_clip_export,
     harvest_rewrites_to_apply,
     long_card_interior_fracs,
     needs_one_frame_nudge,
@@ -1528,24 +1535,33 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     snap = should_snap_clip_export_ends(names, chip_count=visible, duplicate=duplicate)
     del snap
     cards_before_split = visible
-    if (
-        long_range
-        and long_range[2] > 10
-        and _CLIP_EXPORT_DRAGS < 3
-        and (
-            clip_export_needs_more_cards(visible, n_slots, names)
-            or any(is_clip_export_missing_error(n) for n in names)
-        )
-    ):
+    span_s = float(total_s or (long_range[1] + 10.0 if long_range else 62.0))
+    inside_cuts = clip_export_cuts_inside_long_card(long_range, span_s, end_fracs)
+    for frac in inside_cuts:
+        if all(abs(frac - seen) > 0.03 for seen in interior) and all(
+            abs(frac - seen) > 0.03 for seen in existing_ends
+        ):
+            interior.append(frac)
+    needs_split = should_split_despite_filled(
+        _CLIP_EXPORT_FILLED,
+        should_split_long_clip_export(long_range, visible, n_slots, names)
+        or bool(interior and clip_export_needs_more_cards(visible, n_slots, names)),
+    )
+    added = 0
+    if needs_split and _CLIP_EXPORT_DRAGS < 4:
         _CLIP_EXPORT_DRAGS += 1
-        added = _drag_split_long_clip_export(
-            hwnd, nodes, long_range, float(total_s or long_range[1] + 10.0), interior
+        cuts = inside_cuts or interior
+        added = _playhead_split_long_clip_export(
+            hwnd, nodes, long_range, span_s, cuts
         )
         _CLIP_EXPORT_ALIGNED = True
         if added:
             _text, nodes = _read_uia(hwnd, verbose=False)
             chips_now = pick_clip_export_review_rects(_named_rects(nodes), min_y)
-            visible = max(visible, len(chips_now), len(inferred_mids))
+            visible = max(visible, len(chips_now), len(inferred_mids), n_slots)
+            _CLIP_EXPORT_FILLED = False
+            _CLIP_EXPORT_WRITTEN_CARDS = 0
+            say(f"Clip Export now has {visible} card(s) after split; will write each one")
     elif should_skip_k_after_caption_fill(_CLIP_EXPORT_FILLED):
         say("Clip Export text is already in the Review box; not pressing K (that types kkkk)")
         _CLIP_EXPORT_ALIGNED = True
@@ -1555,6 +1571,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         _CLIP_EXPORT_ALIGNED = True
     if visible > cards_before_split:
         _CLIP_EXPORT_WRITTEN_CARDS = 0
+        _CLIP_EXPORT_FILLED = False
         say(f"Clip Export now has {visible} card(s) after split; will write each one")
 
     hands = any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes)
@@ -1576,23 +1593,29 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     need_slots = should_refill_clip_export_after_write(
         _CLIP_EXPORT_FILLED, names_now, export_ocr
     ) or empty or empty_now or short_now or dirty
+    if (
+        any(is_clip_export_missing_error(n) for n in names_now)
+        and _CLIP_EXPORT_WRITTEN_CARDS < n_slots
+    ):
+        need_slots = True
     if _CLIP_EXPORT_FILLED and not need_slots:
         say("Clip Export captions already written; not pasting over them again")
     elif dirty or rewrite_all:
         say("Rewriting garbled or placeholder Clip Export cards only")
     if need_slots:
-        if visible >= 1 or empty or empty_now or short_now or rewrite_all:
+        fill_slots = max(n_slots, visible, 1)
+        if visible >= 1 or empty or empty_now or short_now or rewrite_all or fill_slots:
             wrote = _fill_each_clip_export_slot(
                 hwnd,
                 sentences,
                 end_fracs,
-                n_slots=visible,
+                n_slots=fill_slots,
                 ocr_words=export_words,
                 long_range=long_range,
                 total_s=total_s,
                 existing_ends=existing_ends,
             )
-            _CLIP_EXPORT_WRITTEN_CARDS = max(_CLIP_EXPORT_WRITTEN_CARDS, visible)
+            _CLIP_EXPORT_WRITTEN_CARDS = max(_CLIP_EXPORT_WRITTEN_CARDS, wrote, fill_slots)
         elif _click_clip_export_caption_field(nodes, prefer_hands=True):
             say("Clicked the Clip Export caption that still mentions hands")
             _type_into_focused(fallback)
@@ -1622,10 +1645,18 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     if not any(is_clip_export_end_mismatch(_uia_name(ctrl)) for ctrl in nodes):
         _click_clip_export_end_ignore(hwnd, nodes)
     elif should_nudge_end_match([_uia_name(ctrl) for ctrl in nodes]):
+        fps = review_frame_rate(
+            export_ocr, long_range, review_start_frame_from_ocr(export_ocr)
+        )
+        qa_frames = qa_mismatch_frames([_uia_name(ctrl) for ctrl in nodes])
         end_frac = None
-        if long_range and total_s:
-            end_frac = float(long_range[0]) / max(float(total_s), 1.0)
-        _nudge_clip_export_end_one_frame(hwnd, nodes, end_frac=end_frac)
+        if qa_frames and span_s:
+            end_frac = qa_frame_end_frac(qa_frames[0], span_s, fps)
+        elif long_range and span_s:
+            end_frac = float(long_range[0]) / max(float(span_s), 1.0)
+        _nudge_clip_export_end_one_frame(
+            hwnd, nodes, end_frac=end_frac, total_s=span_s, fps=fps
+        )
     else:
         say("Leaving Clip Export end-match warning; ends still need a Sub-goal snap")
     time.sleep(0.2)
@@ -1679,7 +1710,7 @@ def _subgoal_end_fractions(
             dur = float(end) - float(start)
         if dur and float(dur) > 0.05:
             durations.append(float(dur))
-    fps = parse_timeline_fps(ocr_blob) or 30.0
+    fps = review_frame_rate(ocr_blob)
     for sec in qa_end_mismatch_seconds(names or [], fps):
         if all(abs(sec - seen) > 0.15 for seen in end_times):
             end_times.append(sec)
@@ -1771,7 +1802,7 @@ def _align_clip_export_on_focused_timeline(
     _focus_filled_clip_export_track(hwnd, nodes)
     time.sleep(0.15)
     unique: list[float] = []
-    for frac in fracs[:8]:
+    for frac in fracs[:12]:
         clamped = max(0.04, min(0.96, float(frac)))
         if any(abs(clamped - seen) < 0.03 for seen in unique):
             continue
@@ -2199,18 +2230,26 @@ def _fill_clip_export_from_qa_errors(hwnd: int, sentence: str) -> int:
 
 
 def _nudge_clip_export_end_one_frame(
-    hwnd: int, nodes: list[Any], end_frac: float | None = None
+    hwnd: int,
+    nodes: list[Any],
+    end_frac: float | None = None,
+    total_s: float | None = None,
+    fps: float = 30.0,
 ) -> bool:
-    """QA wants frame 297. Drag the first Clip Export end slightly right, then Right-arrow."""
+    """QA wants frame 297. Move that Clip Export end by one frame, not a whole second."""
     if end_frac is not None:
-        x1, y1 = _focused_timeline_xy(hwnd, max(0.04, float(end_frac) - 0.008), nodes)
-        x2, y2 = _focused_timeline_xy(hwnd, min(0.96, float(end_frac) + 0.015), nodes)
+        frac = max(0.04, min(0.96, float(end_frac)))
+        delta = one_frame_nudge_frac(float(total_s or 62.0), float(fps or 30.0))
+        x1, y1 = _focused_timeline_xy(hwnd, frac, nodes)
+        x2, y2 = _focused_timeline_xy(hwnd, min(0.96, frac + delta), nodes)
+        if abs(x2 - x1) < 3:
+            x2 = x1 + 3
         _click_screen(x1, y1)
         time.sleep(0.1)
         _drag_screen(x1, y1, x2, y2)
         time.sleep(0.08)
         _send_vk(0x27)
-        say("Nudged Clip Export end toward the Sub-goal end on frame 297")
+        say("Nudged Clip Export end one frame to match the Sub-goal end on frame 297")
         return True
     left, top, _width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
@@ -2238,44 +2277,34 @@ def _nudge_clip_export_end_one_frame(
     return True
 
 
-def _drag_split_long_clip_export(
+def _playhead_split_long_clip_export(
     hwnd: int,
     nodes: list[Any],
-    long_range: tuple[float, float, float],
+    long_range: tuple[float, float, float] | None,
     total_s: float,
     interior_fracs: list[float] | None = None,
 ) -> int:
-    """Shrink the 27s card so a gap appears, then K in that gap (not on an existing edge)."""
-    if not long_range or long_range[2] <= 10:
-        return 0
-    span = max(float(total_s or 0.0), float(long_range[1]), 1.0)
-    start_f = float(long_range[0]) / span
-    end_f = float(long_range[1]) / span
-    interiors = [
-        f
-        for f in (interior_fracs or [])
-        if start_f + 0.04 < float(f) < end_f - 0.04
-    ]
+    """Cut the long Clip Export at Sub-goal ends. Click playhead + Split/K. Never drag an edge."""
+    span = max(float(total_s or 0.0), float(long_range[1]) if long_range else 0.0, 1.0)
+    interiors = [max(0.04, min(0.96, float(f))) for f in (interior_fracs or [])]
+    if long_range and long_range[2] > 10:
+        start_f = float(long_range[0]) / span
+        end_f = float(long_range[1]) / span
+        interiors = [f for f in interiors if start_f + 0.025 < f < end_f - 0.025]
+        if not interiors:
+            interiors = long_range_interior_fracs(long_range[0], long_range[1], span)
+        mid_x, mid_y = _focused_timeline_xy(hwnd, (start_f + end_f) / 2, nodes)
+        _click_screen(mid_x, mid_y)
+        say(f"Selected the {long_range[2]:g}s Clip Export card to split at Sub-goal ends")
+        time.sleep(0.12)
+        _blur_caption(hwnd, nodes)
     if not interiors:
-        interiors = [round(start_f + (end_f - start_f) * step, 4) for step in (0.25, 0.50, 0.75)]
-    mid_x, mid_y = _focused_timeline_xy(hwnd, (start_f + end_f) / 2, nodes)
-    _click_screen(mid_x, mid_y)
-    say(f"Selected the {long_range[2]:g}s Clip Export card to drag-split it")
-    time.sleep(0.15)
-    added = 0
-    for cut in interiors[:4]:
-        x0, y0 = _focused_timeline_xy(hwnd, start_f + 0.012, nodes)
-        x1, y1 = _focused_timeline_xy(hwnd, float(cut), nodes)
-        say(f"Dragging long Clip Export left edge to {int(cut * 100)}% ({x0},{y0} -> {x1},{y1})")
-        _drag_screen(x0, y0, x1, y1)
-        time.sleep(0.2)
-        gap = (start_f + float(cut)) / 2
-        gx, gy = _focused_timeline_xy(hwnd, gap, nodes)
-        if _press_k_to_create(hwnd, at=(gx, gy)):
-            added += 1
-        start_f = float(cut)
-        time.sleep(0.2)
-    return added
+        return 0
+    unique: list[float] = []
+    for frac in interiors:
+        if all(abs(frac - seen) > 0.025 for seen in unique):
+            unique.append(frac)
+    return _align_clip_export_on_focused_timeline(hwnd, unique[:12], nodes)
 
 
 def _click_split_control(hwnd: int, nodes: list[Any] | None = None) -> bool:
@@ -2378,12 +2407,21 @@ def _fill_each_clip_export_slot(
     span = float(total_s or 0.0)
     if long_range:
         span = max(span, long_range[1] + 10.0, 40.0)
+    fill_fracs = clip_export_card_click_fracs(
+        end_fracs,
+        max(int(n_slots or 0), 1),
+        long_range,
+        span or 62.0,
+        existing_ends,
+    )
     inferred = clip_export_inferred_card_fracs(long_range, span or 62.0, existing_ends)
-    if not inferred and end_fracs:
-        inferred = clip_export_slot_mid_fractions(end_fracs, max(int(n_slots or 0), 1))
     targets: list[tuple[int, int, str]] = []
-    if inferred:
-        for frac in inferred[:4]:
+    if fill_fracs:
+        for frac in fill_fracs[:12]:
+            x, y = _focused_timeline_xy(hwnd, frac, nodes)
+            targets.append((x, y, f"{int(frac * 100)}%"))
+    elif inferred:
+        for frac in inferred[:12]:
             x, y = _focused_timeline_xy(hwnd, frac, nodes)
             targets.append((x, y, f"{int(frac * 100)}%"))
     else:
@@ -2401,6 +2439,12 @@ def _fill_each_clip_export_slot(
             if any(abs(sx - tx) < 80 for tx, _ty, _label in targets):
                 continue
             targets.append((sx, sy, "person"))
+    for i, rect in enumerate(chips):
+        x = int((rect[0] + rect[2]) / 2)
+        y = int((rect[1] + rect[3]) / 2)
+        if any(abs(x - tx) < 80 for tx, _ty, _label in targets):
+            continue
+        targets.append((x, y, f"chip {i + 1}"))
     targets.sort(key=lambda row: row[0])
     n = max(len(targets), int(n_slots or 0), 1)
     fallback_sentence = "The person works at an indoor table during a laundry folding task."
