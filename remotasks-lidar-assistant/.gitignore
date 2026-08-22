@@ -1,0 +1,9 @@
+user_data_dir/
+debug_captures/*
+!debug_captures/.gitkeep
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
