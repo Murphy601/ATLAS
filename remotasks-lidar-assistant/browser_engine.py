@@ -61,6 +61,7 @@ class LidarBrowser:
         deadline = time.monotonic() + timeout_s
         last_error: Exception | None = None
         attempt = 0
+        empty_rounds = 0
         while time.monotonic() < deadline:
             attempt += 1
             urls: list[str] = []
@@ -71,21 +72,19 @@ class LidarBrowser:
             except Exception as exc:
                 last_error = exc
                 say(f"Process scan error: {exc}")
-            # unique
             seen: set[str] = set()
             unique: list[str] = []
             for url in urls:
                 if url not in seen:
                     seen.add(url)
                     unique.append(url)
+            if not unique:
+                empty_rounds += 1
+                say(f"No live DevTools on the open IX process (scan {attempt}). Switching to desktop control.")
+                if empty_rounds >= 1:
+                    raise RuntimeError("No live DevTools on the open IX process")
             if attempt == 1 or attempt % 5 == 0:
-                if unique:
-                    say(f"Attach attempt {attempt}: found {len(unique)} candidate port(s): {unique[:6]}")
-                else:
-                    say(
-                        f"Attach attempt {attempt}: no debug port on the open IX process yet. "
-                        "Keep the profile window open..."
-                    )
+                say(f"Attach attempt {attempt}: live DevTools {unique[:6]}")
             for url in unique:
                 try:
                     if not probe_devtools(url):

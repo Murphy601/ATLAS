@@ -13,6 +13,7 @@ from browser_engine import LidarBrowser
 from caption_engine import lint_subgoal
 from ego_task import apply_caption_fixes, play_open_video, read_clips, run_quality_assistant
 from overlay import start_overlay_thread
+from process_cdp import discover_cdp_http_urls
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,11 +40,37 @@ def _write_report(payload: dict) -> Path:
     return dest
 
 
+def _drive_open_ix_window(write: bool) -> dict:
+    from win_ui import drive_open_task
+
+    return drive_open_task(write=write)
+
+
 def run_ego_task(write: bool, run_linters: bool, cdp_url: str | None) -> dict:
     logger.info("Open IX Browser yourself, then open the EGO task. The engine will not launch Chrome.")
+
+    live: list[str] = []
+    if cdp_url:
+        live = [cdp_url]
+    else:
+        try:
+            live = discover_cdp_http_urls()
+        except Exception as exc:
+            print(f"Process scan error: {exc}", flush=True)
+    if not live:
+        print(
+            "No live DevTools on this IX window. Driving the window you already opened...",
+            flush=True,
+        )
+        return _drive_open_ix_window(write=write)
+
     browser = LidarBrowser()
     try:
-        browser.attach(cdp_url=cdp_url, timeout_s=config.ATTACH_WAIT_SECONDS)
+        try:
+            browser.attach(cdp_url=live[0], timeout_s=8)
+        except Exception as exc:
+            print(f"DevTools attach skipped: {exc}", flush=True)
+            return _drive_open_ix_window(write=write)
         page = browser.wait_for_task_page(timeout_s=config.TASK_WAIT_SECONDS)
         play_open_video(page)
         clips = [clip.to_dict() for clip in read_clips(page)]

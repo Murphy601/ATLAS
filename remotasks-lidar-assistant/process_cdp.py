@@ -81,8 +81,8 @@ def probe_devtools(url: str, timeout: float = 0.6) -> bool:
         return False
 
 
-def discover_cdp_http_urls() -> list[str]:
-    """Inspect running IX/Chrome processes. Does not open a profile and does not use Local API."""
+def _candidate_http_urls() -> list[str]:
+    """Listen ports and --remote-debugging-port values from IX/Chrome processes."""
     found: list[str] = []
     seen: set[str] = set()
 
@@ -94,35 +94,39 @@ def discover_cdp_http_urls() -> list[str]:
     try:
         import psutil
     except ImportError:
-        psutil = None  # type: ignore[assignment]
+        return found
 
-    if psutil is not None:
-        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-            try:
-                info = proc.info
-                cmdline_list = info.get("cmdline") or []
-                cmd = " ".join(str(part) for part in cmdline_list)
-                name = info.get("name") or ""
-                if not is_browser_process(name, cmd):
-                    continue
-                for url in command_line_cdp_urls(cmd):
-                    add(url)
-                try:
-                    for conn in proc.net_connections(kind="inet"):
-                        if getattr(conn, "status", "") != "LISTEN":
-                            continue
-                        laddr = getattr(conn, "laddr", None)
-                        port = getattr(laddr, "port", None) if laddr is not None else None
-                        if port:
-                            add(f"http://127.0.0.1:{port}")
-                except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
-                    continue
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            info = proc.info
+            cmdline_list = info.get("cmdline") or []
+            cmd = " ".join(str(part) for part in cmdline_list)
+            name = info.get("name") or ""
+            if not is_browser_process(name, cmd):
                 continue
+            for url in command_line_cdp_urls(cmd):
+                add(url)
+            try:
+                for conn in proc.net_connections(kind="inet"):
+                    if getattr(conn, "status", "") != "LISTEN":
+                        continue
+                    laddr = getattr(conn, "laddr", None)
+                    port = getattr(laddr, "port", None) if laddr is not None else None
+                    if port:
+                        add(f"http://127.0.0.1:{port}")
+            except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
+                continue
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return found
 
+
+def discover_cdp_http_urls() -> list[str]:
+    """Return only endpoints that currently answer /json/version (live DevTools)."""
+    found = _candidate_http_urls()
     live = [url for url in found if probe_devtools(url)]
     if live:
         logger.info("Found live DevTools on %s", live)
         return live
-    logger.info("Process scan candidate URLs: %s", found)
-    return found
+    logger.info("No live DevTools endpoint (ignored non-DevTools ports: %s)", found)
+    return []

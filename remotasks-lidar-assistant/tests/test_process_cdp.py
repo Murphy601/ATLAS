@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import process_cdp
 from process_cdp import command_line_cdp_urls, parse_debug_port, parse_user_data_dir, read_devtools_active_port
 
 
@@ -28,3 +29,23 @@ def test_command_line_urls_include_port_and_file(tmp_path: Path):
     urls = command_line_cdp_urls(cmd)
     assert "http://127.0.0.1:14444" in urls
     assert "http://127.0.0.1:15555" in urls
+
+
+def test_discover_cdp_http_urls_returns_live_devtools(monkeypatch) -> None:
+    monkeypatch.setattr(
+        process_cdp,
+        "_candidate_http_urls",
+        lambda: ["http://127.0.0.1:9222"],
+    )
+    monkeypatch.setattr(process_cdp, "probe_devtools", lambda url: True)
+    assert process_cdp.discover_cdp_http_urls() == ["http://127.0.0.1:9222"]
+
+
+def test_discover_cdp_http_urls_empty_when_port_is_not_devtools(monkeypatch) -> None:
+    monkeypatch.setattr(
+        process_cdp,
+        "_candidate_http_urls",
+        lambda: ["http://127.0.0.1:38607"],
+    )
+    monkeypatch.setattr(process_cdp, "probe_devtools", lambda url: False)
+    assert process_cdp.discover_cdp_http_urls() == []
