@@ -121,12 +121,14 @@ def test_interesting_uia_names_prefer_review_controls() -> None:
 def test_grammar_advance_and_remaining_work() -> None:
     from review_ui import (
         is_clip_export_end_mismatch,
+        is_clip_export_hands_error,
         is_clip_export_missing_error,
         is_grammar_row_label,
         is_idle_too_long_error,
         is_ignore_all_label,
         is_ignore_warning_label,
         is_pending_clip_label,
+        is_slow_around_transitions_label,
         parse_grammar_clip_count,
         review_work_remaining,
     )
@@ -142,6 +144,12 @@ def test_grammar_advance_and_remaining_work() -> None:
     assert not is_clip_export_end_mismatch(
         "All ClipExports must be fully filled in parallel with Sub-goals"
     )
+    assert is_clip_export_hands_error(
+        "ClipExports must not contain hands wording like mentioning which hand/hands are being used."
+    )
+    assert not is_clip_export_hands_error("Pick up the jar with the left hand")
+    assert is_slow_around_transitions_label("Slow around transitions")
+    assert not is_slow_around_transitions_label("Playback speed (away from transitions)")
     assert is_pending_clip_label("pending")
     assert is_clip_export_missing_error(
         "All ClipExports must be fully filled in parallel with Sub-goals"

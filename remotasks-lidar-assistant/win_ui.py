@@ -13,7 +13,6 @@ from caption_engine import (
     action_caption_for_mislabeled_idle,
     captions_from_ocr_blob,
     clip_export_from_subgoals,
-    clip_export_sentence_for_subgoal,
     is_not_timeline_caption,
     is_ocr_caption_garbage,
     lint_clips,
@@ -37,6 +36,7 @@ from review_ui import (
     idle_card_split_xy,
     interesting_uia_names,
     is_clip_export_end_mismatch,
+    is_clip_export_hands_error,
     is_clip_export_missing_error,
     is_clip_export_placeholder,
     is_clip_export_tab,
@@ -54,6 +54,7 @@ from review_ui import (
     is_quality_assistant_text,
     is_quality_empty_error,
     is_review_use_label,
+    is_slow_around_transitions_label,
     is_timeline_kind_label,
     is_timeline_status_label,
     ocr_text,
@@ -232,6 +233,9 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         _seek_timeline_start(hwnd, uia_nodes)
         time.sleep(0.45)
         uia_text, uia_nodes = _read_uia(hwnd)
+        _disable_slow_around_transitions(hwnd, uia_nodes)
+        time.sleep(0.2)
+        uia_text, uia_nodes = _read_uia(hwnd, verbose=False)
         played = _ensure_video_playing(hwnd)
         if _playback_active(hwnd):
             say("Watch the IX window: Pause is on screen and the video should be moving.")
@@ -687,6 +691,40 @@ def _read_uia(hwnd: int, verbose: bool = True) -> tuple[str, list[Any]]:
     return "\n".join(texts), nodes
 
 
+def _disable_slow_around_transitions(hwnd: int, nodes: list[Any]) -> bool:
+    """Turn off Slow around transitions so playback does not stall at clip cuts."""
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if not is_slow_around_transitions_label(name):
+            continue
+        if "playback" in name.casefold():
+            continue
+        if _uia_click(ctrl):
+            say(f"Clicked to disable slow-around-transitions: {name[:80]}")
+            time.sleep(0.2)
+            return True
+    if _OCR_BROKEN:
+        return False
+    words, img_w, img_h = _ocr_window(hwnd, "playback_speed")
+    left, top, _w, _h = _window_rect(hwnd)
+    hit = find_phrase_click(
+        words,
+        "slow around transitions",
+        img_w,
+        img_h,
+        y_min_frac=0.06,
+        y_max_frac=0.28,
+        x_min_frac=0.15,
+        x_max_frac=0.85,
+    )
+    if not hit:
+        return False
+    _click_screen(left + hit[0], top + hit[1])
+    say("Clicked Slow around transitions to keep 1x playback through clip cuts")
+    time.sleep(0.2)
+    return True
+
+
 def _click_toolbar_play(hwnd: int, nodes: list[Any]) -> bool:
     """Click the player Play button, not a leftover Play on the timeline."""
     left, top, _width, height = _window_rect(hwnd)
@@ -752,26 +790,14 @@ def _ensure_video_playing(hwnd: int) -> bool:
 
 
 def _watch_while_playing(hwnd: int, seconds: float, label: str) -> float:
-    """Sleep while the video should be playing. Re-click Play only if Pause was seen and then vanished."""
+    """Sleep while the video plays at 1x. Do not re-click Play (that pauses it)."""
+    del hwnd
     elapsed = 0.0
     remaining = max(float(seconds), 1.0)
-    saw_pause = _playback_active(hwnd)
     while elapsed < remaining:
         step = min(5.0, remaining - elapsed)
         time.sleep(step)
         elapsed += step
-        active = _playback_active(hwnd)
-        if active:
-            saw_pause = True
-        elif saw_pause and elapsed < remaining - 3.0:
-            say("Pause disappeared; clicking Play so the video keeps moving.")
-            try:
-                _ensure_video_playing(hwnd)
-            except Exception as exc:
-                say(f"Play retry failed ({exc}); continuing to Quality Assistant")
-                break
-        elif saw_pause:
-            say("Pause disappeared near the end of the video; leaving it stopped.")
         say(f"{label}... {int(elapsed)}/{int(remaining)}s")
     return elapsed
 
@@ -1039,25 +1065,15 @@ def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
 
 
 def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
-    """Fill Clip Export so its end matches a Sub-goal end. Never Submit. Never edit HTE."""
+    """Fill the existing Clip Export clip. Never K-split. Never Submit. Never edit HTE."""
     uia_text, nodes = _read_uia(hwnd)
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
     missing = any(is_clip_export_missing_error(n) for n in names) or is_clip_export_missing_error(
         uia_text
     )
     end_mismatch = any(is_clip_export_end_mismatch(n) for n in names)
-    if not missing and not end_mismatch:
-        return {"wrote": 0, "text": uia_text}
-
-    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED
-    if _CLIP_EXPORT_FILLED:
-        if write and (missing or end_mismatch):
-            _switch_timeline_kind(hwnd, "clip export")
-            time.sleep(0.35)
-            _text, nodes = _read_uia(hwnd)
-            _click_clip_export_end_ignore(hwnd, nodes)
-            _switch_timeline_kind(hwnd, "sub-goal")
-            _close_timeline_dropdown(hwnd)
+    hands = any(is_clip_export_hands_error(n) for n in names)
+    if not missing and not end_mismatch and not hands:
         return {"wrote": 0, "text": uia_text}
 
     blob = list(names)
@@ -1067,32 +1083,21 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         ocr_blob = ocr_text(words)
         blob.append(ocr_blob)
     blob.extend(subgoal_captions_from_names(names))
-    harvested = parse_clips_from_text(ocr_blob) if ocr_blob else []
-    if harvested:
-        harvested_caps = [clip.caption for clip in harvested]
-    else:
-        harvested_caps = captions_from_ocr_blob(ocr_blob) or subgoal_captions_from_names(names)
-    clean_caps = [
-        cap
-        for cap in harvested_caps
-        if cap and not is_ocr_caption_garbage(cap) and not is_not_timeline_caption(cap)
-    ]
-    sentences = [clip_export_sentence_for_subgoal(cap) for cap in clean_caps]
-    sentences = [s for s in sentences if s and not is_ocr_caption_garbage(s)]
-    fallback = clip_export_from_subgoals(clean_caps or blob)
-    if not sentences:
-        sentences = [fallback]
+    fallback = clip_export_from_subgoals(blob)
     n_cards = count_subgoal_spans(names, ocr_blob)
-    end_fracs = _subgoal_end_fractions(hwnd, nodes, harvested)
     say(
-        f"Clip Export will snap to {len(end_fracs)} Sub-goal end(s); "
-        f"{n_cards or len(clean_caps) or 1} sub-goal card(s) on screen"
+        f"Clip Export will type one no-hands sentence for {n_cards or 1} sub-goal card(s) "
+        "(no K-split; K does not create Clip Export clips)"
     )
     if not write:
         return {"wrote": 0, "text": uia_text}
 
+    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED
+    _CLIP_EXPORT_ALIGNED = True
+
     for ctrl in nodes:
-        if is_clip_export_missing_error(_uia_name(ctrl)):
+        name = _uia_name(ctrl)
+        if is_clip_export_missing_error(name) or is_clip_export_hands_error(name):
             if _uia_click(ctrl):
                 say("Clicked Quality Assistant Clip Export error")
                 time.sleep(0.35)
@@ -1103,25 +1108,16 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     time.sleep(0.45)
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
-    pending = sum(1 for n in names if is_pending_clip_label(n) or is_empty_clip_label(n))
-    if not _CLIP_EXPORT_ALIGNED and pending <= 1 and end_fracs:
-        wrote_cuts = _align_clip_export_cuts(hwnd, end_fracs, nodes)
-        _CLIP_EXPORT_ALIGNED = True
-        if wrote_cuts:
-            time.sleep(0.35)
-            uia_text, nodes = _read_uia(hwnd)
-            names = [_uia_name(ctrl) for ctrl in nodes]
-            pending = sum(1 for n in names if is_pending_clip_label(n) or is_empty_clip_label(n))
-    else:
-        _CLIP_EXPORT_ALIGNED = True
-
+    hands = any(is_clip_export_hands_error(n) for n in names)
     wrote = 0
-    if not _CLIP_EXPORT_FILLED:
-        if pending >= 2 and len(sentences) >= 2:
-            wrote = _fill_each_clip_export_slot(hwnd, sentences[:pending])
-        if wrote == 0:
-            wrote = _type_one_clip_export(hwnd, nodes, fallback)
+    if not _CLIP_EXPORT_FILLED or hands:
+        wrote = _type_one_clip_export(hwnd, nodes, fallback)
         _CLIP_EXPORT_FILLED = True
+        time.sleep(0.25)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        if any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes):
+            say("Clip Export still mentions hands; retyping without hand/handling")
+            wrote = _type_one_clip_export(hwnd, nodes, fallback)
     _click_clip_export_end_ignore(hwnd, nodes)
     time.sleep(0.3)
     _switch_timeline_kind(hwnd, "sub-goal")

@@ -363,6 +363,19 @@ def is_clip_export_end_mismatch(name: str) -> bool:
     return "clip" in n and "end must match" in n
 
 
+def is_clip_export_hands_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "hand" not in n:
+        return False
+    compact = n.replace(" ", "")
+    return "clipexport" in compact or "clip export" in n
+
+
+def is_slow_around_transitions_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return "slow around" in n
+
+
 def is_ignore_warning_label(name: str) -> bool:
     """Single Ignore on a QA warning. Never Ignore all."""
     return (name or "").strip().casefold() == "ignore"
@@ -472,7 +485,10 @@ def review_sidebar_open(names: list[str]) -> bool:
 
 def quality_linters_remaining(names: list[str]) -> bool:
     return any(
-        is_idle_too_long_error(n) or is_clip_export_missing_error(n) or is_false_idle_review_error(n)
+        is_idle_too_long_error(n)
+        or is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_false_idle_review_error(n)
         for n in names
     )
 

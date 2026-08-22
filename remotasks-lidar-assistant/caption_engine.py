@@ -58,6 +58,11 @@ CHROME_CAPTION_MARKERS = (
 
 _FRAME_JUNK = re.compile(r"\bf(?:s|ago)?\d{2,4}[a-z]{0,4}\b", re.I)
 _OCR_JUNK_TOKS = ("fago", "fs40", "f7go", "refri*", " or/", "or/ ")
+_MASHED_VERBS = re.compile(
+    r"\b(pick up|put|open|close|rotate|attach|pour|push|hold|move|tighten)\b",
+    re.I,
+)
+_HAND_SUBSTRING = re.compile(r"hand", re.I)
 
 
 def is_ocr_caption_garbage(text: str) -> bool:
@@ -73,9 +78,19 @@ def is_ocr_caption_garbage(text: str) -> bool:
     if _FRAME_JUNK.search(raw):
         return True
     words = raw.split()
-    if len(words) > 40:
+    if len(words) > 28:
+        return True
+    verbs = _MASHED_VERBS.findall(raw)
+    if len(verbs) >= 3 and " and " not in lowered:
+        return True
+    if re.search(r"\b(?:door|jar|bowl|basin|hand|counter)\s+[A-Z][a-z]+\s+(?:the|up|with)\b", raw):
         return True
     if len(words) >= 8:
+        for i in range(len(words) - 7):
+            gram = " ".join(words[i : i + 4]).casefold()
+            rest = " ".join(words[i + 4 :]).casefold()
+            if gram and gram in rest:
+                return True
         head = " ".join(words[:5]).casefold()
         rest = " ".join(words[5:]).casefold()
         if head and head in rest:
@@ -327,6 +342,13 @@ def lint_clip_export(caption: str) -> LintResult:
         issues.append(LintIssue("missing_environment", "Clip Export must include the environment"))
     if original.lower().startswith(("make ", "do ", "fold ", "clean ")):
         issues.append(LintIssue("not_sentence", "Clip Export is 2nd/3rd person sentences, not an imperative title"))
+    if _HAND_SUBSTRING.search(original):
+        issues.append(
+            LintIssue(
+                "hands_wording",
+                "Clip Export must not mention hands (including words like handling)",
+            )
+        )
     return LintResult(original, original, issues)
 
 
@@ -417,10 +439,20 @@ def clip_export_sentence_for_subgoal(caption: str) -> str:
     if not raw or is_ocr_caption_garbage(raw) or is_not_timeline_caption(raw):
         return ""
     if raw.lower() in guidelines.NO_DESCRIPTION_NEEDED or raw.lower().startswith("idle"):
-        return "The person stands idle at a kitchen counter and waits between actions."
+        return (
+            "The person stands at a kitchen counter between household actions."
+        )
     cleaned = lint_subgoal(raw).rewritten
     if cleaned.lower() == "idle":
-        return "The person stands idle at a kitchen counter and waits between actions."
+        return (
+            "The person stands at a kitchen counter between household actions."
+        )
+    cleaned = re.sub(r"\bwith both hands\b", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bwith the (?:left|right) hand\b", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bhandling\b", "moving", cleaned, flags=re.I)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+    if not cleaned or _HAND_SUBSTRING.search(cleaned):
+        return ""
     words = cleaned.split()
     verb = words[0]
     rest = words[1:]
@@ -444,6 +476,8 @@ def clip_export_sentence_for_subgoal(caption: str) -> str:
     sentence = sentence[0].upper() + sentence[1:]
     if not sentence.endswith("."):
         sentence += "."
+    if _HAND_SUBSTRING.search(sentence):
+        return ""
     return sentence
 
 
@@ -473,17 +507,17 @@ def clip_export_from_subgoals(captions: list[str]) -> str:
     )
     if any(tok in blob for tok in ("pepsi", "bottle", "plastic bag", "plastic bags")):
         return (
-            "The person stands at a kitchen refrigerator and performs a household task "
-            "by handling a soda bottle and plastic bags."
+            "The person stands at a kitchen refrigerator and moves a soda bottle "
+            "and plastic bags during a household task."
         )
     if any(tok in blob for tok in kitchen_tokens):
         return (
-            "The person stands at a kitchen counter and performs a household task "
-            "by handling jars, a bowl, and a refrigerator door."
+            "The person stands at a kitchen counter and moves jars, a bowl, "
+            "and a refrigerator door during a household task."
         )
     return (
-        "The person works in an indoor room and performs a household demonstration "
-        "by manipulating the objects described in the sub-goals."
+        "The person works in an indoor room and moves the objects described "
+        "in the sub-goals during a household task."
     )
 
 

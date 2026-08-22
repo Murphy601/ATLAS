@@ -33,11 +33,11 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
 - **pauses only after watching the first clips** (~24s from the start). It does not stop after 2 segments.
-- **Play is confirmed by Pause on screen.** If UIA still shows Play, the engine clicks the video (below the tab strip). It does not send Space after a Play click, so the clip is not toggled off. If Pause vanishes at the end of the video, Play is **not** clicked again (that crashed when two Play controls tied on Y). A watch crash continues to Quality Assistant / Clip Export.
+- **Play is confirmed by Pause on screen.** Playback stays at 1x: **Slow around transitions is turned off** so the video does not stall at clip cuts. The watch loop does not re-click Play (that pauses the clip). If Pause vanishes at the end of the video, Play is **not** clicked again.
 - seeks Full Timeline using the bar (not the left-edge label) and the first Focused Timeline card so playback starts at 0s
 - if Quality Assistant says missing hands / 10 words / format on an Idle clip, it **replaces Idle** with a 10+ word hand caption. It does **not** K-split that action into smaller Idle pieces
 - splits Idle **over 5s** only when the clip is truly Idle (no action). Caption stays `Idle`. Never HTE
-- switches the top **Sub-goal** dropdown to **ClipExport**, **snaps Clip Export ends to Sub-goal ends** (never equal 16/33/50% cuts), and types **one** clean third-person kitchen sentence into the existing Clip Export field. Overlay OCR is not typed. `Ignore all` is never clicked; a single **Ignore** is used only for the end-match warning after a snap
+- switches the top **Sub-goal** dropdown to **ClipExport**, types **one** third-person kitchen sentence with **no hand/handling wording**, and clicks **Ignore** on the end-match warning. It does **not** K-split Clip Export. `Ignore all` is never clicked
 - rewrites sub-goals that join actions with a **period** (`...left hand. Hold...` → `...left hand and hold...`)
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 

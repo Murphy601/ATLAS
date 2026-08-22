@@ -64,6 +64,7 @@ def test_clip_export_from_kitchen_subgoals() -> None:
     result = lint_clip_export(text)
     assert result.ok
     assert "kitchen" in text.lower()
+    assert "hand" not in text.lower()
     ocr_blob = clip_export_from_subgoals(
         ["Sub-goal", "Focused Timeline Idle", "Pick up thY!9d mayonnaisejar"]
     )
@@ -72,6 +73,7 @@ def test_clip_export_from_kitchen_subgoals() -> None:
         ["Transfer the pepsi bottle in the refrigerator with the left hand"]
     )
     assert "refrigerator" in fridge.lower()
+    assert "hand" not in fridge.lower()
     assert lint_clip_export(fridge).ok
 
 
@@ -93,7 +95,7 @@ def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:
         "Push the gray basin with the right hand and hold the red mayonnaise jar with the right hand fago Open the refrigerator door"
     )
     assert is_not_timeline_caption(
-        "Rotate the red mayonnaise jar Rotate the red mayonnaise jar into the middle layer of the refrigerator with both hands"
+        "Attach the refrigerator door Pick up the green bowl with the Pick up the green bowl with right hand from the"
     )
     assert not is_not_timeline_caption("Pick up the red mayonnaise jar with the left hand")
     assert not is_not_timeline_caption(
@@ -105,6 +107,11 @@ def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:
         "The person stands at a kitchen counter and prepares a sandwich by slicing bread, adding fillings, and placing it on a plate."
     )
     assert good.ok
+    handling = lint_clip_export(
+        "The person stands at a kitchen counter and performs a household task by handling jars, a bowl, and a refrigerator door."
+    )
+    assert not handling.ok
+    assert any(i.code == "hands_wording" for i in handling.issues)
 
 
 def test_screenshot_pending_clips_follow_hand_and_imperative_rules():
@@ -149,6 +156,7 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
     text = clip_export_sentence_for_subgoal("Pick up the red mayonnaise jar with the left hand")
     assert text.startswith("The person picks up")
     assert "kitchen" in text.lower()
+    assert "hand" not in text.lower()
     assert lint_clip_export(text).ok
     idle = clip_export_sentence_for_subgoal("Idle")
     assert "kitchen" in idle.lower()
