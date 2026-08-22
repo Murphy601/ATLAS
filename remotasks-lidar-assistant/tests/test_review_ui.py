@@ -110,8 +110,13 @@ def test_grammar_advance_and_remaining_work() -> None:
     )
     assert not is_clip_export_missing_error("ClipExport and Sub-goal clips must contain text")
     assert is_idle_too_long_error(
-        "No idle time should be more than 5s, please split it into smaller segments"
+        "Text Annotation Sub-goal 4a01: No idle time should be more than 5s, please split it into smaller segments"
     )
+    from review_ui import is_create_clip_hint, is_hte_label
+
+    assert is_create_clip_hint("click or press K to create")
+    assert not is_hte_label("Clip Export")
+    assert is_hte_label("Hand Tracking Error")
     assert review_work_remaining("Grammar 2 clips Ignore all")
     assert review_work_remaining("All ClipExports must be fully filled in parallel with Sub-goals")
     assert not review_work_remaining("Focused Timeline Idle Watched")

@@ -20,8 +20,10 @@ from review_ui import (
     interesting_uia_names,
     is_clip_export_missing_error,
     is_clip_export_tab,
+    is_create_clip_hint,
     is_empty_clip_label,
     is_grammar_row_label,
+    is_hte_label,
     is_idle_too_long_error,
     is_ignore_all_label,
     is_pause_control_label,
@@ -31,6 +33,7 @@ from review_ui import (
     is_quality_empty_error,
     is_review_use_label,
     is_split_control_label,
+    is_timeline_kind_label,
     ocr_text,
     parse_grammar_clip_count,
     parse_watched_percent,
@@ -226,8 +229,8 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             say(f"Review pass {pass_i + 1}/8")
             used = _apply_review_uses(hwnd, write=write)
             missing = _fill_missing_and_reds(hwnd, write=write)
-            exported = _fill_clip_export(hwnd, write=write)
             split = _split_long_idle(hwnd, write=write)
+            exported = _fill_clip_export(hwnd, write=write)
             review["applied"] += int(used["applied"])
             if used.get("text"):
                 review["text"] = used["text"]
@@ -465,12 +468,23 @@ def _double_click_screen(x: int, y: int) -> None:
 
 
 def _send_space(hwnd: int | None = None) -> None:
+    _send_vk(0x20)
+
+
+def _send_vk(vk: int) -> None:
     import ctypes
 
     user32 = ctypes.windll.user32
-    vk_space = 0x20
-    user32.keybd_event(vk_space, 0, 0, 0)
-    user32.keybd_event(vk_space, 0, 2, 0)
+    user32.keybd_event(vk, 0, 0, 0)
+    user32.keybd_event(vk, 0, 2, 0)
+
+
+def _press_k_to_create(hwnd: int) -> None:
+    """PDF / on-screen hint: click or press K to create a subgoal or clip-export cut."""
+    _focus(hwnd)
+    time.sleep(0.1)
+    _send_vk(0x4B)  # K
+    say("Pressed K to create/split a clip (never HTE)")
 
 
 def _enable_chromium_a11y() -> int:
@@ -706,37 +720,43 @@ def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
 
 
 def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
-    """Fill the Clip Export card. Never Submit. Never type Idle here."""
+    """Fill Clip Export in parallel with sub-goals. Never Submit. Never edit HTE."""
     uia_text, nodes = _read_uia(hwnd)
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
     if not any(is_clip_export_missing_error(n) for n in names) and not is_clip_export_missing_error(uia_text):
         return {"wrote": 0, "text": uia_text}
-    for ctrl in nodes:
-        if is_clip_export_tab(_uia_name(ctrl)):
-            _uia_click(ctrl)
-            say(f"Clicked Clip Export tab: {_uia_name(ctrl)}")
-            time.sleep(0.4)
-            uia_text, nodes = _read_uia(hwnd)
-            break
-    for ctrl in nodes:
-        if is_clip_export_missing_error(_uia_name(ctrl)):
-            _uia_click(ctrl)
-            say("Clicked Quality Assistant Clip Export error")
-            time.sleep(0.45)
-            uia_text, nodes = _read_uia(hwnd)
-            break
+    if write:
+        _switch_timeline_kind(hwnd, "clip export")
+        time.sleep(0.45)
+        uia_text, nodes = _read_uia(hwnd)
+        created = False
+        for ctrl in nodes:
+            if is_hte_label(_uia_name(ctrl)):
+                continue
+            if is_create_clip_hint(_uia_name(ctrl)):
+                if _uia_click(ctrl):
+                    say("Clicked 'click or press K to create' on Clip Export")
+                    created = True
+                    break
+        if not created:
+            _click_focused_timeline(hwnd, nodes)
+            _press_k_to_create(hwnd)
+        time.sleep(0.5)
+        uia_text, nodes = _read_uia(hwnd)
     clicked = _click_uia_empty_clip(nodes)
     if not clicked and not _OCR_BROKEN:
         words, img_w, img_h = _ocr_window(hwnd, "clip_export")
         left, top, _w, _h = _window_rect(hwnd)
         target = find_phrase_click(words, "click to add text", img_w, img_h)
+        if not target:
+            target = find_phrase_click(words, "click or press K to create", img_w, img_h, y_min_frac=0.45)
         if target and write:
             _focus(hwnd)
             _double_click_screen(left + target[0], top + target[1])
             clicked = True
-    if not clicked:
-        say("Clip Export still empty but no editable field was found.")
-        return {"wrote": 0, "text": uia_text}
+    if not clicked and write:
+        say("Clip Export timeline selected; typing into the focused field")
+        clicked = True
     if not write:
         return {"wrote": 0, "text": uia_text}
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
@@ -745,11 +765,12 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     _type_into_focused(text)
     say(f"Typed Clip Export: {text}")
     time.sleep(0.4)
+    _switch_timeline_kind(hwnd, "sub-goal")
     return {"wrote": 1, "text": text}
 
 
 def _split_long_idle(hwnd: int, write: bool = True) -> dict:
-    """Select a >5s Idle clip and click Split if the control exists."""
+    """Split Idle >5s with K, per clipping spec. Never HTE. Never Submit."""
     uia_text, nodes = _read_uia(hwnd)
     target = None
     for ctrl in nodes:
@@ -758,19 +779,110 @@ def _split_long_idle(hwnd: int, write: bool = True) -> dict:
             break
     if target is None:
         return {"wrote": 0, "text": uia_text}
-    if write:
-        _uia_click(target)
-        say("Clicked Quality Assistant idle-too-long error")
-        time.sleep(0.45)
-        uia_text, nodes = _read_uia(hwnd)
+    if not write:
+        return {"wrote": 0, "text": uia_text}
+    _switch_timeline_kind(hwnd, "sub-goal")
+    _uia_click(target)
+    say("Clicked Quality Assistant idle-too-long error")
+    time.sleep(0.4)
+    uia_text, nodes = _read_uia(hwnd)
+    _click_idle_split_point(hwnd, nodes)
+    time.sleep(0.2)
+    _press_k_to_create(hwnd)
+    time.sleep(0.5)
+    uia_text, nodes = _read_uia(hwnd)
+    if _click_uia_empty_clip(nodes):
+        time.sleep(0.2)
+        _type_into_focused("Idle")
+        say("Typed Idle on the new split segment")
+    say("Split Idle >5s with K into smaller Idle subgoals")
+    return {"wrote": 1, "text": uia_text}
+
+
+def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
+    """Open the Sub-goal dropdown and pick Clip Export or Sub-goal. Never HTE."""
+    want = kind.strip().casefold()
+    _text, nodes = _read_uia(hwnd)
+    dropdowns: list[Any] = []
     for ctrl in nodes:
-        if is_split_control_label(_uia_name(ctrl)):
-            if write and _uia_click(ctrl):
-                say(f"Clicked split control: {_uia_name(ctrl)}")
-                time.sleep(0.4)
-                return {"wrote": 1, "text": uia_text}
-    say("Idle clip is over 5s; no Split control in the accessibility tree.")
-    return {"wrote": 0, "text": uia_text}
+        name = _uia_name(ctrl)
+        if is_hte_label(name):
+            continue
+        if is_timeline_kind_label(name) or name.strip().casefold() in {"sub-goal", "subgoal"}:
+            center = _ctrl_center(ctrl)
+            if center:
+                dropdowns.append((center[1], ctrl, name))
+    dropdowns.sort(key=lambda row: row[0])
+    if dropdowns:
+        _uia_click(dropdowns[0][1])
+        say(f"Opened timeline-kind dropdown ({dropdowns[0][2]})")
+        time.sleep(0.4)
+        _text, nodes = _read_uia(hwnd)
+        for ctrl in nodes:
+            name = _uia_name(ctrl)
+            if is_hte_label(name):
+                continue
+            n = name.strip().casefold()
+            if want == "clip export" and is_clip_export_tab(name):
+                if _uia_click(ctrl):
+                    say("Selected Clip Export timeline")
+                    return True
+            if want in {"sub-goal", "subgoal"} and n in {"sub-goal", "subgoal"}:
+                if _uia_click(ctrl):
+                    say("Selected Sub-goal timeline")
+                    return True
+        if not _OCR_BROKEN:
+            words, img_w, img_h = _ocr_window(hwnd, "timeline_kind")
+            left, top, _w, _h = _window_rect(hwnd)
+            hit = find_phrase_click(
+                words, kind, img_w, img_h, y_min_frac=0.02, y_max_frac=0.45, x_max_frac=0.55
+            )
+            if hit:
+                _click_screen(left + hit[0], top + hit[1])
+                say(f"Clicked OCR timeline kind: {kind}")
+                return True
+    say(f"Could not switch timeline kind to {kind}")
+    return False
+
+
+def _click_focused_timeline(hwnd: int, nodes: list[Any]) -> None:
+    for ctrl in nodes:
+        if _uia_name(ctrl).strip().casefold() == "focused timeline":
+            center = _ctrl_center(ctrl)
+            if center:
+                _click_screen(center[0] + 80, center[1] + 24)
+                return
+    left, top, width, height = _window_rect(hwnd)
+    _click_screen(int(left + width * 0.25), int(top + height * 0.78))
+
+
+def _click_idle_split_point(hwnd: int, nodes: list[Any]) -> None:
+    """Place the playhead inside the >5s Idle clip so K splits it into pieces <=5s."""
+    idle_hits: list[Any] = []
+    for ctrl in nodes:
+        if _uia_name(ctrl).strip().casefold() != "idle":
+            continue
+        center = _ctrl_center(ctrl)
+        if center:
+            idle_hits.append((center[1], ctrl))
+    idle_hits.sort(key=lambda row: -row[0])
+    if idle_hits:
+        ctrl = idle_hits[0][1]
+        try:
+            rect = ctrl.rectangle()
+            width = max(rect.right - rect.left, 1)
+            x = int(rect.left + width * 0.55)
+            y = int((rect.top + rect.bottom) / 2)
+            _click_screen(x, y)
+            say(f"Clicked Idle clip mid-point for K-split at {x},{y}")
+            return
+        except Exception:
+            pass
+    left, top, width, height = _window_rect(hwnd)
+    x = int(left + width * 0.12)
+    y = int(top + height * 0.90)
+    _click_screen(x, y)
+    say(f"Clicked Full Timeline near the first Idle clip at {x},{y}")
 
 
 def _type_caption(hwnd: int, nodes: list[Any], original: str, rewritten: str) -> bool:

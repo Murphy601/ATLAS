@@ -187,11 +187,15 @@ def clip_export_duration_ok(seconds: float) -> DurationVerdict:
 
 
 def idle_policy(seconds: float) -> str:
-    """How to treat a non-progress pause."""
-    if seconds > 10:
-        return "split_idle"  # multiple idle subgoals each < 10s
+    """How to treat a non-progress pause.
+
+    Quality Assistant: no idle clip may be more than 5s — split into smaller
+    Idle subgoals. Idle at or under 5s is folded into the next action, not kept
+    as its own clip (unless isolating a true pause of just over 5s that was
+    already split down to <=5s).
+    """
     if seconds > IDLE_ISOLATE_SECONDS:
-        return "idle_own_clip"
+        return "split_idle"
     return "fold_into_next"
 
 

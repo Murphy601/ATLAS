@@ -84,7 +84,14 @@ def lint_subgoal(caption: str, duration_s: float | None = None) -> LintResult:
         issues.append(LintIssue("empty_caption", "ClipExport and Sub-goal clips must contain text"))
         return LintResult(original, "Idle", issues)
     if lowered in guidelines.NO_DESCRIPTION_NEEDED or lowered.startswith("idle"):
-        if duration_s is not None and duration_s <= guidelines.IDLE_ISOLATE_SECONDS:
+        if duration_s is not None and duration_s > guidelines.IDLE_ISOLATE_SECONDS:
+            issues.append(
+                LintIssue(
+                    "idle_too_long",
+                    "No idle time should be more than 5s, please split it into smaller segments",
+                )
+            )
+        elif duration_s is not None and duration_s <= guidelines.IDLE_ISOLATE_SECONDS:
             issues.append(
                 LintIssue(
                     "idle_too_short",

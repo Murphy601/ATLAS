@@ -246,11 +246,28 @@ def is_split_control_label(name: str) -> bool:
     return False
 
 
+def is_create_clip_hint(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return "press k" in n or "click or press k" in n
+
+
+def is_hte_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return "hand tracking" in n or n in {"hte", "hand_tracking_error"}
+
+
+def is_timeline_kind_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"sub-goal", "subgoal", "clip export", "clip_export", "clipexport"}
+
+
 def is_clip_export_tab(name: str) -> bool:
     n = (name or "").strip().casefold()
     if "sub-goal" in n or "subgoal" in n:
         return False
-    return n in {"clip export", "clip_export", "clipexport"} or "clip export" in n
+    if "parallel" in n or "fully filled" in n:
+        return False
+    return n in {"clip export", "clip_export", "clipexport"} or n == "clip export"
 
 
 def parse_grammar_clip_count(text: str) -> int | None:

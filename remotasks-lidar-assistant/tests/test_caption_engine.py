@@ -38,10 +38,13 @@ def test_idle_and_duration_rules():
     assert subgoal_duration_ok(9.9).ok
     assert not subgoal_duration_ok(10).ok
     assert idle_policy(3) == "fold_into_next"
-    assert idle_policy(6) == "idle_own_clip"
+    assert idle_policy(5.0) == "fold_into_next"
+    assert idle_policy(5.5) == "split_idle"
+    assert idle_policy(6) == "split_idle"
     assert idle_policy(12) == "split_idle"
     idle = lint_subgoal("Idle", duration_s=6)
     assert idle.rewritten == "Idle"
+    assert any(i.code == "idle_too_long" for i in idle.issues)
 
 
 def test_max_three_actions():
