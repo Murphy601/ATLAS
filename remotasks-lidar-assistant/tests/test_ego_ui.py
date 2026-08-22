@@ -1,5 +1,5 @@
 from browser_engine import LidarBrowser
-from ego_task import is_ego_task_text, parse_clips_from_text
+from ego_task import harvest_timeline_clips, is_ego_task_text, parse_clips_from_text
 
 SCREENSHOT_TEXT = """
 Review  Similar  Find & Replace  Edit history
@@ -104,3 +104,39 @@ Watched 100%
     fridge = [c for c in clips if "refrigerator door" in c.caption.lower()]
     assert fridge
     assert "." in fridge[0].caption
+
+
+def test_harvests_all_focused_timeline_captions_not_just_review_range() -> None:
+    names = [
+        "Move both hands toward the shirt on the table with the left hand",
+        "Grab the pants with the left hand, transfer the pants to the right hand and put it on the table with the left hand",
+        "Shake the shirt with both hands",
+        "Unstack the blouse with the left hand on the blouse",
+        "Fold the pants with both hands, fold the shirt with both hands, put the shirt on the table with both hands",
+        "Smooth the blouse with the left hand, and transfer the blouse to the right hand",
+        "Review",
+        "Focused Timeline",
+        "done",
+    ]
+    ocr = (
+        "0.0s – 9.9s (f0 – f296) · 9.9s "
+        "Move both hands toward the shirt on the table with the left hand "
+        "Focused Timeline 9.9s 3.1s 7.6s 3.4s 4.5s 3.9s "
+        "All ClipExports must be fully filled in parallel with Sub-goals "
+        "All ClipExport end must match a Sub-goal end. On frames: 297."
+    )
+    clips = harvest_timeline_clips(names, ocr)
+    assert len(clips) >= 6
+    caps = " ".join(c.caption for c in clips).lower()
+    assert "move both hands" in caps
+    assert "shake the shirt" in caps
+    assert "smooth the blouse" in caps
+    assert all("quality assistant" not in c.caption.lower() for c in clips)
+    review = parse_clips_from_text(
+        "Focused Timeline\n"
+        "0.0s – 9.9s (f0 – f296) · 9.9s\n"
+        "Move both hands toward the shirt on the table with the left hand\n"
+    )
+    assert review
+    assert review[0].end_s == 9.9
+    assert "shirt" in review[0].caption.lower()

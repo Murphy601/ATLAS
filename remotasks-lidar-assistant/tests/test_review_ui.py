@@ -226,6 +226,19 @@ def test_grammar_advance_and_remaining_work() -> None:
         "We cannot have more than one timeline from the same type"
     )
     assert not review_work_remaining("Focused Timeline Idle Watched")
+    from review_ui import duplicate_clip_export_only, fillable_clip_export_qa, fixable_review_work_remaining
+
+    parallel = "All ClipExports must be fully filled in parallel with Sub-goals"
+    extra = (
+        "Text Annotation ClipExport: We cannot have more than one timeline from the same type, "
+        "and we should have at last one Sub-goal and ClipExport"
+    )
+    end_match = "All ClipExport end must match a Sub-goal end. On frames: 297."
+    assert fillable_clip_export_qa([parallel, extra, end_match])
+    assert fixable_review_work_remaining(parallel + "\n" + end_match)
+    assert not fixable_review_work_remaining(extra)
+    assert not duplicate_clip_export_only([parallel, extra], parallel)
+    assert duplicate_clip_export_only([extra], extra)
 
 
 def test_idle_card_split_is_between_idle_label_and_next_pending() -> None:
@@ -275,6 +288,17 @@ def test_clip_export_review_chips_are_not_the_review_tab() -> None:
     assert len(chips) == 3
     assert chips[0][0] == 80
     assert chips[1][0] == 420
+    same_card = pick_clip_export_review_rects(
+        [
+            ("review", (63, 700, 110, 732)),
+            ("review", (181, 700, 230, 732)),
+            ("review", (1018, 700, 1070, 732)),
+        ],
+        min_y=650,
+    )
+    assert len(same_card) == 2
+    assert same_card[0][0] == 63
+    assert same_card[1][0] == 1018
     assert clip_export_caption_committed(
         [
             "The person stands at a household table and folds shirts, pants, and a blouse during a laundry task."
@@ -551,6 +575,13 @@ def test_sort_hits_does_not_compare_wrappers() -> None:
     assert len(ordered) == 2
     assert count_subgoal_spans(["done", "done", "done", "done"], "") == 4
     assert count_subgoal_spans(["Play", "Review"], "done done done done") == 4
+    assert (
+        count_subgoal_spans(
+            ["done", "done", "done"],
+            "Focused Timeline 9.9s 3.1s 7.6s 3.4s 4.5s 3.9s Watched 100% 60 FPS",
+        )
+        == 6
+    )
     assert (
         count_subgoal_spans(
             [

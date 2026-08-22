@@ -15,7 +15,13 @@ from typing import Any
 from playwright.sync_api import Page
 
 import guidelines
-from caption_engine import LintResult, is_not_timeline_caption, lint_clips
+from caption_engine import (
+    LintResult,
+    captions_from_ocr_blob,
+    is_not_timeline_caption,
+    lint_clips,
+    subgoal_captions_from_names,
+)
 
 logger = logging.getLogger("ego.task")
 
@@ -63,13 +69,26 @@ class TimelineClip:
         return asdict(self)
 
 
+REVIEW_RANGE_RE = re.compile(
+    r"(?P<start>\d+(?:\.\d+)?)s\s*[-–]\s*(?P<end>\d+(?:\.\d+)?)s"
+    r"(?:\s*\(f\d+\s*[-–]\s*f\d+\))?"
+    r"(?:\s*[·•]\s*(?P<dur>\d+(?:\.\d+)?)s)?"
+    r"(?:\s*\((?P<dur2>\d+(?:\.\d+)?)s\))?"
+    r"\s*(?:edited|pending|review|idle|done)?"
+    r"\s*(?P<cap>[A-Z][^\n]{8,200})?",
+    re.I,
+)
+
+
 def _parse_range_cards(focused: str) -> list[TimelineClip]:
     """Parse SensorFusionLab cards like '0s - 5.1s (5.1s) Move both hands...'."""
     clips: list[TimelineClip] = []
     pattern = re.compile(
         r"(?P<start>\d+(?:\.\d+)?)s\s*[-–]\s*(?P<end>\d+(?:\.\d+)?)s"
+        r"(?:\s*\(f\d+\s*[-–]\s*f\d+\))?"
+        r"(?:\s*[·•]\s*(?P<dot>\d+(?:\.\d+)?)s)?"
         r"(?:\s*\((?P<dur>\d+(?:\.\d+)?)s\))?"
-        r"\s*(?:edited|pending|review|idle)?\s*"
+        r"\s*(?:edited|pending|review|idle|done)?\s*"
         r"(?P<cap>[A-Z].+?)"
         r"(?=(?:\d+(?:\.\d+)?)s\s*[-–]\s*(?:\d+(?:\.\d+)?)s"
         r"|\b(?:edited|pending|review)\s+"
@@ -88,7 +107,8 @@ def _parse_range_cards(focused: str) -> list[TimelineClip]:
             continue
         start_s = float(match.group("start"))
         end_s = float(match.group("end"))
-        duration = float(match.group("dur")) if match.group("dur") else max(end_s - start_s, 0.0)
+        raw_dur = match.group("dur") or match.group("dot")
+        duration = float(raw_dur) if raw_dur else max(end_s - start_s, 0.0)
         clips.append(
             TimelineClip(
                 index=len(clips),
@@ -207,6 +227,71 @@ def parse_clips_from_text(text: str) -> list[TimelineClip]:
                 duration_s=float(match.group(3)),
                 pending=bool(match.group(2)),
                 raw=match.group(0).strip(),
+            )
+        )
+    return clips
+
+
+def harvest_timeline_clips(
+    names: list[str] | None = None, ocr_blob: str = ""
+) -> list[TimelineClip]:
+    """All Focused Timeline / Review captions, not just the selected Review clip."""
+    names = [str(n).strip() for n in (names or []) if str(n).strip()]
+    blob = "Focused Timeline\n" + "\n".join(names) + "\n" + (ocr_blob or "")
+    parsed = parse_clips_from_text(blob)
+    captions: list[str] = []
+
+    def add_caption(cap: str) -> None:
+        text = re.sub(r"\s+", " ", cap or "").strip()
+        if len(text) < 12 or is_not_timeline_caption(text):
+            return
+        key = text.casefold()
+        for seen in captions:
+            if key in seen.casefold() or seen.casefold() in key:
+                return
+        captions.append(text)
+
+    for clip in parsed:
+        add_caption(clip.caption)
+    for match in REVIEW_RANGE_RE.finditer(blob):
+        add_caption(match.group("cap") or "")
+    for cap in subgoal_captions_from_names(names):
+        add_caption(cap)
+    for cap in captions_from_ocr_blob(ocr_blob or ""):
+        add_caption(cap)
+    if len(parsed) >= 2 and len(parsed) >= len(captions):
+        return parsed
+    if not captions:
+        return parsed
+
+    durs: list[float] = []
+    for clip in parsed:
+        if clip.duration_s:
+            durs.append(float(clip.duration_s))
+    if len(durs) < 2:
+        durs = []
+        for raw in re.findall(r"(\d+(?:\.\d+)?)\s*s\b", ocr_blob or "", flags=re.I):
+            val = float(raw)
+            if 0.4 <= val <= 20 and val not in {15.0, 60.0}:
+                durs.append(val)
+
+    clips: list[TimelineClip] = []
+    acc = 0.0
+    for i, cap in enumerate(captions):
+        dur = durs[i] if i < len(durs) else None
+        start = acc if dur is not None else None
+        end = (acc + dur) if dur is not None else None
+        if dur is not None:
+            acc += dur
+        clips.append(
+            TimelineClip(
+                index=i,
+                caption=cap,
+                duration_s=dur,
+                pending=False,
+                raw=cap,
+                start_s=start,
+                end_s=end,
             )
         )
     return clips

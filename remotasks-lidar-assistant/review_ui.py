@@ -213,14 +213,17 @@ def sort_hits_by_y(hits: list[tuple]) -> list[tuple]:
 
 
 def count_subgoal_spans(names: list[str], ocr_blob: str = "") -> int:
-    """How many Sub-goal cards to mirror on Clip Export (done/pending chips)."""
+    """How many Sub-goal cards to mirror on Clip Export.
+
+    Visible UIA chips are often only the on-screen cards. Prefer the largest
+    of chips, OCR 'done', duration labels, and action captions.
+    """
     chips = sum(1 for name in names if is_timeline_status_label(name))
-    if chips >= 2:
-        return chips
     done = len(re.findall(r"\bdone\b", ocr_blob or "", re.I))
-    if done >= 2:
-        return done
-    return 0
+    durs = len(clip_durations_from_ocr(ocr_blob))
+    caps = sum(1 for name in names if looks_like_neighbor_action(name))
+    best = max(chips, done, durs, caps)
+    return best if best >= 2 else 0
 
 
 NEIGHBOR_ACTION_VERBS = (
@@ -541,6 +544,27 @@ def has_clip_export_quality_error(names: list[str]) -> bool:
     )
 
 
+def fillable_clip_export_qa(names: list[str]) -> bool:
+    """True for Clip Export rows the engine can still fix. Duplicate-only is not fillable."""
+    return any(
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        for n in names
+    )
+
+
+def duplicate_clip_export_only(names: list[str], text: str = "") -> bool:
+    """Extra Clip Export track with no empty/parallel/end-match work left."""
+    blob = "\n".join([*(names or []), text or ""])
+    has_dup = any(is_clip_export_duplicate_timeline(n) for n in names or []) or (
+        "more than one timeline" in blob.casefold()
+    )
+    return has_dup and not fillable_clip_export_qa(names or []) and not fixable_review_work_remaining(blob)
+
+
 def is_clip_export_end_mismatch(name: str) -> bool:
     n = (name or "").strip().casefold()
     compact = n.replace(" ", "")
@@ -630,7 +654,7 @@ def is_clip_export_review_chip(name: str) -> bool:
     return (name or "").strip() == "review"
 
 
-MIN_CLIP_EXPORT_CHIP_GAP = 40
+MIN_CLIP_EXPORT_CHIP_GAP = 150
 
 
 def pick_clip_export_review_rects(
@@ -1021,7 +1045,11 @@ def parse_grammar_clip_count(text: str) -> int | None:
     return int(match.group(1))
 
 
-def review_work_remaining(text: str) -> bool:
+def fixable_review_work_remaining(text: str) -> bool:
+    """True when Grammar / empty / parallel / end-match still need a click or type.
+
+    A leftover second Clip Export track cannot be deleted safely.
+    """
     n = (text or "").casefold()
     count = parse_grammar_clip_count(n)
     if count:
@@ -1034,9 +1062,16 @@ def review_work_remaining(text: str) -> bool:
         return True
     if "at least 15" in n or "15 word" in n:
         return True
-    if "more than one timeline" in n:
-        return True
     if "end must match" in n:
+        return True
+    return False
+
+
+def review_work_remaining(text: str) -> bool:
+    n = (text or "").casefold()
+    if fixable_review_work_remaining(n):
+        return True
+    if "more than one timeline" in n:
         return True
     return False
 
