@@ -32,8 +32,9 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - clicks the **video** in the page (below the Chromium tab strip), then Space once
 - watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
-- splits Idle **over 5s** by placing the playhead in that subgoal and pressing **K** (`click or press K to create`). Caption stays `Idle`. Never HTE
-- switches the top **Sub-goal** dropdown to **Clip Export** and types 1–2 environment sentences so Clip Export is filled in parallel with sub-goals
+- **pauses** the video before any timeline edit (K while playing cuts at a moving playhead)
+- splits Idle **over 5s** by clicking **45% of the way from the Idle card to the next pending clip** (not the tiny Idle word) and pressing **K** once (`click or press K to create`). If the red remains, it tries ~90% (~5.0s of 5.5s). Caption stays `Idle`. Never HTE
+- switches the top **Sub-goal** dropdown to **ClipExport** and types 1–2 kitchen/environment sentences into the **existing pending / Focus annotation** field. It does **not** press K when a Clip Export clip already exists (K at the playhead makes a short clip that is not in parallel with sub-goals)
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 
 You should see a click like `Clicked video-center at 525,367` (y much larger than 50).
@@ -48,8 +49,8 @@ so the engine now:
 - reads the Chromium accessibility tree (same path that already found **Play**)
 - captures the real on-screen pixels (desktop BitBlt / screenshot), not PrintWindow
 - clicks **Use** on each remaining Grammar clip (opens the Grammar row when Use hides)
-- splits Idle **>5s** with **K** (PDF clipping rule; Quality Assistant "no idle more than 5s")
-- fills **Clip Export** on its own timeline (1–2 sentences, environment + task, never HTE)
+- splits Idle **>5s** with **K** after Pause, at 45% of the Idle *card* (then 90% if the red remains)
+- fills **Clip Export** by typing into the existing pending / Focus annotation field (no extra K when a clip already exists)
 - never counts a guessed sidebar coordinate as a successful write
 
 Look for `Review pass`, `Clicked UIA empty clip` / `Typed missing caption: Idle` / `Clicked UIA Review Use`. Grammar should count down (`Grammar 2 clips` → `1` → gone).

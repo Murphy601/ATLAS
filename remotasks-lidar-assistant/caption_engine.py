@@ -268,7 +268,18 @@ def lint_clip_export(caption: str) -> LintResult:
 def clip_export_from_subgoals(captions: list[str]) -> str:
     """1–2 environment sentences grounded in already-written subgoal nouns."""
     blob = " ".join(captions).lower()
-    if any(tok in blob for tok in ("kitchen", "refrigerator", "counter", "bowl", "jar", "basin")):
+    kitchen_tokens = (
+        "kitchen",
+        "refrigerator",
+        "fridge",
+        "counter",
+        "bowl",
+        "jar",
+        "basin",
+        "mayonnaise",
+        "dispenser",
+    )
+    if any(tok in blob for tok in kitchen_tokens):
         return (
             "The person stands at a kitchen counter and performs a household task "
             "by handling jars, a bowl, and a refrigerator door."

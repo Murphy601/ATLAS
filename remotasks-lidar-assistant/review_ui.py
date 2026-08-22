@@ -270,6 +270,122 @@ def is_clip_export_tab(name: str) -> bool:
     return n in {"clip export", "clip_export", "clipexport"} or n == "clip export"
 
 
+def timeline_dropdown_is_open(names: list[str]) -> bool:
+    """True when the Sub-goal / ClipExport / HTE menu is still expanded."""
+    kinds: set[str] = set()
+    for name in names:
+        if is_hte_label(name):
+            kinds.add("hte")
+        elif is_clip_export_tab(name):
+            kinds.add("clip export")
+        elif (name or "").strip().casefold() in {"sub-goal", "subgoal"}:
+            kinds.add("sub-goal")
+    return {"sub-goal", "clip export", "hte"} <= kinds
+
+
+def selected_timeline_kind(names: list[str]) -> str | None:
+    """Toolbar kind when the dropdown is closed. None if the menu is open."""
+    if timeline_dropdown_is_open(names):
+        return None
+    for name in names:
+        if is_hte_label(name) or is_clip_export_missing_error(name):
+            continue
+        if is_clip_export_tab(name):
+            return "clip export"
+        if (name or "").strip().casefold() in {"sub-goal", "subgoal"}:
+            return "sub-goal"
+    return None
+
+
+def review_sidebar_open(names: list[str]) -> bool:
+    return any((name or "").strip().casefold() == "review" for name in names)
+
+
+def quality_linters_remaining(names: list[str]) -> bool:
+    return any(is_idle_too_long_error(n) or is_clip_export_missing_error(n) for n in names)
+
+
+def pick_idle_split_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+) -> tuple[tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
+    """First Focused-Timeline Idle card and the pending clip to its right.
+
+    Ignores the overlay Idle label on the video (higher on screen / smaller y).
+    """
+    idles: list[tuple[int, int, int, int]] = []
+    pendings: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        left, top, _right, bottom = rect
+        mid_y = (top + bottom) / 2
+        if mid_y < min_y:
+            continue
+        n = (name or "").strip().casefold()
+        if n == "idle":
+            idles.append(rect)
+        elif is_pending_clip_label(name):
+            pendings.append(rect)
+    if not idles:
+        return None, None
+    idle = min(idles, key=lambda row: (row[0], row[1]))
+    next_pending = None
+    idle_mid = (idle[1] + idle[3]) / 2
+    for pending in pendings:
+        if pending[0] <= idle[0] + 8:
+            continue
+        pending_mid = (pending[1] + pending[3]) / 2
+        if abs(pending_mid - idle_mid) > 90:
+            continue
+        if next_pending is None or pending[0] < next_pending[0]:
+            next_pending = pending
+    return idle, next_pending
+
+
+def idle_card_split_xy(
+    idle_rect: tuple[int, int, int, int],
+    next_rect: tuple[int, int, int, int] | None,
+    fraction: float = 0.45,
+) -> tuple[int, int]:
+    """Click inside the Idle *card*, not the tiny Idle word.
+
+    The UIA Idle control is a short label at the left of the 5.5s card. 45% of
+    the gap to the next pending is ~2.5s; 90% is ~5.0s.
+    """
+    left, top, right, bottom = idle_rect
+    if next_rect is not None and next_rect[0] > left + 8:
+        span = max(next_rect[0] - left, 1)
+    else:
+        width = max(right - left, 1)
+        span = width if width >= 80 else 200
+    x = int(left + span * fraction)
+    y = int((top + bottom) / 2)
+    return x, y
+
+
+def clip_export_needs_new_clip(names: list[str]) -> bool:
+    """Press K only when Clip Export has no clip to type into."""
+    for name in names:
+        n = (name or "").strip().casefold()
+        if is_pending_clip_label(name):
+            return False
+        if is_empty_clip_label(name):
+            return False
+        if "the person" in n or "focus annotation" in n:
+            return False
+    return True
+
+
+def is_clip_export_placeholder(text: str) -> bool:
+    n = (text or "").casefold()
+    if "kitchen" in n or "refrigerator" in n:
+        return False
+    if "the person stands at" in n:
+        return True
+    if "indoor room" in n and "household demonstration" in n:
+        return True
+    return False
+
+
 def parse_grammar_clip_count(text: str) -> int | None:
     match = GRAMMAR_COUNT_RE.search(text or "")
     if not match:

@@ -64,6 +64,10 @@ def test_clip_export_from_kitchen_subgoals() -> None:
     result = lint_clip_export(text)
     assert result.ok
     assert "kitchen" in text.lower()
+    ocr_blob = clip_export_from_subgoals(
+        ["Sub-goal", "Focused Timeline Idle", "Pick up thY!9d mayonnaisejar"]
+    )
+    assert "kitchen" in ocr_blob.lower()
     bad = lint_clip_export("Make a sandwich")
     assert not bad.ok
     good = lint_clip_export(

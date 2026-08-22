@@ -120,3 +120,55 @@ def test_grammar_advance_and_remaining_work() -> None:
     assert review_work_remaining("Grammar 2 clips Ignore all")
     assert review_work_remaining("All ClipExports must be fully filled in parallel with Sub-goals")
     assert not review_work_remaining("Focused Timeline Idle Watched")
+
+
+def test_idle_card_split_is_between_idle_label_and_next_pending() -> None:
+    from review_ui import idle_card_split_xy, pick_idle_split_rects
+
+    overlay_idle = (400, 220, 460, 250)
+    card_idle = (80, 820, 130, 858)
+    next_pending = (280, 818, 330, 856)
+    idle, nxt = pick_idle_split_rects(
+        [
+            ("Idle", overlay_idle),
+            ("Idle", card_idle),
+            ("pending", next_pending),
+        ],
+        min_y=700,
+    )
+    assert idle == card_idle
+    assert nxt == next_pending
+    x45, y45 = idle_card_split_xy(idle, nxt, 0.45)
+    assert y45 == 839
+    assert 160 <= x45 <= 190
+    x90, _y90 = idle_card_split_xy(idle, nxt, 0.90)
+    assert x90 > x45
+    assert x90 < next_pending[0]
+
+
+def test_clip_export_does_not_press_k_when_pending_exists() -> None:
+    from review_ui import (
+        clip_export_needs_new_clip,
+        is_clip_export_placeholder,
+        quality_linters_remaining,
+        selected_timeline_kind,
+        timeline_dropdown_is_open,
+    )
+
+    assert not clip_export_needs_new_clip(
+        ["ClipExport", "Focused Timeline", "pending", "Watched"]
+    )
+    assert clip_export_needs_new_clip(["ClipExport", "Focused Timeline", "Watched"])
+    assert is_clip_export_placeholder("Focus annotation The person stands at")
+    assert not is_clip_export_placeholder(
+        "The person stands at a kitchen counter and handles jars."
+    )
+    assert timeline_dropdown_is_open(["Sub-goal", "ClipExport", "Hand Tracking Error"])
+    assert selected_timeline_kind(["Sub-goal", "Sub-goal", "Play", "Review"]) == "sub-goal"
+    assert selected_timeline_kind(["ClipExport", "ClipExport", "Play"]) == "clip export"
+    assert quality_linters_remaining(
+        [
+            "All ClipExports must be fully filled in parallel with Sub-goals",
+            "Text Annotation Sub-goal 4a01: No idle time should be more than 5s, please split it into smaller segments",
+        ]
+    )
