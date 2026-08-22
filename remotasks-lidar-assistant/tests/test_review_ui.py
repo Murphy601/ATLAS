@@ -281,6 +281,60 @@ def test_clip_export_review_chips_are_not_the_review_tab() -> None:
         ]
     )
     assert not clip_export_caption_committed(["(empty clip)", "click to add text", "Review"])
+    typed = "The person stands at a household table and folds shirts, pants, and a blouse during a laundry task."
+    assert clip_export_caption_committed(
+        ["(empty clip)", "click to add text", "Review"],
+        ocr_blob="Review The person stands at a household table and folds shirts",
+        typed=typed,
+    )
+    assert not clip_export_caption_committed(
+        ["(empty clip)", "click to add text", "Review"],
+        ocr_blob="Shake the shirt with both hands",
+        typed=typed,
+    )
+
+
+def test_review_description_is_not_the_timeline_placeholder() -> None:
+    from review_ui import (
+        pick_review_description_rects,
+        review_description_click_xy,
+        review_description_fallback_xy,
+        should_open_subgoal_pending,
+        should_snap_clip_export_ends,
+    )
+
+    sidebar = (980, 220, 1240, 310)
+    timeline = (80, 820, 220, 858)
+    hits = pick_review_description_rects(
+        [
+            ("click to add text", sidebar),
+            ("click to add text", timeline),
+            ("(empty clip)", (40, 200, 200, 240)),
+        ],
+        win_left=0,
+        win_top=0,
+        win_width=1575,
+        win_height=1050,
+    )
+    assert hits == [sidebar]
+    x, y = review_description_click_xy(sidebar)
+    assert 980 < x < 1240
+    assert y > 265
+    fx, fy = review_description_fallback_xy(1575, 1050)
+    assert 1000 < fx < 1300
+    assert 250 < fy < 400
+    empty_names = [
+        "(empty clip)",
+        "click to add text",
+        "review",
+        "review",
+        "review",
+        "Text Annotation 9c1a: ClipExport and Sub-goal clips must contain text. On frames: 1, 297, 1107.",
+        "We cannot have more than one timeline from the same type, and we should have at last one Sub-goal and ClipExport",
+    ]
+    assert not should_snap_clip_export_ends(empty_names, chip_count=3, duplicate=True)
+    assert not should_open_subgoal_pending(empty_names)
+    assert should_snap_clip_export_ends(["ClipExport", "Focused Timeline"], chip_count=0)
 
 
 def test_same_card_pending_is_not_the_idle_split_boundary() -> None:

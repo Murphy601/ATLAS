@@ -626,6 +626,9 @@ def is_clip_export_review_chip(name: str) -> bool:
     return (name or "").strip() == "review"
 
 
+MIN_CLIP_EXPORT_CHIP_GAP = 40
+
+
 def pick_clip_export_review_rects(
     named_rects: list[tuple[str, tuple[int, int, int, int]]],
     min_y: int,
@@ -642,15 +645,93 @@ def pick_clip_export_review_rects(
     chips.sort(key=lambda row: (row[0], row[1]))
     out: list[tuple[int, int, int, int]] = []
     for rect in chips:
-        if out and rect[0] - out[-1][0] < MIN_IDLE_NEIGHBOR_GAP:
+        if out and rect[0] - out[-1][0] < MIN_CLIP_EXPORT_CHIP_GAP:
             continue
         out.append(rect)
     return out
 
 
-def clip_export_caption_committed(names: list[str]) -> bool:
-    """True when a Clip Export field shows a saved The-person sentence."""
-    return any(is_clip_export_caption_label(n) for n in names)
+def pick_review_description_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    win_left: int,
+    win_top: int,
+    win_width: int,
+    win_height: int,
+) -> list[tuple[int, int, int, int]]:
+    """'click to add text' in the Review sidebar, not a Focused Timeline card."""
+    if win_width < 1 or win_height < 1:
+        return []
+    min_x = win_left + int(win_width * 0.50)
+    max_y = win_top + int(win_height * 0.58)
+    hits: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        n = (name or "").strip().casefold()
+        if "click to add" not in n and "add text" not in n:
+            continue
+        if n in {"(empty clip)", "empty clip"}:
+            continue
+        cx = (rect[0] + rect[2]) / 2
+        cy = (rect[1] + rect[3]) / 2
+        if cx < min_x or cy > max_y:
+            continue
+        hits.append(rect)
+    hits.sort(key=lambda row: (row[1], row[0]))
+    return hits
+
+
+def review_description_click_xy(rect: tuple[int, int, int, int]) -> tuple[int, int]:
+    """Click inside the description box, a bit below the placeholder label."""
+    left, top, right, bottom = rect
+    x = int((left + right) / 2)
+    y = int((top + bottom) / 2) + max(14, int(max(bottom - top, 1) * 0.35))
+    return x, y
+
+
+def review_description_fallback_xy(width: int, height: int) -> tuple[int, int]:
+    """Review description box: between the video and Quality Assistant."""
+    return int(width * 0.70), int(height * 0.30)
+
+
+def should_snap_clip_export_ends(
+    names: list[str],
+    *,
+    chip_count: int = 0,
+    duplicate: bool = False,
+) -> bool:
+    """K-split only when Clip Export has no cards yet. Empty review chips already exist."""
+    if duplicate or any(is_clip_export_duplicate_timeline(n) for n in names):
+        return False
+    if chip_count >= 2:
+        return False
+    if any(is_clip_export_review_chip(n) for n in names) and any(is_empty_clip_label(n) for n in names):
+        return False
+    if any(is_clip_export_empty_error(n) or is_clip_export_short_error(n) for n in names):
+        return False
+    return True
+
+
+def should_open_subgoal_pending(names: list[str]) -> bool:
+    """Do not leave Clip Export to sit on a Sub-goal pending / red playhead."""
+    return not has_clip_export_quality_error(names)
+
+
+def is_quality_run_now_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"run now", "run", "rerun"} or n.startswith("run now")
+
+
+def clip_export_caption_committed(
+    names: list[str], ocr_blob: str = "", typed: str = ""
+) -> bool:
+    """True when a Clip Export field kept a The-person sentence after typing."""
+    if any(is_clip_export_caption_label(n) for n in names):
+        return True
+    snippet = " ".join((typed or "").split()[:6]).casefold()
+    if len(snippet) >= 12:
+        blob = " ".join(names) + " " + (ocr_blob or "")
+        if snippet in blob.casefold():
+            return True
+    return False
 
 
 def is_split_control_label(name: str) -> bool:

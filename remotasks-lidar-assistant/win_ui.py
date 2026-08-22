@@ -71,10 +71,16 @@ from review_ui import (
     parse_watched_percent,
     pick_clip_export_review_rects,
     pick_idle_split_rects,
+    pick_review_description_rects,
     clip_export_caption_committed,
     playback_confirmed,
     quality_linters_remaining,
+    review_description_click_xy,
+    review_description_fallback_xy,
     should_fill_clip_export,
+    should_open_subgoal_pending,
+    should_snap_clip_export_ends,
+    is_quality_run_now_label,
     review_sidebar_open,
     review_work_remaining,
     selected_timeline_kind,
@@ -325,6 +331,11 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             say(f"Review pass {pass_i + 1}/4")
             _pause_via_uia(hwnd)
             _close_timeline_dropdown(hwnd)
+            _text_pass, nodes_pass = _read_uia(hwnd, verbose=False)
+            names_pass = [_uia_name(ctrl) for ctrl in nodes_pass]
+            exported = {"wrote": 0, "text": ""}
+            if should_fill_clip_export(names_pass, already_filled=_CLIP_EXPORT_FILLED):
+                exported = _fill_clip_export(hwnd, write=write)
             _switch_timeline_kind(hwnd, "sub-goal")
             used = _apply_review_uses(hwnd, write=write, max_clicks=4)
             recap = _recaption_false_idle(hwnd, write=write)
@@ -332,7 +343,6 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             split = {"wrote": 0, "text": recap.get("text") or ""}
             if recap.get("wrote", 0) == 0:
                 split = _split_long_idle(hwnd, write=write)
-            exported = _fill_clip_export(hwnd, write=write)
             review["applied"] += int(used["applied"])
             if used.get("text"):
                 review["text"] = used["text"]
@@ -374,6 +384,10 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
                 if idle_rounds >= 2:
                     say("Stopped after two idle passes with no new Use/fill.")
                     break
+                if not should_open_subgoal_pending(names_now):
+                    say("Clip Export text still missing; not opening a Sub-goal pending clip")
+                    time.sleep(0.4)
+                    continue
                 if not _advance_review_target(hwnd):
                     say("Grammar/Quality work remains but no next clip control was found.")
                     break
@@ -1251,12 +1265,21 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     duplicate = duplicate or any(is_clip_export_duplicate_timeline(n) for n in names)
     if duplicate:
         say("Not creating a second Clip Export track on Full Timeline")
-    if not _CLIP_EXPORT_ALIGNED and end_fracs:
+    left, top, _width, height = _window_rect(hwnd)
+    chips_now = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+    if should_snap_clip_export_ends(names, chip_count=len(chips_now), duplicate=duplicate) and (
+        not _CLIP_EXPORT_ALIGNED and end_fracs
+    ):
         _align_clip_export_on_focused_timeline(hwnd, end_fracs, nodes)
         _CLIP_EXPORT_ALIGNED = True
         time.sleep(0.3)
         uia_text, nodes = _read_uia(hwnd)
-    elif not end_fracs and not parallel:
+    else:
+        if not should_snap_clip_export_ends(names, chip_count=len(chips_now), duplicate=duplicate):
+            say(
+                f"Clip Export already has {len(chips_now) or 'existing'} card(s); "
+                "not pressing K on Focused Timeline"
+            )
         _CLIP_EXPORT_ALIGNED = True
 
     hands = any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes)
@@ -1301,6 +1324,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             _CLIP_EXPORT_STUCK = True
         if wrote:
             _CLIP_EXPORT_FILLED = True
+            _click_quality_run_now(hwnd, nodes)
         if any(is_clip_export_hands_error(_uia_name(ctrl)) for ctrl in nodes):
             say("Clip Export still mentions hands; retyping without hand/handling")
             _click_clip_export_caption_field(nodes, prefer_hands=True)
@@ -1468,46 +1492,137 @@ def _click_clip_export_end_ignore(hwnd: int, nodes: list[Any] | None = None) -> 
     return False
 
 
+def _click_review_tab(nodes: list[Any]) -> bool:
+    for ctrl in nodes:
+        if _uia_name(ctrl).strip() != "Review":
+            continue
+        if _uia_click(ctrl):
+            say("Clicked Review tab")
+            return True
+    return False
+
+
+def _click_review_description_field(hwnd: int, nodes: list[Any]) -> bool:
+    """Focus the Review sidebar description box. That is the field that keeps text."""
+    left, top, width, height = _window_rect(hwnd)
+    rects = pick_review_description_rects(_named_rects(nodes), left, top, width, height)
+    if rects:
+        x, y = review_description_click_xy(rects[0])
+        _click_screen(x, y)
+        time.sleep(0.12)
+        _click_screen(x, y + 8)
+        say(f"Clicked Review description field at {x},{y}")
+        return True
+    if not _OCR_BROKEN:
+        words, img_w, img_h = _ocr_window(hwnd, "review_description")
+        target = find_phrase_click(
+            words,
+            "click to add text",
+            img_w,
+            img_h,
+            y_min_frac=0.10,
+            y_max_frac=0.58,
+            x_min_frac=0.50,
+            x_max_frac=0.92,
+        )
+        if target:
+            _click_screen(left + target[0], top + target[1] + 16)
+            time.sleep(0.10)
+            _click_screen(left + target[0], top + target[1] + 20)
+            say(f"Clicked Review description from OCR at {left + target[0]},{top + target[1]}")
+            return True
+    fx, fy = review_description_fallback_xy(width, height)
+    _click_screen(left + fx, top + fy)
+    time.sleep(0.10)
+    _click_screen(left + fx, top + fy + 10)
+    say(f"Clicked Review description box at {left + fx},{top + fy}")
+    return True
+
+
 def _click_clip_export_editor(hwnd: int, nodes: list[Any]) -> bool:
-    """Focus the Clip Export text field. Never the dead '(empty clip)' list row first."""
+    """Focus the Review description box. Never Alt-refocus the window after this."""
+    _click_review_tab(nodes)
+    time.sleep(0.15)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    if _click_review_description_field(hwnd, nodes):
+        return True
     if _click_clip_export_caption_field(nodes, prefer_hands=True):
         return True
     if _click_uia_empty_clip(nodes):
         return True
-    if _OCR_BROKEN:
-        return False
-    words, img_w, img_h = _ocr_window(hwnd, "clip_export_editor")
-    left, top, _w, _h = _window_rect(hwnd)
-    target = find_caption_field_click(words, "click to add text", img_w, img_h)
-    if not target:
-        target = find_caption_field_click(words, "the person", img_w, img_h)
-    if not target:
-        return False
-    _focus(hwnd)
-    _click_screen(left + target[0], top + target[1])
-    time.sleep(0.08)
-    _click_screen(left + target[0], top + target[1])
-    say("Clicked Clip Export editor from OCR (click to add text)")
-    return True
+    return False
+
+
+def _uia_set_text(ctrl: Any, text: str) -> bool:
+    for action in (
+        lambda: ctrl.set_edit_text(text),
+        lambda: ctrl.iface_value.SetValue(text),
+    ):
+        try:
+            action()
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _commit_caption_field() -> None:
+    """Tab out of the description box so SensorFusionLab stores the sentence. Never Enter."""
+    time.sleep(0.2)
+    _send_vk(0x09)
+    time.sleep(0.2)
 
 
 def _write_clip_export_sentence(hwnd: int, nodes: list[Any], sentence: str) -> bool:
-    """Type one Clip Export sentence and confirm it stayed in the field."""
+    """Type one Clip Export sentence into Review and confirm it stayed."""
     if not _click_clip_export_editor(hwnd, nodes):
-        say("Could not focus click-to-add-text; not counting this Clip Export write")
+        say("Could not focus the Review description box; not counting this Clip Export write")
         return False
-    time.sleep(0.2)
-    _focus(hwnd)
-    _type_into_focused(sentence)
-    time.sleep(0.2)
-    _blur_caption(hwnd, nodes, prefer_quality=True)
+    time.sleep(0.3)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    set_ok = False
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if "click to add" not in name.casefold() and not is_clip_export_caption_label(name):
+            continue
+        if _uia_set_text(ctrl, sentence):
+            set_ok = True
+            say("Set Clip Export via UIA Value")
+            break
+    if not set_ok:
+        _click_review_description_field(hwnd, nodes)
+        time.sleep(0.2)
+        _type_into_focused(sentence)
+    else:
+        time.sleep(0.1)
+        _type_into_focused(sentence)
     time.sleep(0.35)
+    _commit_caption_field()
+    _blur_caption(hwnd, nodes, prefer_quality=True)
+    time.sleep(0.45)
     _text, after = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in after]
-    if clip_export_caption_committed(names):
+    ocr_blob = ""
+    if not _OCR_BROKEN:
+        words, _iw, _ih = _ocr_window(hwnd, "clip_export_saved")
+        ocr_blob = ocr_text(words)
+    if clip_export_caption_committed(names, ocr_blob, sentence):
         say(f"Saved Clip Export: {sentence}")
         return True
     say(f"Clip Export text did not stick after typing: {sentence[:70]}")
+    return False
+
+
+def _click_quality_run_now(hwnd: int, nodes: list[Any] | None = None) -> bool:
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    for ctrl in nodes:
+        if not is_quality_run_now_label(_uia_name(ctrl)):
+            continue
+        if _uia_click(ctrl):
+            say("Clicked Quality Assistant Run now")
+            time.sleep(0.4)
+            return True
     return False
 
 
@@ -1555,7 +1670,7 @@ def _fill_each_clip_export_slot(
     if len(sentences) < n:
         sentences = sentences + [sentences[-1]] * (n - len(sentences))
     mids = clip_export_slot_mid_fractions(end_fracs or [], n)
-    say(f"Filling {n} Clip Export review chip(s) via click-to-add-text")
+    say(f"Filling {n} Clip Export review chip(s) via the Review description box")
     for i, sentence in enumerate(sentences):
         if i < len(chips):
             rect = chips[i]
