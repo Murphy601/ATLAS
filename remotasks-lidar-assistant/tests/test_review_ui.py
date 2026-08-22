@@ -256,6 +256,26 @@ def test_grammar_advance_and_remaining_work() -> None:
     assert clip_export_caption_needs_rewrite(
         "The person flips the shirt and hold the shirt at an indoor table during a laundry folding task."
     )
+    from review_ui import (
+        is_garbled_clip_export_caption,
+        long_range_interior_fracs,
+        review_clip_range_from_ocr,
+    )
+
+    garbled = (
+        "The person flips the shirt and hold the shirt at an indoor table "
+        "dkkkkuring a laundry folding task.kkkk"
+    )
+    assert is_garbled_clip_export_caption(garbled)
+    assert clip_export_caption_needs_rewrite(garbled)
+    assert review_clip_range_from_ocr("9.9s - 36.9s (f296 - f1106) · 27.0s") == (
+        9.9,
+        36.9,
+        27.0,
+    )
+    insides = long_range_interior_fracs(9.9, 36.9, 40.0)
+    assert insides
+    assert all(0.28 < f < 0.88 for f in insides)
     assert clip_export_other_caption_does_not_block_fill(
         [
             "The person unstacks the blouse at an indoor table during a laundry folding task.",

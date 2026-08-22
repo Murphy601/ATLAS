@@ -36,8 +36,12 @@ from review_ui import (
     parse_timeline_fps,
     pick_clip_export_status_rects,
     pick_ocr_duration_centers,
+    pick_ocr_timeline_person_centers,
     clip_durations_from_ocr,
+    is_garbled_clip_export_caption,
+    long_range_interior_fracs,
     qa_end_mismatch_seconds,
+    review_clip_range_from_ocr,
     should_abort_clip_export_k,
     wide_card_cut_fracs,
     clip_export_needs_new_clip,
@@ -740,9 +744,12 @@ def _press_k_to_create(hwnd: int, at: tuple[int, int] | None = None) -> bool:
     if should_abort_clip_export_k(names):
         say("Not pressing K on Hand Tracking Error")
         return False
-    _focus(hwnd)
+    # Do not SetForegroundWindow first: that restores the Review caret and types kkkk.
+    _blur_caption(hwnd, nodes)
     time.sleep(0.08)
     if at is not None:
+        _click_screen(int(at[0]), int(at[1]))
+        time.sleep(0.08)
         _click_screen(int(at[0]), int(at[1]))
         time.sleep(0.12)
     _send_vk(0x4B)  # K
@@ -1405,7 +1412,13 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         export_words, _ew, _eh = _ocr_window(hwnd, "clip_export_cards")
         export_ocr = ocr_text(export_words)
     card_durs = clip_durations_from_ocr(export_ocr)
-    visible = clip_export_visible_card_count(len(chips_now), len(card_durs))
+    person_hits = pick_ocr_timeline_person_centers(export_words, int(height * 0.62))
+    visible = clip_export_visible_card_count(
+        max(len(chips_now), len(person_hits)), len(card_durs)
+    )
+    long_range = review_clip_range_from_ocr(export_ocr) or review_clip_range_from_ocr(
+        " ".join(names)
+    )
     bar = _focused_timeline_rect(hwnd, nodes)
     bar_left, bar_right = bar[0], bar[2]
     if bar_right - bar_left < 200:
@@ -1431,6 +1444,18 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             for f in wide_card_cut_fracs(
                 status_chips or chips_now, end_fracs, bar_left, bar_right
             )
+            if all(abs(f - seen) > 0.03 for seen in interior)
+            and all(abs(f - seen) > 0.03 for seen in existing_ends)
+        )
+    if long_range and long_range[2] > 10:
+        total_s = max(long_range[1] + 4.0, sum(card_durs) if card_durs else 0.0)
+        say(
+            f"Review shows a {long_range[2]:g}s Clip Export from "
+            f"{long_range[0]:g}s to {long_range[1]:g}s; cutting inside that card"
+        )
+        interior.extend(
+            f
+            for f in long_range_interior_fracs(long_range[0], long_range[1], total_s)
             if all(abs(f - seen) > 0.03 for seen in interior)
             and all(abs(f - seen) > 0.03 for seen in existing_ends)
         )
@@ -1475,15 +1500,20 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     dirty = any(
         is_clip_export_caption_label(_uia_name(ctrl)) and "hand" in _uia_name(ctrl).casefold()
         for ctrl in nodes
-    ) or any(clip_export_caption_needs_rewrite(_uia_name(ctrl)) for ctrl in nodes)
+    ) or any(
+        clip_export_caption_needs_rewrite(_uia_name(ctrl))
+        or is_garbled_clip_export_caption(_uia_name(ctrl))
+        or is_clip_export_placeholder(_uia_name(ctrl))
+        for ctrl in nodes
+    )
+    if dirty:
+        say("Clip Export caption is garbled, a placeholder, or still mentions hands; rewriting every card")
     empty = any(is_empty_clip_label(_uia_name(ctrl)) for ctrl in nodes)
     missing_now = any(is_clip_export_missing_error(_uia_name(ctrl)) for ctrl in nodes)
     empty_now = any(is_clip_export_empty_error(_uia_name(ctrl)) for ctrl in nodes)
     short_now = any(is_clip_export_short_error(_uia_name(ctrl)) for ctrl in nodes)
     wrote = 0
-    need_slots = visible > _CLIP_EXPORT_WRITTEN_CARDS or empty or empty_now or short_now
-    if not need_slots and dirty and _CLIP_EXPORT_WRITTEN_CARDS == 0:
-        need_slots = True
+    need_slots = visible > _CLIP_EXPORT_WRITTEN_CARDS or empty or empty_now or short_now or dirty
     if need_slots:
         if visible >= 1 or empty or empty_now or short_now or missing_now:
             wrote = _fill_each_clip_export_slot(
@@ -1779,9 +1809,13 @@ def _split_long_clip_export_card(
             bar_left,
             bar_right,
         )
+        ranged = review_clip_range_from_ocr(ocr_text(words or []))
+        if ranged and ranged[2] > 10:
+            interiors = long_range_interior_fracs(ranged[0], ranged[1], max(ranged[1] + 4.0, ranged[2] + ranged[0]))
+            interiors.extend(f for f in (end_fracs or []) if all(abs(f - seen) > 0.03 for seen in interiors))
         if not interiors:
-            interiors = [0.28, 0.42, 0.56, 0.70]
-        for frac in interiors[:6]:
+            interiors = [0.32, 0.40, 0.48, 0.56, 0.64, 0.72]
+        for frac in interiors[:8]:
             x, y = _focused_timeline_xy(hwnd, frac, nodes)
             click_points.append((x, y, f"{int(frac * 100)}%"))
     _focus_filled_clip_export_track(hwnd, nodes)
@@ -1979,8 +2013,10 @@ def _focus_filled_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
     chips = pick_clip_export_status_rects(_named_rects(nodes), min_y)
     if not chips:
         chips = pick_clip_export_review_rects(_named_rects(nodes), min_y)
+    chips = [rect for rect in chips if rect[0] >= left + 70]
     if chips:
-        rect = chips[0]
+        # Prefer the widest / rightmost card (the 27s middle clip), not x=48 chrome.
+        rect = max(chips, key=lambda row: (row[2] - row[0], row[0]))
         x = int((rect[0] + rect[2]) / 2)
         y = int((rect[1] + rect[3]) / 2)
         _click_screen(x, y)
@@ -2087,9 +2123,17 @@ def _fill_each_clip_export_slot(
     left, top, _width, height = _window_rect(hwnd)
     min_y = top + int(height * 0.62)
     _text, nodes = _read_uia(hwnd, verbose=False)
-    chips = pick_clip_export_review_rects(_named_rects(nodes), min_y)
+    chips = [
+        rect
+        for rect in pick_clip_export_review_rects(_named_rects(nodes), min_y)
+        if rect[0] >= left + 70
+    ]
     duration_hits = pick_ocr_duration_centers(ocr_words or [], int(height * 0.62))
-    n = clip_export_visible_card_count(len(chips), len(duration_hits) or int(n_slots or 0))
+    person_hits = pick_ocr_timeline_person_centers(ocr_words or [], int(height * 0.62))
+    n = clip_export_visible_card_count(
+        max(len(chips), len(person_hits)),
+        len(duration_hits) or int(n_slots or 0),
+    )
     fallback_sentence = "The person works at an indoor table during a laundry folding task."
     sentences = list(sentences or [fallback_sentence])
     if len(sentences) < n:
@@ -2112,6 +2156,10 @@ def _fill_each_clip_export_slot(
             x, y, dur = duration_hits[i]
             _click_screen(left + x, top + y)
             say(f"Clicked Clip Export {dur:g}s card {i + 1}/{n} at {left + x},{top + y}")
+        elif i < len(person_hits):
+            x, y = person_hits[i]
+            _click_screen(left + x, top + y)
+            say(f"Clicked Clip Export card {i + 1}/{n} at {left + x},{top + y}")
         else:
             say(f"No more visible Clip Export cards after {i}; not pasting into the same box")
             break

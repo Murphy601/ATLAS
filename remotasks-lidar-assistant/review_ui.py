@@ -586,9 +586,20 @@ def is_clip_export_style_caption(name: str) -> bool:
     return (name or "").strip().casefold().startswith("the person")
 
 
+def is_garbled_clip_export_caption(name: str) -> bool:
+    """K leaked into the Review box: 'dkkkkuring' / 'task.kkkk'."""
+    n = name or ""
+    if re.search(r"k{3,}", n, flags=re.I):
+        return True
+    compact = n.casefold().replace(" ", "")
+    return "dkkk" in compact or "kkkking" in compact
+
+
 def clip_export_caption_needs_rewrite(name: str) -> bool:
-    """Old Clip Export text that still fails QA (hands, hold, on the blouse)."""
+    """Old Clip Export text that still fails QA (hands, hold, on the blouse, K-typos)."""
     n = (name or "").strip().casefold()
+    if is_garbled_clip_export_caption(name):
+        return True
     if not n.startswith("the person"):
         return False
     if "hand" in n:
@@ -899,6 +910,43 @@ def parse_timeline_fps(blob: str) -> float | None:
     return None
 
 
+REVIEW_RANGE_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*s\s*[-–]\s*(\d+(?:\.\d+)?)\s*s"
+    r"(?:[^.\d]{0,40}?(\d+(?:\.\d+)?)\s*s)?",
+    re.I,
+)
+
+
+def review_clip_range_from_ocr(blob: str) -> tuple[float, float, float] | None:
+    """Review header '9.9s - 36.9s (f296 - f1106) · 27.0s'."""
+    match = REVIEW_RANGE_RE.search(blob or "")
+    if not match:
+        return None
+    start = float(match.group(1))
+    end = float(match.group(2))
+    if end <= start + 0.4:
+        return None
+    dur = float(match.group(3)) if match.group(3) else round(end - start, 3)
+    if dur < 0.4:
+        return None
+    return start, end, dur
+
+
+def long_range_interior_fracs(
+    start_s: float, end_s: float, total_s: float, step_s: float = 4.5
+) -> list[float]:
+    """Cuts inside a 27s card (9.9s-36.9s), never on its 9.9s / 36.9s edges."""
+    span = max(float(total_s or 0.0), float(end_s), 0.01)
+    out: list[float] = []
+    t = float(start_s) + max(float(step_s), 2.0)
+    while t < float(end_s) - 1.5:
+        frac = t / span
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+        t += max(float(step_s), 2.0)
+    return out
+
+
 def clip_durations_from_ocr(blob: str) -> list[float]:
     """Timeline card lengths like 9.9s / 27.0s / 5.3s. Ignore FPS and Watched 100."""
     vals: list[float] = []
@@ -1021,6 +1069,24 @@ def clip_export_needs_more_cards(visible: int, n_slots: int, names: list[str]) -
     if any(is_clip_export_missing_error(n) for n in names or []) and visible < max(int(n_slots or 0), 2):
         return True
     return int(visible or 0) < max(int(n_slots or 0), 2)
+
+
+def pick_ocr_timeline_person_centers(
+    words: list[dict[str, Any]], min_y: int
+) -> list[tuple[int, int]]:
+    """Each 'person' word on Focused Timeline is one Clip Export card caption."""
+    hits: list[tuple[int, int]] = []
+    for word in words or []:
+        if str(word.get("text") or "").strip().casefold() != "person":
+            continue
+        cx, cy = _center(word)
+        if cy < min_y:
+            continue
+        if hits and cx - hits[-1][0] < 80:
+            continue
+        hits.append((cx, cy))
+    hits.sort(key=lambda row: row[0])
+    return hits
 
 
 def pick_ocr_duration_centers(
