@@ -164,6 +164,16 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
         "Rotate the red mayonnaise jar Rotate the red mayonnaise jar into t middle layer fago Open"
     )
     assert dirty == ""
+    from caption_engine import clip_export_from_subgoals, clip_export_slot_sentences
+
+    pour = (
+        "Pour the black bucket from the right to the left hand and put the blue "
+        "container into the middle layer of the refrigerator with the right hand"
+    )
+    slots = clip_export_slot_sentences([pour], 5, clip_export_from_subgoals([pour]))
+    assert len(slots) == 5
+    assert all("hand" not in s.lower() for s in slots)
+    assert all(s.startswith("The person") for s in slots)
     blob = (
         "Open the refrigerator door with the left hand. "
         "Hold the red mayonnaise jar with the left hand"

@@ -521,6 +521,26 @@ def clip_export_from_subgoals(captions: list[str]) -> str:
     )
 
 
+def clip_export_slot_sentences(
+    captions: list[str], n_slots: int, fallback: str | None = None
+) -> list[str]:
+    """One no-hands Clip Export sentence per Sub-goal span."""
+    fallback_text = (fallback or "").strip() or clip_export_from_subgoals(captions)
+    if _HAND_SUBSTRING.search(fallback_text):
+        fallback_text = clip_export_from_subgoals(["kitchen counter refrigerator"])
+    n = max(int(n_slots or 0), 1)
+    per: list[str] = []
+    for cap in captions or []:
+        sentence = clip_export_sentence_for_subgoal(cap)
+        if sentence:
+            per.append(sentence)
+    if len(per) >= n:
+        return per[:n]
+    while len(per) < n:
+        per.append(fallback_text)
+    return per
+
+
 def subgoal_captions_from_names(names: list[str]) -> list[str]:
     out: list[str] = []
     for name in names:

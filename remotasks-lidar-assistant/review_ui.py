@@ -298,6 +298,35 @@ def clip_export_end_fractions_from_status_rects(
     return out
 
 
+def clip_export_end_fractions_from_times(end_times: list[float]) -> list[float]:
+    """Interior Clip Export K-cuts from Sub-goal end seconds (not equal-percentage guesses)."""
+    if len(end_times) < 2:
+        return []
+    total = max(float(end_times[-1]), 0.01)
+    out: list[float] = []
+    for end in end_times[:-1]:
+        frac = float(end) / total
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+    return out
+
+
+def clip_export_slot_mid_fractions(end_fracs: list[float], n_slots: int) -> list[float]:
+    """Playhead positions in the middle of each Clip Export span after Sub-goal-end cuts."""
+    n = max(int(n_slots or 0), 1)
+    bounds = [0.0]
+    for frac in end_fracs or []:
+        f = max(0.02, min(0.98, float(frac)))
+        if all(abs(f - b) > 0.02 for b in bounds):
+            bounds.append(f)
+    bounds.append(1.0)
+    bounds.sort()
+    mids = [round((bounds[i] + bounds[i + 1]) / 2, 4) for i in range(len(bounds) - 1)]
+    if len(mids) >= n:
+        return mids[:n]
+    return [round((i + 0.45) / n, 4) for i in range(n)]
+
+
 def clip_export_needs_parallel_splits(names: list[str], subgoal_count: int) -> bool:
     """One filled Clip Export is not enough when QA still wants clips in parallel."""
     if not any(is_clip_export_missing_error(n) for n in names):
@@ -369,6 +398,21 @@ def is_clip_export_hands_error(name: str) -> bool:
         return False
     compact = n.replace(" ", "")
     return "clipexport" in compact or "clip export" in n
+
+
+def is_clip_export_caption_label(name: str) -> bool:
+    """True for a Clip Export caption field, not a Quality Assistant error row."""
+    n = (name or "").strip()
+    if len(n) < 20:
+        return False
+    lowered = n.casefold()
+    if lowered.startswith("error") or lowered.startswith("warning"):
+        return False
+    if "must not" in lowered or "must be" in lowered or "must match" in lowered:
+        return False
+    if is_clip_export_missing_error(n) or is_clip_export_hands_error(n) or is_clip_export_end_mismatch(n):
+        return False
+    return lowered.startswith("the person") or ("the person" in lowered and "hand" in lowered)
 
 
 def is_slow_around_transitions_label(name: str) -> bool:

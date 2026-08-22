@@ -148,6 +148,26 @@ def test_grammar_advance_and_remaining_work() -> None:
         "ClipExports must not contain hands wording like mentioning which hand/hands are being used."
     )
     assert not is_clip_export_hands_error("Pick up the jar with the left hand")
+    from review_ui import is_clip_export_caption_label
+
+    assert is_clip_export_caption_label(
+        "The person stands at a kitchen counter and moves jars with both hands"
+    )
+    assert is_clip_export_caption_label(
+        "The person stands at a kitchen counter and moves jars, a bowl, and a refrigerator door during a household task."
+    )
+    assert not is_clip_export_caption_label(
+        "Text Annotation 1ab9: ClipExports must not contain hands wording like mentioning which hand/hands are being used.. On frames: 165."
+    )
+    assert not is_clip_export_caption_label(
+        "Error All ClipExports must be fully filled in parallel with Sub-goals"
+    )
+    assert not is_clip_export_caption_label(
+        "Warning All ClipExport end must match a Sub-goal end. On frames: 165."
+    )
+    assert not is_clip_export_caption_label(
+        "Pour the black bucket from the right to the left hand and put the blue container into the middle layer of the refrigerator with the right hand"
+    )
     assert is_slow_around_transitions_label("Slow around transitions")
     assert not is_slow_around_transitions_label("Playback speed (away from transitions)")
     assert is_pending_clip_label("pending")
@@ -265,6 +285,15 @@ def test_playback_and_false_idle_helpers() -> None:
         1400,
     )
     assert ends == [round((400 - 80) / (1400 - 80), 4), round((900 - 80) / (1400 - 80), 4)]
+    from review_ui import clip_export_end_fractions_from_times, clip_export_slot_mid_fractions
+
+    kitchen_ends = clip_export_end_fractions_from_times([5.1, 8.2, 16.9, 19.7, 22.0])
+    assert kitchen_ends[0] == round(5.1 / 22.0, 4)
+    assert kitchen_ends[-1] == round(19.7 / 22.0, 4)
+    assert 0.20 < kitchen_ends[0] < 0.28
+    mids = clip_export_slot_mid_fractions(kitchen_ends, 5)
+    assert len(mids) == 5
+    assert mids[0] < kitchen_ends[0] < mids[1]
     x, y = full_timeline_xy((80, 940, 120, 970), 0.02, (0, 0, 1575, 1050))
     assert x > 80
     assert y > 940
