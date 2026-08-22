@@ -581,6 +581,34 @@ def is_clip_export_hands_error(name: str) -> bool:
     return "clipexport" in compact or "clip export" in n
 
 
+def is_clip_export_style_caption(name: str) -> bool:
+    """True for a third-person Clip Export sentence, not a Sub-goal."""
+    return (name or "").strip().casefold().startswith("the person")
+
+
+def clip_export_caption_needs_rewrite(name: str) -> bool:
+    """Old Clip Export text that still fails QA (hands, hold, on the blouse)."""
+    n = (name or "").strip().casefold()
+    if not n.startswith("the person"):
+        return False
+    if "hand" in n:
+        return True
+    if " on the blouse" in n or " on the shirt" in n or " on the pants" in n:
+        return True
+    if re.search(r"\bhold the\b", n) or re.search(r"\bfold the\b", n):
+        return True
+    return False
+
+
+def clip_export_other_caption_does_not_block_fill(names: list[str]) -> bool:
+    """A The-person sentence on another chip must not skip an empty slot."""
+    if any(is_empty_clip_label(n) for n in names):
+        return True
+    if any(clip_export_caption_needs_rewrite(n) for n in names):
+        return True
+    return False
+
+
 def is_clip_export_caption_label(name: str) -> bool:
     """True for a Clip Export caption field, not a Quality Assistant error row."""
     n = (name or "").strip()

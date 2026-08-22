@@ -226,7 +226,14 @@ def test_grammar_advance_and_remaining_work() -> None:
         "We cannot have more than one timeline from the same type"
     )
     assert not review_work_remaining("Focused Timeline Idle Watched")
-    from review_ui import duplicate_clip_export_only, fillable_clip_export_qa, fixable_review_work_remaining
+    from review_ui import (
+        clip_export_caption_needs_rewrite,
+        clip_export_other_caption_does_not_block_fill,
+        duplicate_clip_export_only,
+        fillable_clip_export_qa,
+        fixable_review_work_remaining,
+        is_clip_export_style_caption,
+    )
 
     parallel = "All ClipExports must be fully filled in parallel with Sub-goals"
     extra = (
@@ -239,6 +246,29 @@ def test_grammar_advance_and_remaining_work() -> None:
     assert not fixable_review_work_remaining(extra)
     assert not duplicate_clip_export_only([parallel, extra], parallel)
     assert duplicate_clip_export_only([extra], extra)
+    assert is_clip_export_style_caption(
+        "The person unstacks the blouse at an indoor table during a laundry folding task."
+    )
+    assert not is_clip_export_style_caption("Unstack the blouse with the left hand on the blouse")
+    assert clip_export_caption_needs_rewrite(
+        "The person unstacks the blouse on the blouse at an indoor table during a laundry folding task."
+    )
+    assert clip_export_caption_needs_rewrite(
+        "The person flips the shirt and hold the shirt at an indoor table during a laundry folding task."
+    )
+    assert clip_export_other_caption_does_not_block_fill(
+        [
+            "The person unstacks the blouse at an indoor table during a laundry folding task.",
+            "click to add text",
+            "review",
+        ]
+    )
+    assert clip_export_other_caption_does_not_block_fill(
+        [
+            "The person flips the shirt and hold the shirt at an indoor table during a laundry folding task.",
+            "review",
+        ]
+    )
 
 
 def test_idle_card_split_is_between_idle_label_and_next_pending() -> None:

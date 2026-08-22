@@ -42,6 +42,7 @@ from review_ui import (
     idle_card_split_xy,
     idle_is_opening_clip,
     interesting_uia_names,
+    looks_like_neighbor_action,
     is_clip_export_end_mismatch,
     is_clip_export_hands_error,
     is_clip_export_caption_label,
@@ -72,6 +73,10 @@ from review_ui import (
     parse_grammar_clip_count,
     parse_watched_percent,
     pick_clip_export_review_rects,
+    pick_review_description_rects,
+    review_description_click_xy,
+    clip_export_caption_needs_rewrite,
+    is_clip_export_style_caption,
     pick_idle_split_rects,
     pick_click_to_add_text_target,
     clip_export_caption_committed,
@@ -133,6 +138,9 @@ _OCR_BROKEN = False
 _CLIP_EXPORT_ALIGNED = False
 _CLIP_EXPORT_FILLED = False
 _CLIP_EXPORT_STUCK = False
+_CLIP_EXPORT_SNAPPED: list[float] = []
+_CLIP_EXPORT_END_FRACS: list[float] = []
+_CLIP_EXPORT_SENTENCES: list[str] = []
 _IDLE_SPLIT_STUCK = False
 _REWRITTEN_SNIPPETS: set[str] = set()
 
@@ -241,9 +249,13 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         raise RuntimeError("Desktop IX control is Windows-only")
 
     global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _CLIP_EXPORT_STUCK, _IDLE_SPLIT_STUCK, _REWRITTEN_SNIPPETS
+    global _CLIP_EXPORT_SNAPPED, _CLIP_EXPORT_END_FRACS, _CLIP_EXPORT_SENTENCES
     _CLIP_EXPORT_ALIGNED = False
     _CLIP_EXPORT_FILLED = False
     _CLIP_EXPORT_STUCK = False
+    _CLIP_EXPORT_SNAPPED = []
+    _CLIP_EXPORT_END_FRACS = []
+    _CLIP_EXPORT_SENTENCES = []
     _IDLE_SPLIT_STUCK = False
     _REWRITTEN_SNIPPETS = set()
 
@@ -291,6 +303,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             or has_clip_export_quality_error(names_now)
         )
         played = False
+        remaining = 0.0
         if skip_observe:
             say(
                 f"Watched {watched_pct}% already; skipping replay so Clip Export "
@@ -430,6 +443,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         say(f"Filled {filled['wrote']} missing/red caption(s)")
 
         body = "\n".join(part for part in (filled.get("text"), review.get("text"), page_text) if part)
+        _switch_timeline_kind(hwnd, "sub-goal")
         _text_end, nodes_end = _read_uia(hwnd, verbose=False)
         harvest_names = [_uia_name(ctrl) for ctrl in nodes_end]
         harvest_ocr = ""
@@ -1239,11 +1253,19 @@ def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
 def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     """Overwrite Clip Export captions that mention hands and snap ends on Focused Timeline."""
     global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _CLIP_EXPORT_STUCK
+    global _CLIP_EXPORT_SNAPPED, _CLIP_EXPORT_END_FRACS, _CLIP_EXPORT_SENTENCES
     if _CLIP_EXPORT_STUCK:
         say("Clip Export editor did not keep text last pass; not repeating the same empty field")
         return {"wrote": 0, "text": "", "qa_remaining": True}
     uia_text, nodes = _read_uia(hwnd)
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
+    if selected_timeline_kind(names) == "clip export" or any(
+        is_clip_export_style_caption(n) for n in names
+    ):
+        _switch_timeline_kind(hwnd, "sub-goal")
+        time.sleep(0.35)
+        uia_text, nodes = _read_uia(hwnd)
+        names = [line for line in (uia_text or "").splitlines() if line.strip()]
     blob = list(names)
     ocr_blob = ""
     harvested = []
@@ -1254,10 +1276,22 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         harvested = harvest_timeline_clips(names, ocr_blob)
     if not harvested:
         harvested = parse_clips_from_text(ocr_blob) if ocr_blob else []
-    sub_caps = [getattr(clip, "caption", "") for clip in harvested if getattr(clip, "caption", "")]
+    sub_caps = [
+        getattr(clip, "caption", "")
+        for clip in harvested
+        if getattr(clip, "caption", "") and not is_clip_export_style_caption(getattr(clip, "caption", ""))
+    ]
     if not sub_caps:
-        sub_caps = subgoal_captions_from_names(names)
-        sub_caps.extend(c for c in captions_from_ocr_blob(ocr_blob) if c not in sub_caps)
+        sub_caps = [
+            cap
+            for cap in subgoal_captions_from_names(names)
+            if not is_clip_export_style_caption(cap)
+        ]
+        sub_caps.extend(
+            c
+            for c in captions_from_ocr_blob(ocr_blob)
+            if c not in sub_caps and not is_clip_export_style_caption(c)
+        )
     blob.extend(sub_caps)
     fallback = clip_export_from_subgoals(blob)
     n_cards = count_subgoal_spans(names, ocr_blob)
@@ -1269,6 +1303,15 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         (len(end_fracs) + 1) if end_fracs else 1,
     )
     sentences = clip_export_slot_sentences(sub_caps or blob, n_slots, fallback)
+    if end_fracs:
+        _CLIP_EXPORT_END_FRACS = list(end_fracs)
+    elif _CLIP_EXPORT_END_FRACS:
+        end_fracs = list(_CLIP_EXPORT_END_FRACS)
+        n_slots = max(n_slots, len(end_fracs) + 1)
+    if sentences:
+        _CLIP_EXPORT_SENTENCES = list(sentences)
+    elif _CLIP_EXPORT_SENTENCES:
+        sentences = list(_CLIP_EXPORT_SENTENCES)
     _pause_via_uia(hwnd, nodes)
     _switch_timeline_kind(hwnd, "clip export")
     time.sleep(0.45)
@@ -1346,7 +1389,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     dirty = any(
         is_clip_export_caption_label(_uia_name(ctrl)) and "hand" in _uia_name(ctrl).casefold()
         for ctrl in nodes
-    )
+    ) or any(clip_export_caption_needs_rewrite(_uia_name(ctrl)) for ctrl in nodes)
     empty = any(is_empty_clip_label(_uia_name(ctrl)) for ctrl in nodes)
     missing_now = any(is_clip_export_missing_error(_uia_name(ctrl)) for ctrl in nodes)
     empty_now = any(is_clip_export_empty_error(_uia_name(ctrl)) for ctrl in nodes)
@@ -1391,7 +1434,10 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
             _blur_caption(hwnd, nodes)
             wrote = 1
             say(f"Typed Clip Export: {fallback}")
-    _click_clip_export_end_ignore(hwnd, nodes)
+    if not any(is_clip_export_end_mismatch(_uia_name(ctrl)) for ctrl in nodes):
+        _click_clip_export_end_ignore(hwnd, nodes)
+    else:
+        say("Leaving Clip Export end-match warning; ends still need a Sub-goal snap")
     time.sleep(0.2)
     used_export = _apply_review_uses(hwnd, write=write, max_clicks=3)
     if used_export.get("applied"):
@@ -1455,18 +1501,16 @@ def _subgoal_end_fractions(
                 end_times.append(acc)
     total = sum(durations) if len(durations) >= 2 else None
     fracs = clip_export_end_fractions_from_times(end_times, total)
-    if fracs:
-        return fracs
     if len(durations) >= 2:
-        fracs = clip_export_cut_fractions(durations, len(durations))
-        if fracs:
-            return fracs
+        for frac in clip_export_cut_fractions(durations, len(durations)):
+            if all(abs(frac - seen) > 0.03 for seen in fracs):
+                fracs.append(frac)
     left, top, width, height = _window_rect(hwnd)
     bar = _full_timeline_rect(hwnd, nodes)
     min_y = top + int(height * 0.62)
     rects: list[tuple[int, int, int, int]] = []
     for name, rect in _named_rects(nodes):
-        if not is_timeline_status_label(name):
+        if not (is_timeline_status_label(name) or looks_like_neighbor_action(name)):
             continue
         if (rect[1] + rect[3]) / 2 < min_y:
             continue
@@ -1475,7 +1519,10 @@ def _subgoal_end_fractions(
     if bar_right - bar_left < 200:
         bar_left = left + int(width * 0.08)
         bar_right = left + int(width * 0.92)
-    return clip_export_end_fractions_from_status_rects(rects, bar_left, bar_right)
+    for frac in clip_export_end_fractions_from_status_rects(rects, bar_left, bar_right):
+        if all(abs(frac - seen) > 0.03 for seen in fracs):
+            fracs.append(frac)
+    return sorted(fracs)
 
 
 def _focused_timeline_rect(hwnd: int, nodes: list[Any]) -> tuple[int, int, int, int]:
@@ -1510,6 +1557,7 @@ def _align_clip_export_on_focused_timeline(
     hwnd: int, fracs: list[float], nodes: list[Any]
 ) -> int:
     """K-split Clip Export on Focused Timeline at Sub-goal ends. Full Timeline K does not create clips."""
+    global _CLIP_EXPORT_SNAPPED
     if not fracs:
         say("No Sub-goal end positions; leaving the existing Clip Export clip")
         return 0
@@ -1521,6 +1569,8 @@ def _align_clip_export_on_focused_timeline(
         clamped = max(0.04, min(0.96, float(frac)))
         if any(abs(clamped - seen) < 0.03 for seen in unique):
             continue
+        if any(abs(clamped - seen) < 0.03 for seen in _CLIP_EXPORT_SNAPPED):
+            continue
         unique.append(clamped)
     cuts = 0
     for frac in unique:
@@ -1529,9 +1579,13 @@ def _align_clip_export_on_focused_timeline(
         time.sleep(0.2)
         _press_k_to_create(hwnd)
         cuts += 1
+        _CLIP_EXPORT_SNAPPED.append(frac)
         time.sleep(0.35)
         _text, nodes = _read_uia(hwnd, verbose=False)
-    say(f"Snapped Clip Export to {cuts} Sub-goal end(s) on Focused Timeline")
+    if not unique:
+        say("Clip Export ends already snapped; not pressing K again")
+    else:
+        say(f"Snapped Clip Export to {cuts} Sub-goal end(s) on Focused Timeline")
     return cuts
 
 
@@ -1668,24 +1722,38 @@ def _commit_caption_field() -> None:
     time.sleep(0.2)
 
 
-def _write_clip_export_sentence(hwnd: int, nodes: list[Any], sentence: str) -> bool:
-    """Paste one Clip Export sentence into click-to-add-text and confirm it stayed."""
+def _click_review_description_box(hwnd: int, nodes: list[Any]) -> bool:
+    """Click the Review sidebar description, not a timeline The-person caption."""
+    left, top, width, height = _window_rect(hwnd)
+    hits = pick_review_description_rects(_named_rects(nodes), left, top, width, height)
+    if hits:
+        x, y = review_description_click_xy(hits[0])
+        _click_screen(x, y)
+        say(f"Clicked Review description box at {x},{y}")
+        return True
+    return False
+
+
+def _write_clip_export_sentence(
+    hwnd: int, nodes: list[Any], sentence: str, *, force: bool = False
+) -> bool:
+    """Paste into THIS slot's empty field. A The-person sentence on another chip is not a skip."""
+    names_now = [_uia_name(ctrl) for ctrl in nodes]
+    empty = any(is_empty_clip_label(n) for n in names_now)
+    rewrite = any(clip_export_caption_needs_rewrite(n) for n in names_now)
     field = None
     for ctrl in nodes:
         if "click to add" in _uia_name(ctrl).casefold():
             field = ctrl
             break
-    names_now = [_uia_name(ctrl) for ctrl in nodes]
-    if any(is_clip_export_caption_label(n) for n in names_now) and not any(
-        is_empty_clip_label(n) for n in names_now
-    ):
-        say("Clip Export chip already has a The-person sentence; not overwriting it")
-        return False
-    if not _click_clip_export_editor(hwnd, nodes):
-        if any(is_clip_export_caption_label(n) for n in names_now):
-            say("Clip Export chip already has text; leaving it")
-            return True
-        say("Could not focus click-to-add-text; not counting this Clip Export write")
+    focused = _click_clip_export_editor(hwnd, nodes)
+    if not focused and (empty or rewrite or force):
+        focused = _click_review_description_box(hwnd, nodes)
+    if not focused:
+        if empty or rewrite:
+            say("Could not focus click-to-add-text; not counting this Clip Export write")
+        else:
+            say("No empty Clip Export field on this slot; leaving other The-person chips")
         return False
     time.sleep(0.2)
     if field is not None and _uia_set_text(field, sentence):
@@ -1784,7 +1852,9 @@ def _fill_each_clip_export_slot(
             _click_focused_timeline_fraction(hwnd, frac)
         time.sleep(0.3)
         _text, nodes = _read_uia(hwnd, verbose=False)
-        if _write_clip_export_sentence(hwnd, nodes, sentence):
+        names_slot = [_uia_name(ctrl) for ctrl in nodes]
+        force = i >= len(chips) or any(is_empty_clip_label(n) for n in names_slot)
+        if _write_clip_export_sentence(hwnd, nodes, sentence, force=force):
             wrote += 1
         time.sleep(0.2)
     return wrote
