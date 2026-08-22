@@ -89,7 +89,16 @@ def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:
     assert lint_subgoal(text).ok
     assert is_not_timeline_caption("LLM check not yet run. QUALITY ASSISTANT")
     assert is_not_timeline_caption("Shortcuts q q fs40 Rotate")
+    assert is_not_timeline_caption(
+        "Push the gray basin with the right hand and hold the red mayonnaise jar with the right hand fago Open the refrigerator door"
+    )
+    assert is_not_timeline_caption(
+        "Rotate the red mayonnaise jar Rotate the red mayonnaise jar into the middle layer of the refrigerator with both hands"
+    )
     assert not is_not_timeline_caption("Pick up the red mayonnaise jar with the left hand")
+    assert not is_not_timeline_caption(
+        "Rotate the red mayonnaise jar into the middle layer of the refrigerator with both hands and hold the gray basin with the right hand"
+    )
     bad = lint_clip_export("Make a sandwich")
     assert not bad.ok
     good = lint_clip_export(
@@ -143,6 +152,10 @@ def test_clip_export_sentence_is_third_person_kitchen() -> None:
     assert lint_clip_export(text).ok
     idle = clip_export_sentence_for_subgoal("Idle")
     assert "kitchen" in idle.lower()
+    dirty = clip_export_sentence_for_subgoal(
+        "Rotate the red mayonnaise jar Rotate the red mayonnaise jar into t middle layer fago Open"
+    )
+    assert dirty == ""
     blob = (
         "Open the refrigerator door with the left hand. "
         "Hold the red mayonnaise jar with the left hand"

@@ -49,6 +49,35 @@ def test_find_click_to_add_text_on_timeline() -> None:
     assert hit[1] > 500
 
 
+def test_caption_field_click_skips_video_overlay() -> None:
+    from review_ui import find_caption_field_click
+
+    words = [
+        {"text": "Rotate", "x": 220, "y": 310, "w": 70, "h": 18},
+        {"text": "the", "x": 294, "y": 310, "w": 28, "h": 18},
+        {"text": "red", "x": 326, "y": 310, "w": 28, "h": 18},
+        {"text": "mayonnaise", "x": 358, "y": 310, "w": 90, "h": 18},
+        {"text": "jar", "x": 452, "y": 310, "w": 28, "h": 18},
+        {"text": "Rotate", "x": 180, "y": 760, "w": 70, "h": 18},
+        {"text": "the", "x": 254, "y": 760, "w": 28, "h": 18},
+        {"text": "red", "x": 286, "y": 760, "w": 28, "h": 18},
+        {"text": "mayonnaise", "x": 318, "y": 760, "w": 90, "h": 18},
+        {"text": "jar", "x": 412, "y": 760, "w": 28, "h": 18},
+    ]
+    hit = find_caption_field_click(words, "Rotate the red mayonnaise jar", 1575, 1050)
+    assert hit is not None
+    assert hit[1] > 650
+
+
+def test_review_tab_is_not_a_timeline_chip() -> None:
+    from review_ui import is_timeline_status_label
+
+    assert is_timeline_status_label("done")
+    assert is_timeline_status_label("pending")
+    assert not is_timeline_status_label("review")
+    assert not is_timeline_status_label("Review")
+
+
 def test_play_is_not_playback_speed() -> None:
     from review_ui import is_pause_control_label, is_play_control_label
 
@@ -91,10 +120,12 @@ def test_interesting_uia_names_prefer_review_controls() -> None:
 
 def test_grammar_advance_and_remaining_work() -> None:
     from review_ui import (
+        is_clip_export_end_mismatch,
         is_clip_export_missing_error,
         is_grammar_row_label,
         is_idle_too_long_error,
         is_ignore_all_label,
+        is_ignore_warning_label,
         is_pending_clip_label,
         parse_grammar_clip_count,
         review_work_remaining,
@@ -104,6 +135,13 @@ def test_grammar_advance_and_remaining_work() -> None:
     assert is_grammar_row_label("Grammar 2 clips Ignore all")
     assert is_ignore_all_label("Ignore all")
     assert not is_ignore_all_label("Grammar 2 clips Ignore all")
+    assert is_ignore_warning_label("Ignore")
+    assert not is_ignore_warning_label("Ignore all")
+    assert is_clip_export_end_mismatch("All ClipExport end must match a Sub-goal end")
+    assert is_clip_export_end_mismatch("Warning All ClipExport end must match a Sub-goal end 1 clip")
+    assert not is_clip_export_end_mismatch(
+        "All ClipExports must be fully filled in parallel with Sub-goals"
+    )
     assert is_pending_clip_label("pending")
     assert is_clip_export_missing_error(
         "All ClipExports must be fully filled in parallel with Sub-goals"
@@ -182,6 +220,7 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
 def test_playback_and_false_idle_helpers() -> None:
     from review_ui import (
         clip_export_cut_fractions,
+        clip_export_end_fractions_from_status_rects,
         clip_export_needs_parallel_splits,
         full_timeline_xy,
         playback_confirmed,
@@ -210,6 +249,14 @@ def test_playback_and_false_idle_helpers() -> None:
     fracs = clip_export_cut_fractions([5.1, 3.1, 1.8, 3.9], 4)
     assert fracs[0] < fracs[-1]
     assert 0.2 < fracs[0] < 0.5
+    assert clip_export_cut_fractions(None, 6) == []
+    assert clip_export_cut_fractions([], 6) == []
+    ends = clip_export_end_fractions_from_status_rects(
+        [(100, 800, 140, 830), (400, 800, 440, 830), (900, 800, 940, 830)],
+        80,
+        1400,
+    )
+    assert ends == [round((400 - 80) / (1400 - 80), 4), round((900 - 80) / (1400 - 80), 4)]
     x, y = full_timeline_xy((80, 940, 120, 970), 0.02, (0, 0, 1575, 1050))
     assert x > 80
     assert y > 940
@@ -229,3 +276,22 @@ def test_sort_hits_does_not_compare_wrappers() -> None:
     assert len(ordered) == 2
     assert count_subgoal_spans(["done", "done", "done", "done"], "") == 4
     assert count_subgoal_spans(["Play", "Review"], "done done done done") == 4
+    assert (
+        count_subgoal_spans(
+            [
+                "Sub-goal",
+                "Play",
+                "Review",
+                "QUALITY ASSISTANT",
+                "done",
+                "done",
+                "done",
+                "done",
+                "done",
+                "Watched",
+                "Submit",
+            ],
+            "",
+        )
+        == 5
+    )

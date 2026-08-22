@@ -56,13 +56,41 @@ CHROME_CAPTION_MARKERS = (
     "click or press k",
 )
 
+_FRAME_JUNK = re.compile(r"\bf(?:s|ago)?\d{2,4}[a-z]{0,4}\b", re.I)
+_OCR_JUNK_TOKS = ("fago", "fs40", "f7go", "refri*", " or/", "or/ ")
+
+
+def is_ocr_caption_garbage(text: str) -> bool:
+    """True when OCR mashed several cards / overlay chrome into one string."""
+    raw = re.sub(r"\s+", " ", (text or "")).strip()
+    if not raw:
+        return True
+    lowered = raw.casefold()
+    if any(tok in lowered for tok in _OCR_JUNK_TOKS):
+        return True
+    if "*" in raw:
+        return True
+    if _FRAME_JUNK.search(raw):
+        return True
+    words = raw.split()
+    if len(words) > 40:
+        return True
+    if len(words) >= 8:
+        head = " ".join(words[:5]).casefold()
+        rest = " ".join(words[5:]).casefold()
+        if head and head in rest:
+            return True
+    return False
+
 
 def is_not_timeline_caption(text: str) -> bool:
     """True for sidebar / browser chrome that must never be typed as a subgoal."""
     n = (text or "").casefold()
     if not n.strip():
         return True
-    return any(marker in n for marker in CHROME_CAPTION_MARKERS)
+    if any(marker in n for marker in CHROME_CAPTION_MARKERS):
+        return True
+    return is_ocr_caption_garbage(text)
 
 
 BRAND_RE = re.compile(r"\b(" + "|".join(re.escape(b) for b in guidelines.BANNED_BRANDS) + r")\b", re.I)
@@ -386,7 +414,9 @@ def _third_person_verb(verb: str) -> str:
 def clip_export_sentence_for_subgoal(caption: str) -> str:
     """One third-person Clip Export sentence for a single Sub-goal span."""
     raw = (caption or "").strip()
-    if not raw or raw.lower() in guidelines.NO_DESCRIPTION_NEEDED or raw.lower().startswith("idle"):
+    if not raw or is_ocr_caption_garbage(raw) or is_not_timeline_caption(raw):
+        return ""
+    if raw.lower() in guidelines.NO_DESCRIPTION_NEEDED or raw.lower().startswith("idle"):
         return "The person stands idle at a kitchen counter and waits between actions."
     cleaned = lint_subgoal(raw).rewritten
     if cleaned.lower() == "idle":
@@ -419,7 +449,12 @@ def clip_export_sentence_for_subgoal(caption: str) -> str:
 
 def clip_export_from_subgoals(captions: list[str]) -> str:
     """1–2 environment sentences grounded in already-written subgoal nouns."""
-    blob = " ".join(captions).lower()
+    clean = [
+        cap
+        for cap in captions
+        if cap and not is_ocr_caption_garbage(cap) and not is_not_timeline_caption(cap)
+    ]
+    blob = " ".join(clean or captions).lower()
     kitchen_tokens = (
         "kitchen",
         "refrigerator",

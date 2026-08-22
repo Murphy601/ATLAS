@@ -37,7 +37,7 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - seeks Full Timeline using the bar (not the left-edge label) and the first Focused Timeline card so playback starts at 0s
 - if Quality Assistant says missing hands / 10 words / format on an Idle clip, it **replaces Idle** with a 10+ word hand caption. It does **not** K-split that action into smaller Idle pieces
 - splits Idle **over 5s** only when the clip is truly Idle (no action). Caption stays `Idle`. Never HTE
-- switches the top **Sub-goal** dropdown to **ClipExport**, **K-splits at each sub-goal boundary**, and types a third-person kitchen sentence into **each** parallel clip. One sentence in a single existing field does not clear `All ClipExports must be fully filled in parallel with Sub-goals`
+- switches the top **Sub-goal** dropdown to **ClipExport**, **snaps Clip Export ends to Sub-goal ends** (never equal 16/33/50% cuts), and types **one** clean third-person kitchen sentence into the existing Clip Export field. Overlay OCR is not typed. `Ignore all` is never clicked; a single **Ignore** is used only for the end-match warning after a snap
 - rewrites sub-goals that join actions with a **period** (`...left hand. Hold...` → `...left hand and hold...`)
 - clicks **click to add text** on empty timeline clips and types a caption (Idle when the action is unknown)
 

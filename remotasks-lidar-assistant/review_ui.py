@@ -129,6 +129,7 @@ def find_phrase_click(
     *,
     y_min_frac: float = 0.45,
     y_max_frac: float = 0.95,
+    x_min_frac: float = 0.0,
     x_max_frac: float = 0.85,
 ) -> tuple[int, int] | None:
     """Click the center of a consecutive OCR phrase (timeline 'click to add text')."""
@@ -145,10 +146,41 @@ def find_phrase_click(
         cy = (first[1] + last[1]) // 2
         if cy < height * y_min_frac or cy > height * y_max_frac:
             continue
-        if cx > width * x_max_frac:
+        if cx < width * x_min_frac or cx > width * x_max_frac:
             continue
         return cx, cy
     return None
+
+
+def find_caption_field_click(
+    words: list[dict[str, Any]],
+    phrase: str,
+    width: int,
+    height: int,
+) -> tuple[int, int] | None:
+    """Click a caption in Focused Timeline or the Review sidebar, never the video overlay."""
+    hit = find_phrase_click(
+        words,
+        phrase,
+        width,
+        height,
+        y_min_frac=0.62,
+        y_max_frac=0.92,
+        x_min_frac=0.02,
+        x_max_frac=0.88,
+    )
+    if hit:
+        return hit
+    return find_phrase_click(
+        words,
+        phrase,
+        width,
+        height,
+        y_min_frac=0.10,
+        y_max_frac=0.58,
+        x_min_frac=0.62,
+        x_max_frac=0.99,
+    )
 
 
 def is_play_control_label(name: str) -> bool:
@@ -170,8 +202,9 @@ def playback_confirmed(names: list[str]) -> bool:
 
 
 def is_timeline_status_label(name: str) -> bool:
+    """Focused Timeline clip chips. The Review tab is not a clip."""
     n = (name or "").strip().casefold()
-    return n in {"pending", "edited", "review", "idle", "done"}
+    return n in {"pending", "edited", "idle", "done"}
 
 
 def sort_hits_by_y(hits: list[tuple]) -> list[tuple]:
@@ -227,17 +260,42 @@ def full_timeline_xy(
 
 
 def clip_export_cut_fractions(durations: list[float] | None, n_segments: int) -> list[float]:
-    """Interior cut points so Clip Export lines up with each Sub-goal span."""
-    if durations and len(durations) >= 2:
-        total = sum(max(float(d), 0.01) for d in durations) or 1.0
-        acc = 0.0
-        out: list[float] = []
-        for dur in durations[:-1]:
-            acc += max(float(dur), 0.01)
-            out.append(min(max(acc / total, 0.04), 0.96))
-        return out
-    n = max(int(n_segments), 2)
-    return [i / n for i in range(1, n)]
+    """Interior cut points from real Sub-goal durations. Never equal-percentage guesses."""
+    del n_segments
+    if not durations or len(durations) < 2:
+        return []
+    total = sum(max(float(d), 0.01) for d in durations) or 1.0
+    acc = 0.0
+    out: list[float] = []
+    for dur in durations[:-1]:
+        acc += max(float(dur), 0.01)
+        frac = acc / total
+        if 0.04 <= frac <= 0.96:
+            out.append(frac)
+    return out
+
+
+def clip_export_end_fractions_from_status_rects(
+    rects: list[tuple[int, int, int, int]],
+    timeline_left: int,
+    timeline_right: int,
+) -> list[float]:
+    """Sub-goal ends as Full Timeline fractions.
+
+    Status chips sit at the start of each clip. The next chip's left edge is this
+    clip's end, which Clip Export must match. The last clip already ends at the
+    bar's right, so it is not a K-cut.
+    """
+    if len(rects) < 2 or timeline_right <= timeline_left:
+        return []
+    span = float(timeline_right - timeline_left)
+    ordered = sorted(rects, key=lambda row: row[0])
+    out: list[float] = []
+    for nxt in ordered[1:]:
+        frac = (nxt[0] - timeline_left) / span
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+    return out
 
 
 def clip_export_needs_parallel_splits(names: list[str], subgoal_count: int) -> bool:
@@ -295,6 +353,19 @@ def is_clip_export_missing_error(name: str) -> bool:
     if "clipexport" not in n:
         return False
     return "inparallel" in n or "fullyfilled" in n
+
+
+def is_clip_export_end_mismatch(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "endmustmatch" in compact:
+        return True
+    return "clip" in n and "end must match" in n
+
+
+def is_ignore_warning_label(name: str) -> bool:
+    """Single Ignore on a QA warning. Never Ignore all."""
+    return (name or "").strip().casefold() == "ignore"
 
 
 def is_idle_too_long_error(name: str) -> bool:

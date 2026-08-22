@@ -15,6 +15,7 @@ from caption_engine import (
     clip_export_from_subgoals,
     clip_export_sentence_for_subgoal,
     is_not_timeline_caption,
+    is_ocr_caption_garbage,
     lint_clips,
     lint_subgoal,
     subgoal_captions_from_names,
@@ -24,15 +25,18 @@ from process_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from review_ui import (
     EMPTY_CLIP_PHRASES,
     clip_export_cut_fractions,
+    clip_export_end_fractions_from_status_rects,
     clip_export_needs_new_clip,
     count_subgoal_spans,
     sort_hits_by_y,
+    find_caption_field_click,
     find_phrase_click,
     find_review_use_clicks,
     find_word_click,
     full_timeline_xy,
     idle_card_split_xy,
     interesting_uia_names,
+    is_clip_export_end_mismatch,
     is_clip_export_missing_error,
     is_clip_export_placeholder,
     is_clip_export_tab,
@@ -43,6 +47,7 @@ from review_ui import (
     is_hte_label,
     is_idle_too_long_error,
     is_ignore_all_label,
+    is_ignore_warning_label,
     is_pause_control_label,
     is_pending_clip_label,
     is_play_control_label,
@@ -97,6 +102,8 @@ OBSERVE_FIRST_CLIPS_S = 24.0
 CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
 _OCR_BROKEN = False
 _CLIP_EXPORT_ALIGNED = False
+_CLIP_EXPORT_FILLED = False
+_REWRITTEN_SNIPPETS: set[str] = set()
 
 
 def say(msg: str) -> None:
@@ -182,8 +189,10 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
     if sys.platform != "win32":
         raise RuntimeError("Desktop IX control is Windows-only")
 
-    global _CLIP_EXPORT_ALIGNED
+    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _REWRITTEN_SNIPPETS
     _CLIP_EXPORT_ALIGNED = False
+    _CLIP_EXPORT_FILLED = False
+    _REWRITTEN_SNIPPETS = set()
 
     say("DevTools is not exposed on this IX profile. Controlling the window you already opened...")
     say("Look at IX now: that window will come forward and the video should play.")
@@ -1030,12 +1039,25 @@ def _advance_review_target(hwnd: int, nodes: list[Any] | None = None) -> bool:
 
 
 def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
-    """Fill Clip Export in parallel with sub-goals. Never Submit. Never edit HTE."""
+    """Fill Clip Export so its end matches a Sub-goal end. Never Submit. Never edit HTE."""
     uia_text, nodes = _read_uia(hwnd)
     names = [line for line in (uia_text or "").splitlines() if line.strip()]
-    if not any(is_clip_export_missing_error(n) for n in names) and not is_clip_export_missing_error(
+    missing = any(is_clip_export_missing_error(n) for n in names) or is_clip_export_missing_error(
         uia_text
-    ):
+    )
+    end_mismatch = any(is_clip_export_end_mismatch(n) for n in names)
+    if not missing and not end_mismatch:
+        return {"wrote": 0, "text": uia_text}
+
+    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED
+    if _CLIP_EXPORT_FILLED:
+        if write and (missing or end_mismatch):
+            _switch_timeline_kind(hwnd, "clip export")
+            time.sleep(0.35)
+            _text, nodes = _read_uia(hwnd)
+            _click_clip_export_end_ignore(hwnd, nodes)
+            _switch_timeline_kind(hwnd, "sub-goal")
+            _close_timeline_dropdown(hwnd)
         return {"wrote": 0, "text": uia_text}
 
     blob = list(names)
@@ -1046,17 +1068,26 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         blob.append(ocr_blob)
     blob.extend(subgoal_captions_from_names(names))
     harvested = parse_clips_from_text(ocr_blob) if ocr_blob else []
-    if not harvested:
-        harvested_caps = captions_from_ocr_blob(ocr_blob) or subgoal_captions_from_names(names)
-    else:
+    if harvested:
         harvested_caps = [clip.caption for clip in harvested]
-    sentences = [clip_export_sentence_for_subgoal(cap) for cap in harvested_caps if cap]
-    fallback = clip_export_from_subgoals(blob)
+    else:
+        harvested_caps = captions_from_ocr_blob(ocr_blob) or subgoal_captions_from_names(names)
+    clean_caps = [
+        cap
+        for cap in harvested_caps
+        if cap and not is_ocr_caption_garbage(cap) and not is_not_timeline_caption(cap)
+    ]
+    sentences = [clip_export_sentence_for_subgoal(cap) for cap in clean_caps]
+    sentences = [s for s in sentences if s and not is_ocr_caption_garbage(s)]
+    fallback = clip_export_from_subgoals(clean_caps or blob)
     if not sentences:
         sentences = [fallback]
     n_cards = count_subgoal_spans(names, ocr_blob)
-    n_segments = n_cards if n_cards >= 2 else (len(sentences) if len(sentences) >= 2 else 4)
-    say(f"Clip Export will fill {n_segments} segment(s) in parallel with Sub-goals")
+    end_fracs = _subgoal_end_fractions(hwnd, nodes, harvested)
+    say(
+        f"Clip Export will snap to {len(end_fracs)} Sub-goal end(s); "
+        f"{n_cards or len(clean_caps) or 1} sub-goal card(s) on screen"
+    )
     if not write:
         return {"wrote": 0, "text": uia_text}
 
@@ -1073,47 +1104,101 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
     pending = sum(1 for n in names if is_pending_clip_label(n) or is_empty_clip_label(n))
-    if len(sentences) < n_segments:
-        sentences = list(sentences) + [fallback] * (n_segments - len(sentences))
-    global _CLIP_EXPORT_ALIGNED
-    if not _CLIP_EXPORT_ALIGNED and pending <= 1:
-        durations = [clip.duration_s or 3.0 for clip in harvested] if harvested else None
-        wrote_cuts = _align_clip_export_cuts(hwnd, n_segments, durations, nodes)
+    if not _CLIP_EXPORT_ALIGNED and pending <= 1 and end_fracs:
+        wrote_cuts = _align_clip_export_cuts(hwnd, end_fracs, nodes)
         _CLIP_EXPORT_ALIGNED = True
         if wrote_cuts:
             time.sleep(0.35)
             uia_text, nodes = _read_uia(hwnd)
-    wrote = _fill_each_clip_export_slot(hwnd, sentences[:n_segments])
-    if wrote == 0:
-        wrote = _type_one_clip_export(hwnd, nodes, fallback)
+            names = [_uia_name(ctrl) for ctrl in nodes]
+            pending = sum(1 for n in names if is_pending_clip_label(n) or is_empty_clip_label(n))
+    else:
+        _CLIP_EXPORT_ALIGNED = True
+
+    wrote = 0
+    if not _CLIP_EXPORT_FILLED:
+        if pending >= 2 and len(sentences) >= 2:
+            wrote = _fill_each_clip_export_slot(hwnd, sentences[:pending])
+        if wrote == 0:
+            wrote = _type_one_clip_export(hwnd, nodes, fallback)
+        _CLIP_EXPORT_FILLED = True
+    _click_clip_export_end_ignore(hwnd, nodes)
     time.sleep(0.3)
     _switch_timeline_kind(hwnd, "sub-goal")
     _close_timeline_dropdown(hwnd)
     return {"wrote": wrote, "text": fallback}
 
 
-def _align_clip_export_cuts(
-    hwnd: int,
-    n_segments: int,
-    durations: list[float] | None,
-    nodes: list[Any],
-) -> int:
-    """K-split Clip Export at each Sub-goal boundary so clips run in parallel. Never HTE."""
-    fracs = clip_export_cut_fractions(durations, n_segments)
+def _subgoal_end_fractions(hwnd: int, nodes: list[Any], harvested: list[Any]) -> list[float]:
+    """Cut Clip Export at real Sub-goal ends, never at 16/33/50% guesses."""
+    durations: list[float] = []
+    for clip in harvested or []:
+        dur = getattr(clip, "duration_s", None)
+        if dur is None:
+            start = getattr(clip, "start_s", None)
+            end = getattr(clip, "end_s", None)
+            if start is not None and end is not None:
+                dur = float(end) - float(start)
+        if dur and float(dur) > 0.05:
+            durations.append(float(dur))
+    if len(durations) >= 2:
+        fracs = clip_export_cut_fractions(durations, len(durations))
+        if fracs:
+            return fracs
+    left, top, width, height = _window_rect(hwnd)
+    bar = _full_timeline_rect(hwnd, nodes)
+    min_y = top + int(height * 0.62)
+    rects: list[tuple[int, int, int, int]] = []
+    for name, rect in _named_rects(nodes):
+        if not is_timeline_status_label(name):
+            continue
+        if (rect[1] + rect[3]) / 2 < min_y:
+            continue
+        rects.append(rect)
+    bar_left, _bt, bar_right, _bb = bar
+    if bar_right - bar_left < 200:
+        bar_left = left + int(width * 0.08)
+        bar_right = left + int(width * 0.92)
+    return clip_export_end_fractions_from_status_rects(rects, bar_left, bar_right)
+
+
+def _align_clip_export_cuts(hwnd: int, fracs: list[float], nodes: list[Any]) -> int:
+    """K-split Clip Export at each real Sub-goal end. Never HTE. Never equal-percentage cuts."""
     if not fracs:
+        say("No Sub-goal end positions; leaving the existing Clip Export clip")
         return 0
     _pause_via_uia(hwnd, nodes)
     cuts = 0
     for frac in fracs[:8]:
         x, y = _click_full_timeline_fraction(hwnd, frac, nodes)
-        say(f"Clip Export cut at {int(frac * 100)}% ({x},{y})")
+        say(f"Snapped Clip Export end to Sub-goal boundary at {int(frac * 100)}% ({x},{y})")
         time.sleep(0.2)
         _press_k_to_create(hwnd)
         cuts += 1
         time.sleep(0.35)
         _text, nodes = _read_uia(hwnd, verbose=False)
-    say(f"Split Clip Export into {cuts + 1} segments in parallel with sub-goals")
+    say(f"Snapped Clip Export to {cuts} Sub-goal end(s)")
     return cuts
+
+
+def _click_clip_export_end_ignore(hwnd: int, nodes: list[Any] | None = None) -> bool:
+    """Dismiss the end-match warning after a snap. Never Ignore all."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    if not any(is_clip_export_end_mismatch(n) for n in names):
+        return False
+    for ctrl in nodes:
+        name = _uia_name(ctrl)
+        if is_ignore_all_label(name):
+            continue
+        if not is_ignore_warning_label(name):
+            continue
+        if _uia_click(ctrl):
+            say("Clicked Ignore on Clip Export end-match warning (not Ignore all)")
+            time.sleep(0.25)
+            return True
+    return False
 
 
 def _fill_each_clip_export_slot(hwnd: int, sentences: list[str]) -> int:
@@ -1129,7 +1214,7 @@ def _fill_each_clip_export_slot(hwnd: int, sentences: list[str]) -> int:
             words, img_w, img_h = _ocr_window(hwnd, f"clip_export_{i}")
             left, top, _w, _h = _window_rect(hwnd)
             for phrase in ("click to add text", "the person", "focus annotation"):
-                target = find_phrase_click(words, phrase, img_w, img_h, y_min_frac=0.10)
+                target = find_caption_field_click(words, phrase, img_w, img_h)
                 if target:
                     _focus(hwnd)
                     _click_screen(left + target[0], top + target[1])
@@ -1160,7 +1245,7 @@ def _type_one_clip_export(hwnd: int, nodes: list[Any], text: str) -> int:
             if not is_clip_export_placeholder(ocr_text(words)):
                 phrases = ("focus annotation", "the person", "click to add text")
             for phrase in phrases:
-                target = find_phrase_click(words, phrase, img_w, img_h, y_min_frac=0.10)
+                target = find_caption_field_click(words, phrase, img_w, img_h)
                 if target:
                     _focus(hwnd)
                     _click_screen(left + target[0], top + target[1])
@@ -1797,7 +1882,7 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
                     break
             if not target:
                 target = find_phrase_click(
-                    words, "empty clip", img_w, img_h, y_min_frac=0.12, y_max_frac=0.70
+                    words, "empty clip", img_w, img_h, y_min_frac=0.62, y_max_frac=0.92
                 )
             if target:
                 say("Clicked missing clip (click to add text)")
@@ -1826,15 +1911,22 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
         for cap in captions_from_ocr_blob(body):
             clip_dicts.append({"caption": cap, "kind": "subgoal", "duration_s": None})
     for item in lint_clips(clip_dicts):
+        if wrote >= 3:
+            break
         lint = item["lint"]
         if item.get("skip_edit") or not lint.changed:
             continue
         if is_not_timeline_caption(lint.original) or is_not_timeline_caption(lint.rewritten):
             continue
+        if is_ocr_caption_garbage(lint.original) or is_ocr_caption_garbage(lint.rewritten):
+            continue
         snippet = " ".join((lint.original or "").split()[:5])
         if not snippet or snippet.lower() in {"idle", "click to add text"}:
             continue
         if is_not_timeline_caption(snippet):
+            continue
+        key = snippet.casefold()
+        if key in _REWRITTEN_SNIPPETS:
             continue
         hit = None
         for ctrl in nodes:
@@ -1842,6 +1934,8 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
             if snippet.lower() in name.lower():
                 center = _ctrl_center(ctrl)
                 if center:
+                    if center[1] < top + _height * 0.55:
+                        continue
                     hit = (center[0] - left, center[1] - top)
                     try:
                         if write and _uia_click(ctrl):
@@ -1850,13 +1944,7 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
                         hit = (center[0] - left, center[1] - top)
                 break
         if hit is None:
-            hit = find_phrase_click(
-                words, snippet, img_w, img_h, y_min_frac=0.48, y_max_frac=0.96
-            )
-        if hit is None:
-            hit = find_phrase_click(
-                words, snippet, img_w, img_h, y_min_frac=0.12, y_max_frac=0.62, x_max_frac=0.98
-            )
+            hit = find_caption_field_click(words, snippet, img_w, img_h)
         if not hit:
             continue
         say(f"Clicked red clip to edit: {snippet}")
@@ -1869,6 +1957,7 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
         _type_into_focused(lint.rewritten)
         _blur_caption(hwnd, nodes)
         wrote += 1
+        _REWRITTEN_SNIPPETS.add(key)
         say(f"Typed caption fix: {lint.rewritten}")
         time.sleep(0.35)
         uia_text, nodes = _read_uia(hwnd)
