@@ -678,8 +678,11 @@ def is_pending_clip_label(name: str) -> bool:
 
 
 def is_clip_export_review_chip(name: str) -> bool:
-    """Focused Timeline chip on Clip Export. Exact 'review', not the Review tab."""
-    return (name or "").strip() == "review"
+    """Focused Timeline chip on Clip Export. review/done/pending, not the Review tab."""
+    n = (name or "").strip()
+    if n == "Review":
+        return False
+    return n.casefold() in {"review", "done", "pending"}
 
 
 MIN_CLIP_EXPORT_CHIP_GAP = 150
@@ -692,7 +695,11 @@ def pick_clip_export_review_rects(
     """Left-to-right Clip Export cards on Focused Timeline (not the Review tab)."""
     chips: list[tuple[int, int, int, int]] = []
     for name, rect in named_rects:
-        if not is_clip_export_review_chip(name):
+        if is_hte_clip_caption(name):
+            continue
+        if not (
+            is_clip_export_review_chip(name) or is_clip_export_style_caption(name)
+        ):
             continue
         _left, top, _right, bottom = rect
         if (top + bottom) / 2 < min_y:
@@ -714,25 +721,34 @@ def pick_review_description_rects(
     win_width: int,
     win_height: int,
 ) -> list[tuple[int, int, int, int]]:
-    """'click to add text' in the Review sidebar, not a Focused Timeline card."""
+    """Review sidebar editor: empty 'click to add text' or an existing The-person caption."""
     if win_width < 1 or win_height < 1:
         return []
-    min_x = win_left + int(win_width * 0.50)
+    min_x = win_left + int(win_width * 0.48)
     max_y = win_top + int(win_height * 0.58)
-    hits: list[tuple[int, int, int, int]] = []
+    placeholders: list[tuple[int, int, int, int]] = []
+    captions: list[tuple[int, int, int, int]] = []
     for name, rect in named_rects:
         n = (name or "").strip().casefold()
-        if "click to add" not in n and "add text" not in n:
-            continue
         if n in {"(empty clip)", "empty clip"}:
+            continue
+        if is_hte_clip_caption(name):
+            continue
+        is_placeholder = "click to add" in n or "add text" in n
+        is_caption = is_clip_export_style_caption(name)
+        if not is_placeholder and not is_caption:
             continue
         cx = (rect[0] + rect[2]) / 2
         cy = (rect[1] + rect[3]) / 2
         if cx < min_x or cy > max_y:
             continue
-        hits.append(rect)
-    hits.sort(key=lambda row: (row[1], row[0]))
-    return hits
+        if is_placeholder:
+            placeholders.append(rect)
+        else:
+            captions.append(rect)
+    placeholders.sort(key=lambda row: (row[1], row[0]))
+    captions.sort(key=lambda row: (row[1], row[0]))
+    return placeholders + captions
 
 
 def review_description_click_xy(rect: tuple[int, int, int, int]) -> tuple[int, int]:
@@ -903,6 +919,16 @@ def is_hte_label(name: str) -> bool:
     return "hand tracking" in n or n in {"hte", "hand_tracking_error"}
 
 
+def is_hte_clip_caption(name: str) -> bool:
+    """HTE track text. Never type or K-split this as a Clip Export."""
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "_")
+    return "missing_hand" in n or compact in {
+        "missing_hand_predictions",
+        "hand_tracking_error",
+    }
+
+
 def is_timeline_kind_label(name: str) -> bool:
     n = (name or "").strip().casefold()
     return n in {"sub-goal", "subgoal", "clip export", "clip_export", "clipexport"}
@@ -935,13 +961,26 @@ def selected_timeline_kind(names: list[str]) -> str | None:
     if timeline_dropdown_is_open(names):
         return None
     for name in names:
-        if is_hte_label(name) or is_clip_export_missing_error(name):
+        if is_clip_export_missing_error(name):
             continue
+        if is_hte_label(name):
+            return "hte"
         if is_clip_export_tab(name):
             return "clip export"
         if (name or "").strip().casefold() in {"sub-goal", "subgoal"}:
             return "sub-goal"
     return None
+
+
+def should_stop_clip_export_k(
+    chip_count_before: int, chip_count_after: int, names: list[str]
+) -> bool:
+    """Stop Focused Timeline K if it did not add a Clip Export card or landed on HTE."""
+    if selected_timeline_kind(names) == "hte":
+        return True
+    if any(is_hte_clip_caption(n) for n in names):
+        return True
+    return chip_count_after <= chip_count_before
 
 
 def review_sidebar_open(names: list[str]) -> bool:

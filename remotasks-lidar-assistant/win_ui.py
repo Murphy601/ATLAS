@@ -56,6 +56,7 @@ from review_ui import (
     is_empty_clip_label,
     is_grammar_row_label,
     is_false_idle_review_error,
+    is_hte_clip_caption,
     is_hte_label,
     is_idle_too_long_error,
     is_ignore_all_label,
@@ -94,6 +95,7 @@ from review_ui import (
     review_sidebar_open,
     review_work_remaining,
     selected_timeline_kind,
+    should_stop_clip_export_k,
     should_recaption_false_idle,
     should_skip_watch,
     should_split_overlong_idle,
@@ -716,12 +718,18 @@ def _send_vk(vk: int) -> None:
     user32.keybd_event(vk, 0, 2, 0)
 
 
-def _press_k_to_create(hwnd: int) -> None:
+def _press_k_to_create(hwnd: int) -> bool:
     """PDF / on-screen hint: click or press K to create a subgoal or clip-export cut."""
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    if selected_timeline_kind(names) == "hte" or any(is_hte_clip_caption(n) for n in names):
+        say("Not pressing K on Hand Tracking Error")
+        return False
     _focus(hwnd)
     time.sleep(0.1)
     _send_vk(0x4B)  # K
     say("Pressed K to create/split a clip (never HTE)")
+    return True
 
 
 def _enable_chromium_a11y() -> int:
@@ -1348,18 +1356,12 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     if not write:
         return {"wrote": 0, "text": uia_text, "qa_remaining": True}
 
-    for ctrl in nodes:
-        name = _uia_name(ctrl)
-        if (
-            is_clip_export_missing_error(name)
-            or is_clip_export_hands_error(name)
-            or is_clip_export_empty_error(name)
-            or is_clip_export_short_error(name)
-        ):
-            if _uia_click(ctrl):
-                say("Clicked Quality Assistant Clip Export error")
-                time.sleep(0.35)
-            break
+    if not _ensure_clip_export_track(hwnd, nodes):
+        say("Cannot fill Clip Export while Hand Tracking Error is selected")
+        return {"wrote": 0, "text": uia_text, "qa_remaining": True}
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    _focus_filled_clip_export_track(hwnd, nodes)
 
     parallel = clip_export_needs_parallel_splits(names, n_slots)
     duplicate = any(is_clip_export_duplicate_timeline(n) for n in names)
@@ -1561,8 +1563,12 @@ def _align_clip_export_on_focused_timeline(
     if not fracs:
         say("No Sub-goal end positions; leaving the existing Clip Export clip")
         return 0
+    if not _ensure_clip_export_track(hwnd, nodes):
+        say("Not pressing K: timeline is Hand Tracking Error, not Clip Export")
+        return 0
+    _text, nodes = _read_uia(hwnd, verbose=False)
     _pause_via_uia(hwnd, nodes)
-    _click_focused_timeline(hwnd, nodes)
+    _focus_filled_clip_export_track(hwnd, nodes)
     time.sleep(0.15)
     unique: list[float] = []
     for frac in fracs[:8]:
@@ -1572,19 +1578,32 @@ def _align_clip_export_on_focused_timeline(
         if any(abs(clamped - seen) < 0.03 for seen in _CLIP_EXPORT_SNAPPED):
             continue
         unique.append(clamped)
+    left, top, _width, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.62)
+    chips_before = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
     cuts = 0
     for frac in unique:
+        if not _ensure_clip_export_track(hwnd, nodes):
+            say("Aborting Clip Export K: Hand Tracking Error is selected")
+            break
         x, y = _click_focused_timeline_fraction(hwnd, frac, nodes)
         say(f"Snapped Clip Export end on Focused Timeline at {int(frac * 100)}% ({x},{y})")
         time.sleep(0.2)
-        _press_k_to_create(hwnd)
-        cuts += 1
-        _CLIP_EXPORT_SNAPPED.append(frac)
+        if not _press_k_to_create(hwnd):
+            break
         time.sleep(0.35)
         _text, nodes = _read_uia(hwnd, verbose=False)
+        names_after = [_uia_name(ctrl) for ctrl in nodes]
+        chips_after = len(pick_clip_export_review_rects(_named_rects(nodes), min_y))
+        if should_stop_clip_export_k(chips_before, chips_after, names_after):
+            say("Focused Timeline K did not add a Clip Export card; stopping")
+            break
+        cuts += 1
+        _CLIP_EXPORT_SNAPPED.append(frac)
+        chips_before = chips_after
     if not unique:
         say("Clip Export ends already snapped; not pressing K again")
-    else:
+    elif cuts:
         say(f"Snapped Clip Export to {cuts} Sub-goal end(s) on Focused Timeline")
     return cuts
 
@@ -1723,7 +1742,7 @@ def _commit_caption_field() -> None:
 
 
 def _click_review_description_box(hwnd: int, nodes: list[Any]) -> bool:
-    """Click the Review sidebar description, not a timeline The-person caption."""
+    """Click the Review sidebar description, including an existing The-person caption."""
     left, top, width, height = _window_rect(hwnd)
     hits = pick_review_description_rects(_named_rects(nodes), left, top, width, height)
     if hits:
@@ -1734,26 +1753,69 @@ def _click_review_description_box(hwnd: int, nodes: list[Any]) -> bool:
     return False
 
 
+def _ensure_clip_export_track(hwnd: int, nodes: list[Any] | None = None) -> bool:
+    """Leave Hand Tracking Error before any Clip Export K or paste."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    kind = selected_timeline_kind(names)
+    if kind == "hte" or any(is_hte_clip_caption(n) for n in names):
+        say("Hand Tracking Error is selected; switching to Clip Export")
+        _switch_timeline_kind(hwnd, "clip export")
+        time.sleep(0.3)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+        kind = selected_timeline_kind(names)
+    if kind == "hte" or any(is_hte_clip_caption(n) for n in names):
+        say("Still on Hand Tracking Error; not creating or typing HTE clips")
+        return False
+    if kind != "clip export":
+        _switch_timeline_kind(hwnd, "clip export")
+        time.sleep(0.3)
+        _text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+        if selected_timeline_kind(names) != "clip export":
+            return False
+    return True
+
+
+def _focus_filled_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
+    """Click an existing The-person / done card so K does not hit the empty extra track."""
+    if _click_clip_export_caption_field(nodes):
+        return True
+    left, top, _width, height = _window_rect(hwnd)
+    chips = pick_clip_export_review_rects(_named_rects(nodes), top + int(height * 0.62))
+    if not chips:
+        return False
+    rect = chips[0]
+    x = int((rect[0] + rect[2]) / 2)
+    y = int((rect[1] + rect[3]) / 2)
+    _click_screen(x, y)
+    say(f"Clicked filled Clip Export chip at {x},{y} before snap")
+    return True
+
+
 def _write_clip_export_sentence(
     hwnd: int, nodes: list[Any], sentence: str, *, force: bool = False
 ) -> bool:
-    """Paste into THIS slot's empty field. A The-person sentence on another chip is not a skip."""
+    """Paste into this slot's Review box or existing The-person caption. Never require click-to-add-text."""
+    del force
     names_now = [_uia_name(ctrl) for ctrl in nodes]
-    empty = any(is_empty_clip_label(n) for n in names_now)
-    rewrite = any(clip_export_caption_needs_rewrite(n) for n in names_now)
+    if selected_timeline_kind(names_now) == "hte" or any(is_hte_clip_caption(n) for n in names_now):
+        say("On Hand Tracking Error; not typing into this track")
+        return False
     field = None
     for ctrl in nodes:
         if "click to add" in _uia_name(ctrl).casefold():
             field = ctrl
             break
     focused = _click_clip_export_editor(hwnd, nodes)
-    if not focused and (empty or rewrite or force):
+    if not focused:
         focused = _click_review_description_box(hwnd, nodes)
     if not focused:
-        if empty or rewrite:
-            say("Could not focus click-to-add-text; not counting this Clip Export write")
-        else:
-            say("No empty Clip Export field on this slot; leaving other The-person chips")
+        focused = _click_clip_export_caption_field(nodes, prefer_hands=True)
+    if not focused:
+        say("Could not focus Clip Export caption; not counting this write")
         return False
     time.sleep(0.2)
     if field is not None and _uia_set_text(field, sentence):
@@ -1841,12 +1903,15 @@ def _fill_each_clip_export_slot(
     mids = clip_export_slot_mid_fractions(end_fracs or [], n)
     say(f"Filling {n} Clip Export slot(s) via the Review description box")
     for i, sentence in enumerate(sentences):
+        if not _ensure_clip_export_track(hwnd):
+            say("Stopped Clip Export fill: Hand Tracking Error is selected")
+            break
         if i < len(chips):
             rect = chips[i]
             x = int((rect[0] + rect[2]) / 2)
             y = int((rect[1] + rect[3]) / 2)
             _click_screen(x, y)
-            say(f"Clicked Clip Export review chip {i + 1}/{n} at {x},{y}")
+            say(f"Clicked Clip Export done/review chip {i + 1}/{n} at {x},{y}")
         else:
             frac = mids[i] if i < len(mids) else (i + 0.45) / n
             _click_focused_timeline_fraction(hwnd, frac)
@@ -2058,6 +2123,11 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
             say("Selected Clip Export timeline")
             time.sleep(0.35)
             _wait_timeline_dropdown_closed(hwnd)
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            got = selected_timeline_kind([_uia_name(ctrl) for ctrl in nodes])
+            if got == "hte":
+                say("Dropdown landed on Hand Tracking Error; not staying there")
+                return False
             return True
     if want == "sub-goal" and subgoal_hits:
         subgoal_hits.sort(key=lambda row: -row[0])
@@ -2065,6 +2135,11 @@ def _switch_timeline_kind(hwnd: int, kind: str) -> bool:
             say("Selected Sub-goal timeline")
             time.sleep(0.35)
             _wait_timeline_dropdown_closed(hwnd)
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            got = selected_timeline_kind([_uia_name(ctrl) for ctrl in nodes])
+            if got == "hte":
+                say("Dropdown landed on Hand Tracking Error; not staying there")
+                return False
             return True
     if not _OCR_BROKEN:
         words, img_w, img_h = _ocr_window(hwnd, "timeline_kind")

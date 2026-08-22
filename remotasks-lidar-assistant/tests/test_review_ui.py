@@ -303,8 +303,9 @@ def test_clip_export_review_chips_are_not_the_review_tab() -> None:
     )
 
     assert is_clip_export_review_chip("review")
+    assert is_clip_export_review_chip("done")
+    assert is_clip_export_review_chip("pending")
     assert not is_clip_export_review_chip("Review")
-    assert not is_clip_export_review_chip("pending")
     chips = pick_clip_export_review_rects(
         [
             ("Review", (1200, 80, 1280, 110)),
@@ -318,6 +319,23 @@ def test_clip_export_review_chips_are_not_the_review_tab() -> None:
     assert len(chips) == 3
     assert chips[0][0] == 80
     assert chips[1][0] == 420
+    done_chips = pick_clip_export_review_rects(
+        [
+            ("Review", (1200, 80, 1280, 110)),
+            ("done", (80, 820, 130, 858)),
+            ("done", (420, 818, 470, 856)),
+            ("done", (900, 818, 950, 856)),
+            (
+                "The person unstacks the blouse on the blouse at an indoor table during a laundry folding task.",
+                (90, 800, 400, 840),
+            ),
+            ("missing_hand_predictions", (200, 820, 360, 850)),
+        ],
+        min_y=700,
+    )
+    assert len(done_chips) == 3
+    assert done_chips[0][0] == 80
+    assert done_chips[1][0] == 420
     same_card = pick_clip_export_review_rects(
         [
             ("review", (63, 700, 110, 732)),
@@ -371,6 +389,25 @@ def test_review_description_is_not_the_timeline_placeholder() -> None:
         win_height=1050,
     )
     assert hits == [sidebar]
+    person = (990, 240, 1400, 320)
+    person_hits = pick_review_description_rects(
+        [
+            (
+                "The person unstacks the blouse on the blouse at an indoor table during a laundry folding task.",
+                person,
+            ),
+            (
+                "The person unstacks the blouse on the blouse at an indoor table during a laundry folding task.",
+                (90, 800, 400, 840),
+            ),
+            ("missing_hand_predictions", (1000, 250, 1300, 290)),
+        ],
+        win_left=0,
+        win_top=0,
+        win_width=1575,
+        win_height=1050,
+    )
+    assert person_hits == [person]
     x, y = review_description_click_xy(sidebar)
     assert 980 < x < 1240
     assert y > 265
@@ -484,6 +521,31 @@ def test_clip_export_does_not_press_k_when_pending_exists() -> None:
     assert timeline_dropdown_is_open(["Sub-goal", "ClipExport", "Hand Tracking Error"])
     assert selected_timeline_kind(["Sub-goal", "Sub-goal", "Play", "Review"]) == "sub-goal"
     assert selected_timeline_kind(["ClipExport", "ClipExport", "Play"]) == "clip export"
+    assert (
+        selected_timeline_kind(
+            [
+                "Hand Tracking Error",
+                "Hand Tracking Error",
+                "Play",
+                "pending",
+                "missing_hand_predictions",
+            ]
+        )
+        == "hte"
+    )
+    from review_ui import is_hte_clip_caption, should_stop_clip_export_k
+
+    assert is_hte_clip_caption("missing_hand_predictions")
+    assert not is_hte_clip_caption(
+        "The person unstacks the blouse at an indoor table during a laundry folding task."
+    )
+    assert should_stop_clip_export_k(3, 3, ["ClipExport", "done", "done", "done"])
+    assert not should_stop_clip_export_k(
+        3, 4, ["ClipExport", "done", "done", "done", "pending"]
+    )
+    assert should_stop_clip_export_k(
+        3, 4, ["Hand Tracking Error", "pending", "missing_hand_predictions"]
+    )
     assert quality_linters_remaining(
         [
             "All ClipExports must be fully filled in parallel with Sub-goals",
