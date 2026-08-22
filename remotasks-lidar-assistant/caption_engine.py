@@ -27,7 +27,7 @@ _THIRD_PERSON = re.compile(r"\b(the person|he|she|they)\s+\w+s\b", re.I)
 _CLAUSE_SPLIT = re.compile(r"\s*(?:,|;|\band\b)\s*", re.I)
 _FIRST_WORD = re.compile(r"^[A-Za-z]+(?:\s+up|\s+down)?")
 _OBJECT_AFTER_VERB = re.compile(
-    r"^(?:pick up|put|drop|fold|flip|unstack|stack|hold|smooth|transfer|place|set down|wipe|pour|hang|open|close|rotate|twist|turn|grasp|grip|pinch|scrub|cut|remove)\s+(?:the\s+)?([a-z0-9 ]+?)(?:\s+with\b|\s+from\b|\s+on\b|\s+in\b|,|;|$)",
+    r"^(?:pick up|put|drop|fold|flip|unstack|stack|hold|smooth|transfer|place|set down|wipe|pour|hang|open|close|rotate|twist|turn|grasp|grip|pinch|scrub|cut|remove|grab|shake|pull|push|move)\s+(?:the\s+)?([a-z0-9 ]+?)(?:\s+with\b|\s+from\b|\s+on\b|\s+in\b|,|;|$)",
     re.I,
 )
 
@@ -289,24 +289,25 @@ def lint_subgoal(caption: str, duration_s: float | None = None) -> LintResult:
 
 
 def _pad_to_min_words(text: str, minimum: int) -> str:
-    """Lengthen a caption using nouns already in it. Does not invent new objects."""
+    """Lengthen a caption with a complete grounded clause. Never end on a dangling 'with'."""
     parts = text.split()
     if len(parts) >= minimum:
         return text
-    skip = {"the left hand", "the right hand", "the both hands"}
-    nouns = [m.group(0).lower() for m in _NOUN_CHUNK.finditer(text) if m.group(0).lower() not in skip]
-    extra = []
-    if nouns:
-        extra.extend(["on", *nouns[-1].split()])
-    padded = parts[:]
-    i = 0
-    seed = extra or parts[-3:]
-    while len(padded) < minimum and seed:
-        padded.append(seed[i % len(seed)])
-        i += 1
-        if i > minimum + 6:
+    obj = _named_object(text)
+    if obj and not obj.startswith("the "):
+        obj = f"the {obj}"
+    if obj:
+        extra = f" and hold {obj} with both hands"
+    elif "hand" in text.lower():
+        extra = " and hold the object with both hands"
+    else:
+        extra = " with the left hand and the right hand"
+    padded = re.sub(r"\s+", " ", (text + extra).strip())
+    while len(padded.split()) < minimum:
+        padded = f"{padded} with both hands"
+        if len(padded.split()) > minimum + 8:
             break
-    return " ".join(padded)
+    return padded
 
 
 def lint_clip_export(caption: str) -> LintResult:
@@ -318,8 +319,8 @@ def lint_clip_export(caption: str) -> LintResult:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", original) if s.strip()]
     if len(sentences) > 2:
         issues.append(LintIssue("too_many_sentences", "Clip Export description is at most 2 sentences"))
-    if len(original.split()) < 8:
-        issues.append(LintIssue("too_vague", 'Clip Export cannot be a short command like "Make a sandwich"'))
+    if len(original.split()) < 15:
+        issues.append(LintIssue("too_vague", "Clip Export descriptions must be at least 15 words long"))
     env_tokens = (
         "kitchen",
         "counter",
@@ -374,10 +375,18 @@ def action_caption_for_mislabeled_idle(captions: list[str]) -> str:
             obj = "green bowl"
         elif "basin" in blob:
             obj = "gray basin"
+        elif "pants" in blob:
+            obj = "pants"
+        elif "blouse" in blob:
+            obj = "blouse"
+        elif "shirt" in blob:
+            obj = "shirt"
         else:
             obj = "objects"
     if any(tok in blob for tok in ("kitchen", "counter", "refrigerator", "jar", "bowl", "basin")):
         text = f"Move both hands toward the {obj} on the kitchen counter"
+    elif any(tok in blob for tok in ("shirt", "blouse", "pants", "laundry", "fold", "table")):
+        text = f"Move both hands toward the {obj} on the table with the left hand"
     else:
         text = f"Move both hands toward the {obj} with the left hand"
     text = re.sub(r"\bthe the\b", "the", text)
@@ -466,12 +475,15 @@ def clip_export_sentence_for_subgoal(caption: str) -> str:
         tp_verb = _third_person_verb(verb)
     body = " ".join([tp_verb, *rest]).strip()
     blob = cleaned.lower()
+    laundry = any(tok in blob for tok in ("shirt", "blouse", "pants", "laundry", "fold", "table"))
     if "kitchen" in blob or "counter" in blob:
-        sentence = f"The person {body}."
+        sentence = f"The person {body} at the kitchen counter during a household task."
     elif "refrigerator" in blob or "fridge" in blob:
-        sentence = f"The person {body} at the refrigerator."
+        sentence = f"The person {body} at the refrigerator during a household kitchen task."
+    elif laundry:
+        sentence = f"The person {body} at an indoor household table during a laundry folding task."
     else:
-        sentence = f"The person {body} at a kitchen counter."
+        sentence = f"The person {body} at a kitchen counter during a household task."
     sentence = re.sub(r"\s+", " ", sentence).strip()
     sentence = sentence[0].upper() + sentence[1:]
     if not sentence.endswith("."):
@@ -509,6 +521,11 @@ def clip_export_from_subgoals(captions: list[str]) -> str:
         return (
             "The person stands at a kitchen refrigerator and moves a soda bottle "
             "and plastic bags during a household task."
+        )
+    if any(tok in blob for tok in ("shirt", "blouse", "pants", "laundry", "fold")):
+        return (
+            "The person stands at a household table and folds shirts, pants, "
+            "and a blouse during a laundry task."
         )
     if any(tok in blob for tok in kitchen_tokens):
         return (

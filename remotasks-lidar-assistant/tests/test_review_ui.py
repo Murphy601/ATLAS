@@ -105,8 +105,11 @@ def test_quality_empty_error_and_skip_watch() -> None:
     assert not is_quality_empty_error("All ClipExports must be fully filled in parallel with Sub-goals")
     assert not is_quality_empty_error("Sub-goals must be at least 10 words long")
     assert should_skip_watch(100, use_ready=False, quality_ready=False)
-    assert should_skip_watch(None, use_ready=True, quality_ready=False)
-    assert should_skip_watch(None, use_ready=False, quality_ready=True)
+    assert should_skip_watch(92, use_ready=True, quality_ready=True)
+    assert not should_skip_watch(None, use_ready=True, quality_ready=False)
+    assert not should_skip_watch(None, use_ready=False, quality_ready=True)
+    assert not should_skip_watch(0, use_ready=False, quality_ready=True)
+    assert not should_skip_watch(48, use_ready=False, quality_ready=True)
     assert not should_skip_watch(None, use_ready=False, quality_ready=False)
     assert not should_skip_watch(12, use_ready=False, quality_ready=False)
 
@@ -266,6 +269,14 @@ def test_playback_and_false_idle_helpers() -> None:
         "pending",
     ]
     assert should_recaption_false_idle(names)
+    assert should_recaption_false_idle(
+        [
+            'Error All Sub-goal descriptions must contain "left hand", "right hand" or "both hands" within, unless they\'re "Idle" 1 clip',
+            "Error Sub-goals must be at least 10 words long 1 clip",
+            "click to add text",
+            "Grab the pants with the left hand",
+        ]
+    )
     assert not should_split_overlong_idle(names)
     assert should_split_overlong_idle(
         ["Error No idle time should be more than 5s, please split it into smaller segments", "Idle"]

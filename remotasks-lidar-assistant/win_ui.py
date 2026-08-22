@@ -114,6 +114,7 @@ CLOCK_RE = re.compile(r"(\d{1,2}):(\d{2})\s*/\s*(\d{1,2}):(\d{2})")
 _OCR_BROKEN = False
 _CLIP_EXPORT_ALIGNED = False
 _CLIP_EXPORT_FILLED = False
+_IDLE_SPLIT_STUCK = False
 _REWRITTEN_SNIPPETS: set[str] = set()
 
 
@@ -220,9 +221,10 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
     if sys.platform != "win32":
         raise RuntimeError("Desktop IX control is Windows-only")
 
-    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _REWRITTEN_SNIPPETS
+    global _CLIP_EXPORT_ALIGNED, _CLIP_EXPORT_FILLED, _IDLE_SPLIT_STUCK, _REWRITTEN_SNIPPETS
     _CLIP_EXPORT_ALIGNED = False
     _CLIP_EXPORT_FILLED = False
+    _IDLE_SPLIT_STUCK = False
     _REWRITTEN_SNIPPETS = set()
 
     say("DevTools is not exposed on this IX profile. Controlling the window you already opened...")
@@ -283,7 +285,7 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
         if skip_full_watch:
             remaining = OBSERVE_FIRST_CLIPS_S
             say(
-                f"Watched already on screen; playing {int(remaining)}s from the start "
+                f"Watched {watched_pct}% already; playing {int(remaining)}s from the start "
                 "so the first clips can be seen (not pausing after 2 segments)."
             )
             if first_is_idle:
@@ -298,6 +300,10 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             if remaining is None:
                 remaining = duration if duration and duration > 2 else DEFAULT_WATCH_S
             remaining = min(max(float(remaining), 8.0), MAX_WATCH_S)
+            say(
+                f"Watching the full video at 1x for up to {int(remaining)}s "
+                f"(Watched {watched_pct if watched_pct is not None else 0}%)."
+            )
             try:
                 _watch_while_playing(hwnd, remaining, "Watching video")
             except Exception as exc:
@@ -871,14 +877,23 @@ def _ensure_video_playing(hwnd: int) -> bool:
 
 def _watch_while_playing(hwnd: int, seconds: float, label: str) -> float:
     """Sleep while the video plays at 1x. Do not re-click Play (that pauses it)."""
-    del hwnd
     elapsed = 0.0
     remaining = max(float(seconds), 1.0)
     while elapsed < remaining:
         step = min(5.0, remaining - elapsed)
         time.sleep(step)
         elapsed += step
-        say(f"{label}... {int(elapsed)}/{int(remaining)}s")
+        text, nodes = _read_uia(hwnd, verbose=False)
+        names = [_uia_name(ctrl) for ctrl in nodes]
+        pct = parse_watched_percent(text)
+        extra = f" (Watched {pct}%)" if pct is not None else ""
+        say(f"{label}... {int(elapsed)}/{int(remaining)}s{extra}")
+        if pct is not None and pct >= 95:
+            say(f"{label} finished after Watched {pct}%")
+            return elapsed
+        if elapsed >= 8 and not playback_confirmed(names):
+            say(f"{label} ended when Pause left the toolbar at {int(elapsed)}s")
+            return elapsed
     return elapsed
 
 
@@ -1020,10 +1035,13 @@ def _recaption_false_idle(hwnd: int, write: bool = True) -> dict:
     if not write:
         return {"wrote": 0, "text": caption}
     if not _click_idle_caption_field(hwnd, nodes):
-        if not _click_first_timeline_card(hwnd, nodes):
+        if _click_uia_empty_clip(nodes):
+            say("Clicked empty first clip to replace false Idle")
+        elif not _click_first_timeline_card(hwnd, nodes):
             say("Could not focus the Idle caption field to replace it with an action")
             return {"wrote": 0, "text": uia_text}
-        say("Focused the first timeline card to replace false Idle")
+        else:
+            say("Focused the first timeline card to replace false Idle")
     time.sleep(0.2)
     _type_into_focused(caption)
     _blur_caption(hwnd, nodes)
@@ -1508,8 +1526,12 @@ def _span_clip_export(hwnd: int, nodes: list[Any]) -> None:
 
 def _split_long_idle(hwnd: int, write: bool = True) -> dict:
     """Split Idle >5s with K, per clipping spec. Never HTE. Never Submit."""
+    global _IDLE_SPLIT_STUCK
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
+    if _IDLE_SPLIT_STUCK:
+        say("Idle >5s K-split did not change the card; not retrying the same cut")
+        return {"wrote": 0, "text": uia_text}
     if not should_split_overlong_idle(names):
         if any(is_false_idle_review_error(n) for n in names):
             say("Not splitting: Quality Assistant says this Idle clip has action")
@@ -1561,6 +1583,10 @@ def _split_long_idle(hwnd: int, write: bool = True) -> dict:
         if not any(is_idle_too_long_error(_uia_name(ctrl)) for ctrl in nodes):
             say("Idle >5s Quality Assistant error is gone")
             break
+    still = any(is_idle_too_long_error(_uia_name(ctrl)) for ctrl in nodes)
+    if still:
+        _IDLE_SPLIT_STUCK = True
+        say("Idle >5s error remains after K; not repeating the same cut")
     if wrote:
         say("Split Idle >5s with K into smaller Idle subgoals")
     else:
@@ -2089,9 +2115,19 @@ def _fill_missing_and_reds(hwnd: int, write: bool = True) -> dict:
             break
         if write:
             time.sleep(0.25)
-            _type_into_focused("Idle")
+            uia_text, nodes = _read_uia(hwnd, verbose=False)
+            names = [_uia_name(ctrl) for ctrl in nodes]
+            blob = list(names)
+            if not _OCR_BROKEN:
+                words, img_w, img_h = _ocr_window(hwnd, f"empty_caption_{attempt}")
+                blob.append(ocr_text(words))
+            if should_recaption_false_idle(names):
+                caption = action_caption_for_mislabeled_idle(blob)
+            else:
+                caption = "Idle"
+            _type_into_focused(caption)
             wrote += 1
-            say("Typed missing caption: Idle")
+            say(f"Typed missing caption: {caption}")
             time.sleep(0.45)
 
     if not words:

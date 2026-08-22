@@ -228,7 +228,8 @@ def should_recaption_false_idle(names: list[str]) -> bool:
     action_errors = any(is_false_idle_review_error(n) for n in names)
     idle_long = any(is_idle_too_long_error(n) for n in names)
     idle_name = any((n or "").strip().casefold() == "idle" for n in names)
-    if action_errors and (idle_name or idle_long):
+    empty = any(is_empty_clip_label(n) for n in names)
+    if action_errors and (idle_name or idle_long or empty):
         return True
     return bool(idle_name and action_errors)
 
@@ -650,13 +651,13 @@ def should_skip_watch(
     use_ready: bool = False,
     quality_ready: bool = False,
 ) -> bool:
-    """Skip another 1x watch when Review is already on screen.
+    """Skip the required 1x watch only after Watched is already high.
 
-    Empty clips alone do not skip the required first watch.
+    Quality Assistant reds and Review Use do not mean the video was watched.
+    Watched 0% / 48% must still play the full clip.
     """
-    if watched_pct is not None and watched_pct >= 80:
-        return True
-    return bool(use_ready or quality_ready)
+    del use_ready, quality_ready
+    return watched_pct is not None and watched_pct >= 80
 
 
 def interesting_uia_names(names: list[str], limit: int = 60) -> list[str]:

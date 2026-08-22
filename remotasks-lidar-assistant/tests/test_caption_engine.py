@@ -75,11 +75,27 @@ def test_clip_export_from_kitchen_subgoals() -> None:
     assert "refrigerator" in fridge.lower()
     assert "hand" not in fridge.lower()
     assert lint_clip_export(fridge).ok
+    laundry = clip_export_from_subgoals(
+        ["Grab the pants with the left hand", "Shake the shirt with both hands"]
+    )
+    assert "laundry" in laundry.lower() or "table" in laundry.lower()
+    assert "kitchen" not in laundry.lower()
+    assert "hand" not in laundry.lower()
+    assert lint_clip_export(laundry).ok
+    assert len(laundry.split()) >= 15
 
 
 def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:
     from caption_engine import action_caption_for_mislabeled_idle, is_not_timeline_caption, lint_subgoal
 
+    laundry = action_caption_for_mislabeled_idle(
+        ["Idle", "Grab the pants with the left hand, transfer it to the right hand"]
+    )
+    assert "idle" not in laundry.lower()
+    assert "pants" in laundry.lower()
+    assert "kitchen" not in laundry.lower()
+    assert "hand" in laundry.lower()
+    assert len(laundry.split()) >= 10
     text = action_caption_for_mislabeled_idle(
         ["Idle", "Pick up the red mayonnaise jar with the left hand"]
     )
@@ -124,6 +140,11 @@ def test_screenshot_pending_clips_follow_hand_and_imperative_rules():
         result = lint_subgoal(caption)
         assert not any(i.code == "banned_verb" for i in result.issues)
         assert not any(i.code == "missing_hand" for i in result.issues)
+    padded = lint_subgoal("Shake the shirt with both hands")
+    assert len(padded.rewritten.split()) >= 10
+    assert not padded.rewritten.lower().endswith("with")
+    assert "on the shirt with" not in padded.rewritten.lower()
+    assert "hand" in padded.rewritten.lower()
 
 
 def test_the_both_hands_rewritten():
