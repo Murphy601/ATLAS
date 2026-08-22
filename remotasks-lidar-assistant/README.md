@@ -33,7 +33,7 @@ ports (it will **not** sit on `127.0.0.1:38607` for minutes) and instead:
 - watches at 1x (player clock if visible, otherwise ~90s). **Play is always clicked** when that button is on screen, even if Watched already shows 100%
 - clicks **Use** on Review Grammar cards for red clips (Ignore/Submit are never clicked)
 - **pauses only after watching the first clips** (~24s from the start). It does not stop after 2 segments.
-- **Play is confirmed by Pause on screen.** If UIA still shows Play, the engine clicks the video (below the tab strip). It does not send Space after a Play click, so the clip is not toggled off. A 24s wait with the playhead frozen is not a watch.
+- **Play is confirmed by Pause on screen.** If UIA still shows Play, the engine clicks the video (below the tab strip). It does not send Space after a Play click, so the clip is not toggled off. If Pause vanishes at the end of the video, Play is **not** clicked again (that crashed when two Play controls tied on Y). A watch crash continues to Quality Assistant / Clip Export.
 - seeks Full Timeline using the bar (not the left-edge label) and the first Focused Timeline card so playback starts at 0s
 - if Quality Assistant says missing hands / 10 words / format on an Idle clip, it **replaces Idle** with a 10+ word hand caption. It does **not** K-split that action into smaller Idle pieces
 - splits Idle **over 5s** only when the clip is truly Idle (no action). Caption stays `Idle`. Never HTE

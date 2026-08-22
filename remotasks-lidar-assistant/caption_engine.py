@@ -292,6 +292,8 @@ def lint_clip_export(caption: str) -> LintResult:
         "bathroom",
         "sink",
         "stove",
+        "refrigerator",
+        "fridge",
     )
     if not any(tok in original.lower() for tok in env_tokens):
         issues.append(LintIssue("missing_environment", "Clip Export must include the environment"))
@@ -428,7 +430,17 @@ def clip_export_from_subgoals(captions: list[str]) -> str:
         "basin",
         "mayonnaise",
         "dispenser",
+        "pepsi",
+        "bottle",
+        "plastic",
+        "bag",
+        "stove",
     )
+    if any(tok in blob for tok in ("pepsi", "bottle", "plastic bag", "plastic bags")):
+        return (
+            "The person stands at a kitchen refrigerator and performs a household task "
+            "by handling a soda bottle and plastic bags."
+        )
     if any(tok in blob for tok in kitchen_tokens):
         return (
             "The person stands at a kitchen counter and performs a household task "

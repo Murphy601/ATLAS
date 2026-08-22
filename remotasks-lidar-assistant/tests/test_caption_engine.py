@@ -68,6 +68,11 @@ def test_clip_export_from_kitchen_subgoals() -> None:
         ["Sub-goal", "Focused Timeline Idle", "Pick up thY!9d mayonnaisejar"]
     )
     assert "kitchen" in ocr_blob.lower()
+    fridge = clip_export_from_subgoals(
+        ["Transfer the pepsi bottle in the refrigerator with the left hand"]
+    )
+    assert "refrigerator" in fridge.lower()
+    assert lint_clip_export(fridge).ok
 
 
 def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:

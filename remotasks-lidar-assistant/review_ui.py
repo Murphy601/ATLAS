@@ -171,7 +171,23 @@ def playback_confirmed(names: list[str]) -> bool:
 
 def is_timeline_status_label(name: str) -> bool:
     n = (name or "").strip().casefold()
-    return n in {"pending", "edited", "review", "idle"}
+    return n in {"pending", "edited", "review", "idle", "done"}
+
+
+def sort_hits_by_y(hits: list[tuple]) -> list[tuple]:
+    """Sort click targets by y (or x) only. Never compare UIA wrapper objects."""
+    return sorted(hits, key=lambda row: row[0])
+
+
+def count_subgoal_spans(names: list[str], ocr_blob: str = "") -> int:
+    """How many Sub-goal cards to mirror on Clip Export (done/pending chips)."""
+    chips = sum(1 for name in names if is_timeline_status_label(name))
+    if chips >= 2:
+        return chips
+    done = len(re.findall(r"\bdone\b", ocr_blob or "", re.I))
+    if done >= 2:
+        return done
+    return 0
 
 
 def should_recaption_false_idle(names: list[str]) -> bool:
@@ -525,6 +541,7 @@ def interesting_uia_names(names: list[str], limit: int = 60) -> list[str]:
         "play",
         "submit",
         "pending",
+        "done",
         "sub-goal",
         "review",
         "empty",

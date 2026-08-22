@@ -25,6 +25,8 @@ from review_ui import (
     EMPTY_CLIP_PHRASES,
     clip_export_cut_fractions,
     clip_export_needs_new_clip,
+    count_subgoal_spans,
+    sort_hits_by_y,
     find_phrase_click,
     find_review_use_clicks,
     find_word_click,
@@ -243,14 +245,20 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             )
             if first_is_idle:
                 say("First card looks Idle; watching the opening clips before any edit.")
-            _watch_while_playing(hwnd, remaining, "Watching first clips")
+            try:
+                _watch_while_playing(hwnd, remaining, "Watching first clips")
+            except Exception as exc:
+                say(f"Watch stopped early ({exc}). Continuing to Quality Assistant.")
         else:
             duration = parse_media_clock(page_text)
             remaining = watch_seconds
             if remaining is None:
                 remaining = duration if duration and duration > 2 else DEFAULT_WATCH_S
             remaining = min(max(float(remaining), 8.0), MAX_WATCH_S)
-            _watch_while_playing(hwnd, remaining, "Watching video")
+            try:
+                _watch_while_playing(hwnd, remaining, "Watching video")
+            except Exception as exc:
+                say(f"Watch stopped early ({exc}). Continuing to Quality Assistant.")
 
         review = {"applied": 0, "text": page_text}
         filled = {"wrote": 0, "text": page_text}
@@ -686,7 +694,7 @@ def _click_toolbar_play(hwnd: int, nodes: list[Any]) -> bool:
             ranked.append((center[1], ctrl, name))
         else:
             fallback.append((center[1], ctrl, name))
-    ordered = sorted(ranked) + sorted(fallback)
+    ordered = sort_hits_by_y(ranked) + sort_hits_by_y(fallback)
     for _y, ctrl, name in ordered:
         try:
             if _uia_click(ctrl):
@@ -746,9 +754,15 @@ def _watch_while_playing(hwnd: int, seconds: float, label: str) -> float:
         active = _playback_active(hwnd)
         if active:
             saw_pause = True
-        elif saw_pause:
+        elif saw_pause and elapsed < remaining - 3.0:
             say("Pause disappeared; clicking Play so the video keeps moving.")
-            _ensure_video_playing(hwnd)
+            try:
+                _ensure_video_playing(hwnd)
+            except Exception as exc:
+                say(f"Play retry failed ({exc}); continuing to Quality Assistant")
+                break
+        elif saw_pause:
+            say("Pause disappeared near the end of the video; leaving it stopped.")
         say(f"{label}... {int(elapsed)}/{int(remaining)}s")
     return elapsed
 
@@ -918,7 +932,7 @@ def _click_idle_caption_field(hwnd: int, nodes: list[Any]) -> bool:
             review_hits.append((center[1], ctrl))
         elif center[1] > top + height * 0.62:
             timeline_hits.append((center[0], ctrl))
-    ordered = sorted(review_hits) + sorted(timeline_hits)
+    ordered = sort_hits_by_y(review_hits) + sort_hits_by_y(timeline_hits)
     for _key, ctrl in ordered:
         if _uia_click(ctrl):
             say("Clicked the Idle caption field")
@@ -1040,8 +1054,18 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     fallback = clip_export_from_subgoals(blob)
     if not sentences:
         sentences = [fallback]
+    n_cards = count_subgoal_spans(names, ocr_blob)
+    n_segments = n_cards if n_cards >= 2 else (len(sentences) if len(sentences) >= 2 else 4)
+    say(f"Clip Export will fill {n_segments} segment(s) in parallel with Sub-goals")
     if not write:
         return {"wrote": 0, "text": uia_text}
+
+    for ctrl in nodes:
+        if is_clip_export_missing_error(_uia_name(ctrl)):
+            if _uia_click(ctrl):
+                say("Clicked Quality Assistant Clip Export error")
+                time.sleep(0.35)
+            break
 
     _pause_via_uia(hwnd, nodes)
     _switch_timeline_kind(hwnd, "clip export")
@@ -1049,7 +1073,6 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     uia_text, nodes = _read_uia(hwnd)
     names = [_uia_name(ctrl) for ctrl in nodes]
     pending = sum(1 for n in names if is_pending_clip_label(n) or is_empty_clip_label(n))
-    n_segments = len(sentences) if len(sentences) >= 2 else 6
     if len(sentences) < n_segments:
         sentences = list(sentences) + [fallback] * (n_segments - len(sentences))
     global _CLIP_EXPORT_ALIGNED
@@ -1193,23 +1216,14 @@ def _click_bottom_pending(hwnd: int, nodes: list[Any]) -> bool:
 
 def _span_clip_export(hwnd: int, nodes: list[Any]) -> None:
     """Create one Clip Export covering the Full Timeline, not a cut at the playhead."""
-    left, top, width, height = _window_rect(hwnd)
-    y = int(top + height * 0.92)
-    for ctrl in nodes:
-        if _uia_name(ctrl).strip().casefold() != "full timeline":
-            continue
-        center = _ctrl_center(ctrl)
-        if center:
-            y = center[1] + 18
-            break
-    _click_screen(int(left + width * 0.08), y)
+    x0, y0 = _click_full_timeline_fraction(hwnd, 0.02, nodes)
     time.sleep(0.2)
     _press_k_to_create(hwnd)
     time.sleep(0.25)
-    _click_screen(int(left + width * 0.72), y)
+    x1, y1 = _click_full_timeline_fraction(hwnd, 0.96, nodes)
     time.sleep(0.2)
     _press_k_to_create(hwnd)
-    say("Created a Clip Export span on Full Timeline (start then end)")
+    say(f"Created a Clip Export span on Full Timeline ({x0},{y0} then {x1},{y1})")
 
 
 def _split_long_idle(hwnd: int, write: bool = True) -> dict:

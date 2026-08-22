@@ -213,3 +213,19 @@ def test_playback_and_false_idle_helpers() -> None:
     x, y = full_timeline_xy((80, 940, 120, 970), 0.02, (0, 0, 1575, 1050))
     assert x > 80
     assert y > 940
+
+
+def test_sort_hits_does_not_compare_wrappers() -> None:
+    from review_ui import count_subgoal_spans, sort_hits_by_y
+
+    class TooltipWrapper:
+        pass
+
+    class ButtonWrapper:
+        pass
+
+    hits = [(120, TooltipWrapper(), "Play"), (120, ButtonWrapper(), "Play")]
+    ordered = sort_hits_by_y(hits)
+    assert len(ordered) == 2
+    assert count_subgoal_spans(["done", "done", "done", "done"], "") == 4
+    assert count_subgoal_spans(["Play", "Review"], "done done done done") == 4
