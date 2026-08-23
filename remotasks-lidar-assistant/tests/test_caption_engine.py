@@ -1,0 +1,226 @@
+from caption_engine import lint_clip_export, lint_subgoal
+from guidelines import idle_policy, subgoal_duration_ok
+
+
+def test_forbidden_verbs_are_rejected():
+    result = lint_subgoal("Inspect the shirt with the right hand")
+    assert any(i.code == "banned_verb" for i in result.issues)
+    result = lint_subgoal("Reach for the cup with the left hand")
+    assert any(i.code == "banned_verb" for i in result.issues)
+
+
+def test_using_and_while_rewritten():
+    result = lint_subgoal("Wipe the table using the right hand while holding the cloth with the left hand")
+    assert "with" in result.rewritten.lower()
+    assert "while" not in result.rewritten.lower()
+    assert "using" not in result.rewritten.lower()
+    assert any(i.code == "using_not_with" for i in result.issues)
+    assert any(i.code == "while_not_and" for i in result.issues)
+
+
+def test_pick_up_uses_from_location():
+    result = lint_subgoal("Pick up the pants on the table with the left hand")
+    assert "from the table" in result.rewritten.lower()
+    assert "on the table" not in result.rewritten.lower()
+
+
+def test_fold_it_uses_named_object():
+    result = lint_subgoal("Drop the pants with both hands and fold it with both hands")
+    assert "fold the pants" in result.rewritten.lower()
+
+
+def test_missing_hand_is_error():
+    result = lint_subgoal("Drop the pants")
+    assert any(i.code == "missing_hand" for i in result.issues)
+
+
+def test_idle_and_duration_rules():
+    assert subgoal_duration_ok(9.9).ok
+    assert not subgoal_duration_ok(10).ok
+    assert idle_policy(3) == "fold_into_next"
+    assert idle_policy(5.0) == "fold_into_next"
+    assert idle_policy(5.5) == "split_idle"
+    assert idle_policy(6) == "split_idle"
+    assert idle_policy(12) == "split_idle"
+    idle = lint_subgoal("Idle", duration_s=6)
+    assert idle.rewritten == "Idle"
+    assert any(i.code == "idle_too_long" for i in idle.issues)
+
+
+def test_max_three_actions():
+    result = lint_subgoal(
+        "Fold the pants with both hands, fold the shirt with both hands, "
+        "put the shirt on the table with both hands, pick up the blouse with the left hand"
+    )
+    assert any(i.code == "too_many_actions" for i in result.issues)
+
+
+def test_clip_export_from_kitchen_subgoals() -> None:
+    from caption_engine import clip_export_from_subgoals, lint_clip_export
+
+    text = clip_export_from_subgoals(
+        ["Pick up the red mayonnaise jar with the left hand"]
+    )
+    result = lint_clip_export(text)
+    assert result.ok
+    assert "kitchen" in text.lower()
+    assert "hand" not in text.lower()
+    ocr_blob = clip_export_from_subgoals(
+        ["Sub-goal", "Focused Timeline Idle", "Pick up thY!9d mayonnaisejar"]
+    )
+    assert "kitchen" in ocr_blob.lower()
+    fridge = clip_export_from_subgoals(
+        ["Transfer the pepsi bottle in the refrigerator with the left hand"]
+    )
+    assert "refrigerator" in fridge.lower()
+    assert "hand" not in fridge.lower()
+    assert lint_clip_export(fridge).ok
+    laundry = clip_export_from_subgoals(
+        ["Grab the pants with the left hand", "Shake the shirt with both hands"]
+    )
+    assert "laundry" in laundry.lower() or "table" in laundry.lower()
+    assert "kitchen" not in laundry.lower()
+    assert "hand" not in laundry.lower()
+    assert "household" not in laundry.lower()
+    assert lint_clip_export(laundry).ok
+    assert len(laundry.split()) >= 15
+
+
+def test_mislabeled_idle_becomes_action_from_next_subgoal() -> None:
+    from caption_engine import action_caption_for_mislabeled_idle, is_not_timeline_caption, lint_subgoal
+
+    laundry = action_caption_for_mislabeled_idle(
+        ["Idle", "Grab the pants with the left hand, transfer it to the right hand"]
+    )
+    assert "idle" not in laundry.lower()
+    assert "pants" in laundry.lower()
+    assert "kitchen" not in laundry.lower()
+    assert "hand" in laundry.lower()
+    assert len(laundry.split()) >= 10
+    text = action_caption_for_mislabeled_idle(
+        ["Idle", "Pick up the red mayonnaise jar with the left hand"]
+    )
+    assert "idle" not in text.lower()
+    assert "mayonnaise" in text.lower()
+    assert "hand" in text.lower()
+    assert "reach for" not in text.lower()
+    assert len(text.split()) >= 10
+    assert lint_subgoal(text).ok
+    assert is_not_timeline_caption("LLM check not yet run. QUALITY ASSISTANT")
+    assert is_not_timeline_caption("Shortcuts q q fs40 Rotate")
+    assert is_not_timeline_caption(
+        "Push the gray basin with the right hand and hold the red mayonnaise jar with the right hand fago Open the refrigerator door"
+    )
+    assert is_not_timeline_caption(
+        "Attach the refrigerator door Pick up the green bowl with the Pick up the green bowl with right hand from the"
+    )
+    assert not is_not_timeline_caption("Pick up the red mayonnaise jar with the left hand")
+    assert not is_not_timeline_caption(
+        "Rotate the red mayonnaise jar into the middle layer of the refrigerator with both hands and hold the gray basin with the right hand"
+    )
+    bad = lint_clip_export("Make a sandwich")
+    assert not bad.ok
+    good = lint_clip_export(
+        "The person stands at a kitchen counter and prepares a sandwich by slicing bread, adding fillings, and placing it on a plate."
+    )
+    assert good.ok
+    handling = lint_clip_export(
+        "The person stands at a kitchen counter and performs a household task by handling jars, a bowl, and a refrigerator door."
+    )
+    assert not handling.ok
+    assert any(i.code == "hands_wording" for i in handling.issues)
+
+
+def test_screenshot_pending_clips_follow_hand_and_imperative_rules():
+    captions = [
+        "Unstack the blouse with the left hand",
+        "Flip the shirt with the right hand",
+        "Smooth the blouse with the left hand, and transfer it to the right hand",
+    ]
+    for caption in captions:
+        result = lint_subgoal(caption)
+        assert not any(i.code == "banned_verb" for i in result.issues)
+        assert not any(i.code == "missing_hand" for i in result.issues)
+    padded = lint_subgoal("Shake the shirt with both hands")
+    assert len(padded.rewritten.split()) >= 10
+    assert not padded.rewritten.lower().endswith("with")
+    assert "on the shirt with" not in padded.rewritten.lower()
+    assert "hand" in padded.rewritten.lower()
+
+
+def test_the_both_hands_rewritten():
+    result = lint_subgoal("Attach the refrigerator door with the both hands")
+    assert "the both" not in result.rewritten.lower()
+    assert "with both hands" in result.rewritten.lower()
+    assert any(i.code == "the_both" for i in result.issues)
+    assert len(result.rewritten.split()) >= 10
+
+
+def test_placeholder_empty_clip_becomes_idle():
+    result = lint_subgoal("click to add text")
+    assert result.rewritten == "Idle"
+    assert any(i.code == "empty_caption" for i in result.issues)
+
+
+def test_trailing_period_and_min_words():
+    result = lint_subgoal(
+        "Open the refrigerator door with the left hand. Hold the red mayonnaise jar with the left hand."
+    )
+    assert not result.rewritten.endswith(".")
+    assert " and " in result.rewritten.lower()
+    assert "and hold" in result.rewritten.lower()
+    assert any(i.code == "trailing_punct" for i in result.issues)
+
+
+def test_clip_export_sentence_is_third_person_kitchen() -> None:
+    from caption_engine import captions_from_ocr_blob, clip_export_sentence_for_subgoal, lint_clip_export
+
+    text = clip_export_sentence_for_subgoal("Pick up the red mayonnaise jar with the left hand")
+    assert text.startswith("The person picks up")
+    assert "kitchen" in text.lower()
+    assert "hand" not in text.lower()
+    assert lint_clip_export(text).ok
+    laundry_slot = clip_export_sentence_for_subgoal("Shake the shirt with both hands")
+    assert laundry_slot.startswith("The person")
+    assert "shirt" in laundry_slot.lower()
+    assert "hold the shirt" not in laundry_slot.lower()
+    assert "hand" not in laundry_slot.lower()
+    assert "household" not in laundry_slot.lower()
+    assert lint_clip_export(laundry_slot).ok
+    blouse = clip_export_sentence_for_subgoal("Unstack the blouse with the left hand on the blouse")
+    assert "unstacks the blouse" in blouse.lower()
+    assert "on the blouse" not in blouse.lower()
+    assert lint_clip_export(blouse).ok
+    pants = clip_export_sentence_for_subgoal(
+        "Drop the pants with both hands and fold it with both hands"
+    )
+    assert "drops the pants" in pants.lower()
+    assert "folds" in pants.lower()
+    assert lint_clip_export(pants).ok
+    idle = clip_export_sentence_for_subgoal("Idle")
+    assert "kitchen" in idle.lower()
+    assert "hand" not in idle.lower()
+    assert len(idle.split()) >= 15
+    assert lint_clip_export(idle).ok
+    dirty = clip_export_sentence_for_subgoal(
+        "Rotate the red mayonnaise jar Rotate the red mayonnaise jar into t middle layer fago Open"
+    )
+    assert dirty == ""
+    from caption_engine import clip_export_from_subgoals, clip_export_slot_sentences
+
+    pour = (
+        "Pour the black bucket from the right to the left hand and put the blue "
+        "container into the middle layer of the refrigerator with the right hand"
+    )
+    slots = clip_export_slot_sentences([pour], 5, clip_export_from_subgoals([pour]))
+    assert len(slots) == 5
+    assert all("hand" not in s.lower() for s in slots)
+    assert all(s.startswith("The person") for s in slots)
+    assert all(len(s.split()) >= 15 for s in slots)
+    blob = (
+        "Open the refrigerator door with the left hand. "
+        "Hold the red mayonnaise jar with the left hand"
+    )
+    caps = captions_from_ocr_blob(blob)
+    assert any("." in cap for cap in caps)
+    assert any("refrigerator" in cap.lower() for cap in caps)

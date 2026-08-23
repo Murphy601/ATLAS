@@ -1,0 +1,1926 @@
+"""SensorFusionLab Review pane helpers (no Win32).
+
+The Review sidebar shows Grammar suggestions with Ignore / Use. Red timeline
+clips are fixed by clicking Use, never Submit. Empty clips show
+"click to add text".
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+WATCHED_RE = re.compile(r"Watched\s+(\d+)\s*%", re.I)
+GRAMMAR_COUNT_RE = re.compile(r"grammar\s+(\d+)\s+clips?", re.I)
+EMPTY_CLIP_PHRASES = (
+    "click to add text",
+    "click to add",
+    "(empty clip)",
+    "empty clip",
+)
+
+
+def parse_watched_percent(text: str) -> int | None:
+    match = WATCHED_RE.search(text or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def ocr_text(words: list[dict[str, Any]]) -> str:
+    return " ".join(str(word.get("text") or "") for word in words)
+
+
+def _norm(word: dict[str, Any] | str) -> str:
+    if isinstance(word, str):
+        return word.strip().lower()
+    return str(word.get("text") or "").strip().lower()
+
+
+def _center(word: dict[str, Any]) -> tuple[int, int]:
+    x = int(word.get("x") or 0)
+    y = int(word.get("y") or 0)
+    w = int(word.get("w") or 0)
+    h = int(word.get("h") or 0)
+    return x + w // 2, y + h // 2
+
+
+def find_review_use_clicks(
+    words: list[dict[str, Any]],
+    width: int,
+    height: int,
+) -> list[tuple[int, int]]:
+    """Screen-relative-to-bitmap centers of Review 'Use' buttons.
+
+    Ignores the left video area, the tab strip, the bottom timeline, and Submit.
+    Prefers a Use that sits on the same row as Ignore (screenshot layout).
+    """
+    if width < 1 or height < 1:
+        return []
+    ignores = [_center(word) for word in words if _norm(word) == "ignore"]
+    submits = [_center(word) for word in words if "submit" in _norm(word)]
+    ranked: list[tuple[int, int, int]] = []
+    for word in words:
+        if _norm(word) != "use":
+            continue
+        cx, cy = _center(word)
+        if cx < width * 0.50:
+            continue
+        if cy < height * 0.10 or cy > height * 0.70:
+            continue
+        if any(abs(sx - cx) < 90 and abs(sy - cy) < 36 for sx, sy in submits):
+            continue
+        score = 0
+        if any(abs(ix - cx) < 160 and abs(iy - cy) < 28 for ix, iy in ignores):
+            score += 10
+        ranked.append((score, cx, cy))
+    ranked.sort(key=lambda row: (-row[0], row[2], row[1]))
+    seen: set[tuple[int, int]] = set()
+    out: list[tuple[int, int]] = []
+    for _score, cx, cy in ranked:
+        key = (cx // 8, cy // 8)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((cx, cy))
+    return out
+
+
+def find_word_click(
+    words: list[dict[str, Any]],
+    needle: str,
+    width: int,
+    height: int,
+    *,
+    x_min_frac: float = 0.0,
+    y_min_frac: float = 0.0,
+    y_max_frac: float = 1.0,
+) -> tuple[int, int] | None:
+    want = needle.strip().lower()
+    for word in words:
+        if _norm(word) != want:
+            continue
+        cx, cy = _center(word)
+        if cx < width * x_min_frac:
+            continue
+        if cy < height * y_min_frac or cy > height * y_max_frac:
+            continue
+        return cx, cy
+    return None
+
+
+def estimated_use_point(width: int, height: int) -> tuple[int, int]:
+    """Fallback click inside the right-hand Review card (Grammar Use).
+
+    Kept for tests/layout docs. The engine must not click this guess and
+    count it as a successful caption write.
+    """
+    tab = min(max(int(height * 0.16), 110), 160)
+    x = int(width * 0.88)
+    y = tab + int((height - tab) * 0.22)
+    return x, y
+
+
+def find_phrase_click(
+    words: list[dict[str, Any]],
+    phrase: str,
+    width: int,
+    height: int,
+    *,
+    y_min_frac: float = 0.45,
+    y_max_frac: float = 0.95,
+    x_min_frac: float = 0.0,
+    x_max_frac: float = 0.85,
+) -> tuple[int, int] | None:
+    """Click the center of a consecutive OCR phrase (timeline 'click to add text')."""
+    tokens = [tok for tok in phrase.lower().split() if tok]
+    if not tokens or width < 1 or height < 1:
+        return None
+    norms = [_norm(word) for word in words]
+    for i in range(len(words) - len(tokens) + 1):
+        if norms[i : i + len(tokens)] != tokens:
+            continue
+        first = _center(words[i])
+        last = _center(words[i + len(tokens) - 1])
+        cx = (first[0] + last[0]) // 2
+        cy = (first[1] + last[1]) // 2
+        if cy < height * y_min_frac or cy > height * y_max_frac:
+            continue
+        if cx < width * x_min_frac or cx > width * x_max_frac:
+            continue
+        return cx, cy
+    return None
+
+
+def find_caption_field_click(
+    words: list[dict[str, Any]],
+    phrase: str,
+    width: int,
+    height: int,
+) -> tuple[int, int] | None:
+    """Click a caption in Focused Timeline or the Review sidebar, never the video overlay."""
+    hit = find_phrase_click(
+        words,
+        phrase,
+        width,
+        height,
+        y_min_frac=0.62,
+        y_max_frac=0.92,
+        x_min_frac=0.02,
+        x_max_frac=0.88,
+    )
+    if hit:
+        return hit
+    return find_phrase_click(
+        words,
+        phrase,
+        width,
+        height,
+        y_min_frac=0.10,
+        y_max_frac=0.58,
+        x_min_frac=0.62,
+        x_max_frac=0.99,
+    )
+
+
+def is_play_control_label(name: str) -> bool:
+    """True for the video Play button, not Playback speed / Playback mode."""
+    n = (name or "").strip().casefold()
+    if not n or n.startswith("playback"):
+        return False
+    return n in {"play", "play video", "play clip"}
+
+
+def is_pause_control_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"pause", "pause video"} or n.startswith("pause ")
+
+
+def playback_confirmed(names: list[str]) -> bool:
+    """True only when Pause is visible. A Play click alone does not mean the video is playing."""
+    return any(is_pause_control_label(n) for n in names)
+
+
+def is_timeline_status_label(name: str) -> bool:
+    """Focused Timeline clip chips. The Review tab is not a clip."""
+    n = (name or "").strip().casefold()
+    return n in {"pending", "edited", "idle", "done"}
+
+
+def sort_hits_by_y(hits: list[tuple]) -> list[tuple]:
+    """Sort click targets by y (or x) only. Never compare UIA wrapper objects."""
+    return sorted(hits, key=lambda row: row[0])
+
+
+def count_subgoal_spans(names: list[str], ocr_blob: str = "") -> int:
+    """How many Sub-goal cards to mirror on Clip Export.
+
+    Visible UIA chips are often only the on-screen cards. Prefer the largest
+    of chips, OCR 'done', duration labels, and action captions.
+    """
+    chips = sum(1 for name in names if is_timeline_status_label(name))
+    done = len(re.findall(r"\bdone\b", ocr_blob or "", re.I))
+    durs = len(clip_durations_from_ocr(ocr_blob))
+    caps = sum(1 for name in names if looks_like_neighbor_action(name))
+    best = max(chips, done, durs, caps)
+    return best if best >= 2 else 0
+
+
+NEIGHBOR_ACTION_VERBS = (
+    "grab",
+    "shake",
+    "unstack",
+    "fold",
+    "smooth",
+    "drop",
+    "transfer",
+    "put",
+    "hold",
+    "pick",
+    "place",
+    "move",
+)
+NEIGHBOR_ACTION_OBJECTS = (
+    "pants",
+    "shirt",
+    "blouse",
+    "table",
+    "laundry",
+    "jar",
+    "bowl",
+    "basin",
+)
+MIN_IDLE_NEIGHBOR_GAP = 150
+MIN_IDLE_CARD_SPAN = 280
+
+
+def looks_like_neighbor_action(name: str) -> bool:
+    """True for a real Sub-goal caption next to Idle (not a QA error row)."""
+    text = (name or "").strip()
+    if len(text) < 12:
+        return False
+    lowered = text.casefold()
+    if lowered.startswith(("error", "warning")):
+        return False
+    if "quality assistant" in lowered or "unless" in lowered:
+        return False
+    if "must " in lowered or "must contain" in lowered:
+        return False
+    if "hand" in lowered:
+        return True
+    padded = f" {lowered} "
+    if any(f" {verb} " in padded or lowered.startswith(verb) for verb in NEIGHBOR_ACTION_VERBS):
+        return any(obj in lowered for obj in NEIGHBOR_ACTION_OBJECTS)
+    return False
+
+
+def neighbor_action_captions(names: list[str]) -> bool:
+    return any(looks_like_neighbor_action(n) for n in names)
+
+
+def idle_is_opening_clip(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]] | None,
+    min_y: int = 0,
+) -> bool:
+    """True when Idle is the first Focused Timeline card (no action to its left).
+
+    Mid-video Idle after a Grab/Shake card is a real pause and must be K-split.
+    Names-only callers pass no rects and are treated as opening so neighbor
+    laundry captions can still trigger a recaption.
+    """
+    if not named_rects:
+        return True
+    idles: list[tuple[int, int, int, int]] = []
+    actions: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        _left, top, _right, bottom = rect
+        mid_y = (top + bottom) / 2
+        if min_y and mid_y < min_y:
+            continue
+        if (name or "").strip().casefold() == "idle":
+            idles.append(rect)
+        elif looks_like_neighbor_action(name):
+            actions.append(rect)
+    if not idles:
+        return True
+    idle = min(idles, key=lambda row: (row[0], row[1]))
+    idle_mid = (idle[1] + idle[3]) / 2
+    for act in actions:
+        act_mid = (act[1] + act[3]) / 2
+        if abs(act_mid - idle_mid) > 90:
+            continue
+        if act[0] + 8 < idle[0]:
+            return False
+    return True
+
+
+def should_recaption_false_idle(
+    names: list[str],
+    named_rects: list[tuple[str, tuple[int, int, int, int]]] | None = None,
+    min_y: int = 0,
+) -> bool:
+    """Rewrite a first-clip Idle that is actually action. Do not K-split that card."""
+    action_errors = any(is_false_idle_review_error(n) for n in names)
+    idle_long = any(is_idle_too_long_error(n) for n in names)
+    idle_name = any((n or "").strip().casefold() == "idle" for n in names)
+    empty = any(is_empty_clip_label(n) for n in names)
+    if action_errors and (idle_name or idle_long or empty):
+        return True
+    if idle_name and idle_long and neighbor_action_captions(names):
+        return idle_is_opening_clip(named_rects, min_y)
+    return False
+
+
+def should_split_overlong_idle(
+    names: list[str],
+    named_rects: list[tuple[str, tuple[int, int, int, int]]] | None = None,
+    min_y: int = 0,
+) -> bool:
+    """Split only a true Idle >5s. Opening false-Idle must be recaptioned instead."""
+    if should_recaption_false_idle(names, named_rects, min_y):
+        return False
+    if any(is_false_idle_review_error(n) for n in names):
+        return False
+    return any(is_idle_too_long_error(n) for n in names)
+
+
+def should_fill_clip_export(names: list[str], already_filled: bool = False) -> bool:
+    """Fill Clip Export whenever QA still lists Clip Export rows, or once from Sub-goals."""
+    if has_clip_export_quality_error(names):
+        return True
+    if already_filled:
+        return False
+    return neighbor_action_captions(names)
+
+
+def full_timeline_xy(
+    bar_rect: tuple[int, int, int, int],
+    frac: float,
+    window_rect: tuple[int, int, int, int],
+) -> tuple[int, int]:
+    """Click inside the Full Timeline *bar*, not the left-edge label or the window chrome."""
+    left, top, right, bottom = bar_rect
+    wleft, _wtop, ww, _wh = window_rect
+    if (right - left) < 200:
+        left = wleft + int(ww * 0.08)
+        right = wleft + int(ww * 0.92)
+        y = int((top + bottom) / 2) + 16
+    else:
+        y = int((top + bottom) / 2)
+    frac = min(max(frac, 0.02), 0.98)
+    x = int(left + (right - left) * frac)
+    return x, y
+
+
+def clip_export_cut_fractions(durations: list[float] | None, n_segments: int) -> list[float]:
+    """Interior cut points from real Sub-goal durations. Never equal-percentage guesses."""
+    del n_segments
+    if not durations or len(durations) < 2:
+        return []
+    total = sum(max(float(d), 0.01) for d in durations) or 1.0
+    acc = 0.0
+    out: list[float] = []
+    for dur in durations[:-1]:
+        acc += max(float(dur), 0.01)
+        frac = acc / total
+        if 0.04 <= frac <= 0.96:
+            out.append(frac)
+    return out
+
+
+def clip_export_end_fractions_from_status_rects(
+    rects: list[tuple[int, int, int, int]],
+    timeline_left: int,
+    timeline_right: int,
+) -> list[float]:
+    """Sub-goal ends as Full Timeline fractions.
+
+    Status chips sit at the start of each clip. The next chip's left edge is this
+    clip's end, which Clip Export must match. The last clip already ends at the
+    bar's right, so it is not a K-cut.
+    """
+    if len(rects) < 2 or timeline_right <= timeline_left:
+        return []
+    span = float(timeline_right - timeline_left)
+    ordered = sorted(rects, key=lambda row: row[0])
+    deduped: list[tuple[int, int, int, int]] = []
+    for rect in ordered:
+        if deduped and rect[0] - deduped[-1][0] < MIN_IDLE_NEIGHBOR_GAP:
+            continue
+        deduped.append(rect)
+    out: list[float] = []
+    for nxt in deduped[1:]:
+        frac = (nxt[0] - timeline_left) / span
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+    return out
+
+
+def clip_export_end_fractions_from_times(
+    end_times: list[float], total_s: float | None = None
+) -> list[float]:
+    """Interior Clip Export K-cuts from Sub-goal end seconds (not equal-percentage guesses)."""
+    if not end_times:
+        return []
+    last = max(float(end_times[-1]), 0.01)
+    span = float(total_s) if total_s and total_s > last + 0.2 else last
+    cuts = list(end_times) if total_s and total_s > last + 0.2 else list(end_times[:-1])
+    out: list[float] = []
+    for end in cuts:
+        frac = float(end) / span
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+    return out
+
+
+def clip_export_slot_mid_fractions(end_fracs: list[float], n_slots: int) -> list[float]:
+    """Playhead positions in the middle of each Clip Export span after Sub-goal-end cuts."""
+    n = max(int(n_slots or 0), 1)
+    bounds = [0.0]
+    for frac in end_fracs or []:
+        f = max(0.02, min(0.98, float(frac)))
+        if all(abs(f - b) > 0.02 for b in bounds):
+            bounds.append(f)
+    bounds.append(1.0)
+    bounds.sort()
+    mids = [round((bounds[i] + bounds[i + 1]) / 2, 4) for i in range(len(bounds) - 1)]
+    if len(mids) >= n:
+        return mids[:n]
+    return [round((i + 0.45) / n, 4) for i in range(n)]
+
+
+def clip_export_needs_parallel_splits(names: list[str], subgoal_count: int) -> bool:
+    """One filled Clip Export is not enough when QA still wants clips in parallel."""
+    if not any(is_clip_export_missing_error(n) for n in names):
+        return False
+    if subgoal_count >= 2:
+        return True
+    pending = sum(1 for n in names if is_pending_clip_label(n))
+    return pending <= 1
+
+
+def is_review_use_label(name: str) -> bool:
+    """True for the Grammar Review Use button (not Find & Replace / Submit)."""
+    n = (name or "").strip().casefold()
+    if not n or n in {"ignore", "similar", "review", "submit", "user"}:
+        return False
+    if "find" in n and "replace" in n:
+        return False
+    if "submit" in n:
+        return False
+    if n in {"use", "use suggestion", "apply"}:
+        return True
+    return n.startswith("use ") or n.endswith(" use")
+
+
+def is_empty_clip_label(name: str) -> bool:
+    """True for a timeline clip that still needs a caption."""
+    n = (name or "").strip().casefold()
+    if not n:
+        return False
+    if n in {"k", "kk", "k."}:
+        return True
+    if "click to add" in n or "add text" in n:
+        return True
+    if n in {"(empty clip)", "empty clip", "empty"}:
+        return True
+    if "placeholder" in n:
+        return True
+    return False
+
+
+def is_quality_empty_error(name: str) -> bool:
+    """Quality Assistant row that jumps to a Sub-goal clip with no caption.
+
+    Clip Export empty/short rows are filled by the Clip Export pass, not by
+    typing Idle into whatever field this click opens.
+    """
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "clipexport" in compact or "clip export" in n:
+        return False
+    if "in parallel" in n:
+        return False
+    return "must contain text" in n
+
+
+def is_clip_export_missing_error(name: str) -> bool:
+    n = (name or "").strip().casefold().replace(" ", "")
+    if "clipexport" not in n:
+        return False
+    return "inparallel" in n or "fullyfilled" in n
+
+
+def is_clip_export_empty_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "clipexport" not in compact and "clip export" not in n:
+        return False
+    return "contain text" in n or "must contain" in n
+
+
+def is_clip_export_short_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "clipexport" not in compact and "clip export" not in n:
+        return False
+    return "15 word" in n or "at least 15" in n
+
+
+def is_clip_export_duplicate_timeline(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "more than one timeline" not in n:
+        return False
+    return "clipexport" in n.replace(" ", "") or "clip export" in n or "same type" in n
+
+
+def is_delete_timeline_label(name: str) -> bool:
+    """Context-menu Delete for a Full Timeline track. Never Delete all / Submit."""
+    n = (name or "").strip().casefold()
+    if not n or "all" in n or "submit" in n:
+        return False
+    if n in {
+        "delete",
+        "remove",
+        "delete timeline",
+        "remove timeline",
+        "delete track",
+        "remove track",
+    }:
+        return True
+    if n.startswith("delete timeline") or n.startswith("remove timeline"):
+        return True
+    return False
+
+
+def pick_full_timeline_kind_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+    *,
+    clip_export: bool = False,
+    subgoal: bool = False,
+) -> list[tuple[int, int, int, int]]:
+    """Full Timeline track labels (lower band). Header ClipExport is above min_y."""
+    found: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects or []:
+        mid_y = (rect[1] + rect[3]) / 2
+        if mid_y < min_y:
+            continue
+        n = (name or "").strip().casefold()
+        if clip_export and is_clip_export_tab(name):
+            found.append(rect)
+        elif subgoal and n in {"sub-goal", "subgoal"}:
+            found.append(rect)
+    found.sort(key=lambda row: (row[1], row[0]))
+    out: list[tuple[int, int, int, int]] = []
+    for rect in found:
+        if out and abs(rect[1] - out[-1][1]) < 14 and abs(rect[0] - out[-1][0]) < 40:
+            continue
+        out.append(rect)
+    return out
+
+
+def extra_clip_export_track_rect(
+    clip_rects: list[tuple[int, int, int, int]],
+    subgoal_rects: list[tuple[int, int, int, int]] | None = None,
+) -> tuple[int, int, int, int] | None:
+    """Lowest extra ClipExport row. Never a Sub-goal row. Never the last ClipExport."""
+    if len(clip_rects or []) < 2:
+        return None
+    ordered = sorted(clip_rects, key=lambda row: (row[1], row[0]))
+    extra = ordered[-1]
+    for sg in subgoal_rects or []:
+        extra_mid = (extra[1] + extra[3]) / 2
+        sg_mid = (sg[1] + sg[3]) / 2
+        if abs(extra_mid - sg_mid) < 18:
+            extra = ordered[-2]
+            break
+    remaining = [rect for rect in ordered if rect != extra]
+    if not remaining:
+        return None
+    return extra
+
+
+def should_delete_duplicate_clip_export(
+    names: list[str] | None, track_count: int = 0
+) -> bool:
+    """QA wants one ClipExport track. Delete only when a second Full Timeline row exists."""
+    if not any(is_clip_export_duplicate_timeline(n) for n in names or []):
+        return False
+    if int(track_count or 0) == 1:
+        return False
+    return True
+
+
+def has_clip_export_quality_error(names: list[str]) -> bool:
+    return any(
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_duplicate_timeline(n)
+        for n in names
+    )
+
+
+def fillable_clip_export_qa(names: list[str]) -> bool:
+    """True for Clip Export rows the engine can still fix. Duplicate-only is not fillable."""
+    return any(
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        for n in names
+    )
+
+
+def duplicate_clip_export_only(names: list[str], text: str = "") -> bool:
+    """Extra Clip Export track with no empty/parallel/end-match work left."""
+    blob = "\n".join([*(names or []), text or ""])
+    has_dup = any(is_clip_export_duplicate_timeline(n) for n in names or []) or (
+        "more than one timeline" in blob.casefold()
+    )
+    return has_dup and not fillable_clip_export_qa(names or []) and not fixable_review_work_remaining(blob)
+
+
+def is_clip_export_end_mismatch(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "")
+    if "endmustmatch" in compact:
+        return True
+    return "clip" in n and "end must match" in n
+
+
+def is_clip_export_hands_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "hand" not in n:
+        return False
+    compact = n.replace(" ", "")
+    return "clipexport" in compact or "clip export" in n
+
+
+def is_clip_export_style_caption(name: str) -> bool:
+    """True for a third-person Clip Export sentence, not a Sub-goal."""
+    return (name or "").strip().casefold().startswith("the person")
+
+
+_ISOLATED_K_RE = re.compile(r"(?:^|[\s,.;:!?])k(?:[\s,.;:!?]|$)")
+
+
+def is_garbled_clip_export_caption(name: str) -> bool:
+    """K leaked into the Review box: lone 'k', 'fold the k', 'dkkkkuring'."""
+    n = name or ""
+    if re.search(r"k{3,}", n, flags=re.I):
+        return True
+    compact = n.casefold().replace(" ", "")
+    if "dkkk" in compact or "kkkking" in compact:
+        return True
+    stripped = n.strip().casefold()
+    stripped = re.sub(r"click or press k(?: to create)?", " ", stripped)
+    stripped = re.sub(r"press k", " ", stripped)
+    stripped = " ".join(stripped.split())
+    if stripped in {"k", "kk", "k.", "k k"}:
+        return True
+    return bool(_ISOLATED_K_RE.search(stripped))
+
+
+def clip_export_caption_needs_rewrite(name: str) -> bool:
+    """Old Clip Export text that still fails QA (hands, hold, on the blouse, K-typos)."""
+    n = (name or "").strip().casefold()
+    if is_garbled_clip_export_caption(name):
+        return True
+    if not n.startswith("the person"):
+        return False
+    if "hand" in n:
+        return True
+    if " on the blouse" in n or " on the shirt" in n or " on the pants" in n:
+        return True
+    if re.search(r"\bhold the\b", n):
+        return True
+    return False
+
+
+def clip_export_other_caption_does_not_block_fill(names: list[str]) -> bool:
+    """A The-person sentence on another chip must not skip an empty slot."""
+    if any(is_empty_clip_label(n) for n in names):
+        return True
+    if any(clip_export_caption_needs_rewrite(n) for n in names):
+        return True
+    return False
+
+
+def is_clip_export_caption_label(name: str) -> bool:
+    """True for a Clip Export caption field, not a Quality Assistant error row."""
+    n = (name or "").strip()
+    if len(n) < 20:
+        return False
+    lowered = n.casefold()
+    if lowered.startswith("error") or lowered.startswith("warning"):
+        return False
+    if "must not" in lowered or "must be" in lowered or "must match" in lowered:
+        return False
+    if (
+        is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_end_mismatch(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_duplicate_timeline(n)
+    ):
+        return False
+    return lowered.startswith("the person") or ("the person" in lowered and "hand" in lowered)
+
+
+def is_slow_around_transitions_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return "slow around" in n
+
+
+def is_ignore_warning_label(name: str) -> bool:
+    """Single Ignore on a QA warning. Never Ignore all."""
+    return (name or "").strip().casefold() == "ignore"
+
+
+def is_idle_too_long_error(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "idle" not in n:
+        return False
+    return "more than 5" in n or "split" in n
+
+
+def is_false_idle_review_error(name: str) -> bool:
+    """Review is rejecting Idle: this clip has action and needs a real caption."""
+    n = (name or "").strip().casefold()
+    if "at least 10 words" in n:
+        return True
+    if "format expected" in n:
+        return True
+    if "left hand" in n and "idle" in n and "unless" in n:
+        return True
+    return False
+
+
+def is_ignore_all_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n == "ignore all" or n == "ignoreall"
+
+
+def is_grammar_row_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if is_ignore_all_label(n):
+        return False
+    return "grammar" in n and "clip" in n
+
+
+def is_pending_clip_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n == "pending" or n.startswith("pending ")
+
+
+def is_clip_export_review_chip(name: str) -> bool:
+    """Focused Timeline chip on Clip Export. review/done/pending, not the Review tab."""
+    n = (name or "").strip()
+    if n == "Review":
+        return False
+    return n.casefold() in {"review", "done", "pending"}
+
+
+MIN_CLIP_EXPORT_CHIP_GAP = 120
+
+
+def pick_clip_export_review_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+) -> list[tuple[int, int, int, int]]:
+    """Left-to-right Clip Export cards on Focused Timeline (not the Review tab)."""
+    chips: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        if is_hte_clip_caption(name):
+            continue
+        if not (
+            is_clip_export_review_chip(name)
+            or is_clip_export_style_caption(name)
+            or is_empty_clip_label(name)
+        ):
+            continue
+        _left, top, _right, bottom = rect
+        if (top + bottom) / 2 < min_y:
+            continue
+        chips.append(rect)
+    chips.sort(key=lambda row: (row[0], row[1]))
+    out: list[tuple[int, int, int, int]] = []
+    for rect in chips:
+        if out and rect[0] - out[-1][0] < MIN_CLIP_EXPORT_CHIP_GAP:
+            continue
+        out.append(rect)
+    return out
+
+
+def pick_clip_export_status_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+) -> list[tuple[int, int, int, int]]:
+    """done/pending chips only. Mid-card The-person captions are not card edges."""
+    chips: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        if not is_clip_export_review_chip(name):
+            continue
+        _left, top, _right, bottom = rect
+        if (top + bottom) / 2 < min_y:
+            continue
+        chips.append(rect)
+    chips.sort(key=lambda row: (row[0], row[1]))
+    out: list[tuple[int, int, int, int]] = []
+    for rect in chips:
+        if out and rect[0] - out[-1][0] < MIN_CLIP_EXPORT_CHIP_GAP:
+            continue
+        out.append(rect)
+    return out
+
+
+def pick_review_description_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    win_left: int,
+    win_top: int,
+    win_width: int,
+    win_height: int,
+) -> list[tuple[int, int, int, int]]:
+    """Review sidebar editor: empty 'click to add text' or an existing The-person caption."""
+    if win_width < 1 or win_height < 1:
+        return []
+    min_x = win_left + int(win_width * 0.48)
+    max_y = win_top + int(win_height * 0.58)
+    placeholders: list[tuple[int, int, int, int]] = []
+    captions: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        n = (name or "").strip().casefold()
+        if n in {"(empty clip)", "empty clip"}:
+            continue
+        if is_hte_clip_caption(name):
+            continue
+        is_placeholder = "click to add" in n or "add text" in n
+        is_caption = is_clip_export_style_caption(name)
+        if not is_placeholder and not is_caption:
+            continue
+        cx = (rect[0] + rect[2]) / 2
+        cy = (rect[1] + rect[3]) / 2
+        if cx < min_x or cy > max_y:
+            continue
+        if is_placeholder:
+            placeholders.append(rect)
+        else:
+            captions.append(rect)
+    placeholders.sort(key=lambda row: (row[1], row[0]))
+    captions.sort(key=lambda row: (row[1], row[0]))
+    return placeholders + captions
+
+
+def review_description_click_xy(rect: tuple[int, int, int, int]) -> tuple[int, int]:
+    """Click inside the description box, a bit below the placeholder label."""
+    left, top, right, bottom = rect
+    x = int((left + right) / 2)
+    y = int((top + bottom) / 2) + max(14, int(max(bottom - top, 1) * 0.35))
+    return x, y
+
+
+def review_description_fallback_xy(width: int, height: int) -> tuple[int, int]:
+    """Review description box: between the video and Quality Assistant."""
+    return int(width * 0.70), int(height * 0.30)
+
+
+def is_plausible_edit_rect(rect: tuple[int, int, int, int]) -> bool:
+    """True for a compact placeholder, not a window-wide Chromium container."""
+    width = rect[2] - rect[0]
+    height = rect[3] - rect[1]
+    return 60 <= width <= 520 and 14 <= height <= 160
+
+
+def pick_click_to_add_text_target(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    win_left: int,
+    win_top: int,
+    win_width: int,
+    win_height: int,
+) -> tuple[tuple[int, int, int, int], tuple[int, int]] | None:
+    """One click on the real 'click to add text' field. Never a giant chrome box center."""
+    ranked: list[tuple[int, int, tuple[int, int, int, int]]] = []
+    for name, rect in named_rects:
+        n = (name or "").strip().casefold()
+        if "click to add" not in n and n != "add text":
+            continue
+        if n in {"(empty clip)", "empty clip"}:
+            continue
+        width = rect[2] - rect[0]
+        score = 0
+        if is_plausible_edit_rect(rect):
+            score += 50
+        if width > 700:
+            score -= 30
+        cy = (rect[1] + rect[3]) / 2
+        cx = (rect[0] + rect[2]) / 2
+        if win_height and cy > win_top + win_height * 0.60:
+            score += 10
+        if (
+            win_width
+            and cx > win_left + win_width * 0.52
+            and cy < win_top + win_height * 0.58
+            and is_plausible_edit_rect(rect)
+        ):
+            score += 15
+        ranked.append((score, width, rect))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda row: (-row[0], row[1]))
+    rect = ranked[0][2]
+    if is_plausible_edit_rect(rect):
+        return rect, review_description_click_xy(rect)
+    x = int(rect[0] + max(rect[2] - rect[0], 1) * 0.72)
+    y = int((rect[1] + rect[3]) / 2)
+    return rect, (x, y)
+
+
+def should_skip_observe(watched_pct: int | None, names: list[str] | None = None) -> bool:
+    """When Watched is already high, do not replay 24s. QA rows are often missing from UIA."""
+    del names
+    return watched_pct is not None and watched_pct >= 80
+
+
+def should_snap_clip_export_ends(
+    names: list[str],
+    *,
+    chip_count: int = 0,
+    duplicate: bool = False,
+) -> bool:
+    """K-split on Focused Timeline when ends or parallel slots are still wrong.
+
+    A second Full Timeline track is a different problem. Focused Timeline K does
+    not create another Clip Export type.
+    """
+    del duplicate
+    if any(is_clip_export_end_mismatch(n) for n in names):
+        return True
+    if any(is_clip_export_missing_error(n) for n in names):
+        return True
+    if chip_count >= 2:
+        return False
+    if any(is_clip_export_review_chip(n) for n in names) and any(is_empty_clip_label(n) for n in names):
+        return False
+    if any(is_clip_export_empty_error(n) or is_clip_export_short_error(n) for n in names):
+        return False
+    return True
+
+
+QA_FRAME_RE = re.compile(r"on frames?:\s*([\d,\s]+)", re.I)
+
+
+def qa_end_mismatch_seconds(names: list[str], fps: float = 30.0) -> list[float]:
+    """Frame 297 at 30 fps is the 9.9s first Sub-goal end."""
+    times: list[float] = []
+    rate = max(float(fps or 30.0), 1.0)
+    for name in names:
+        if not is_clip_export_end_mismatch(name):
+            continue
+        for match in QA_FRAME_RE.finditer(name or ""):
+            for tok in match.group(1).split(","):
+                tok = tok.strip()
+                if tok.isdigit():
+                    times.append(round(int(tok) / rate, 3))
+    return times
+
+
+def parse_timeline_fps(blob: str) -> float | None:
+    """OCR '60 FPS (0-62)' means frame 297 is 4.95s, not 9.9s."""
+    match = re.search(r"(\d+)\s*FPS", blob or "", flags=re.I)
+    if not match:
+        return None
+    fps = float(match.group(1))
+    if 10 <= fps <= 120:
+        return fps
+    return None
+
+
+FPS_SPAN_RE = re.compile(
+    r"FPS\s*\(\s*\d+(?:\.\d+)?\s*[-–]\s*(\d+(?:\.\d+)?)\s*\)", re.I
+)
+REVIEW_FRAMES_RE = re.compile(r"\(f(\d+)\s*[-–]\s*f(\d+)\)", re.I)
+
+
+def timeline_length_from_ocr(blob: str) -> float | None:
+    """OCR '60 FPS (0-62)' is a 62s video, not 60 seconds."""
+    match = FPS_SPAN_RE.search(blob or "")
+    if not match:
+        return None
+    val = float(match.group(1))
+    if 2 <= val <= 600:
+        return val
+    return None
+
+
+def review_start_frame_from_ocr(blob: str) -> int | None:
+    """Selected-card start in '9.9s - 36.9s (f296 - f1106)' is the previous card's end."""
+    match = REVIEW_FRAMES_RE.search(blob or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def qa_mismatch_frames(names: list[str]) -> list[int]:
+    frames: list[int] = []
+    for name in names or []:
+        if not is_clip_export_end_mismatch(name):
+            continue
+        for match in QA_FRAME_RE.finditer(name or ""):
+            for tok in match.group(1).split(","):
+                tok = tok.strip()
+                if tok.isdigit():
+                    frames.append(int(tok))
+    return frames
+
+
+def needs_one_frame_nudge(qa_frames: list[int], review_start_frame: int | None) -> bool:
+    """True when QA wants frame 297. Review often OCR-reads f300 instead of f296."""
+    if qa_frames:
+        return True
+    if review_start_frame is None:
+        return False
+    return any(abs(int(frame) - int(review_start_frame)) == 1 for frame in qa_frames or [])
+
+
+def should_nudge_end_match(names: list[str]) -> bool:
+    """QA still lists a Clip Export end-match frame (297). Drag/nudge; do not rewrite text."""
+    return bool(qa_mismatch_frames(names))
+
+
+def clip_export_inferred_card_fracs(
+    long_range: tuple[float, float, float] | None,
+    total_s: float,
+    existing_ends: list[float] | None = None,
+) -> list[float]:
+    """Midpoint of every Clip Export card, including ones UIA did not expose as done.
+
+    A selected 9.9s–36.9s card on a 62s video means three cards: before, the
+    27s middle, and after. UIA often only names two `done` chips.
+    """
+    span = max(float(total_s or 0.0), 1.0)
+    bounds = [0.0]
+    if long_range:
+        start, end, _dur = long_range
+        for t in (start, end):
+            frac = float(t) / span
+            if 0.02 < frac < 0.98 and all(abs(frac - seen) > 0.03 for seen in bounds):
+                bounds.append(round(frac, 4))
+    for frac in existing_ends or []:
+        val = float(frac)
+        if 0.02 < val < 0.98 and all(abs(val - seen) > 0.03 for seen in bounds):
+            bounds.append(round(val, 4))
+    bounds.append(1.0)
+    bounds.sort()
+    return [round((bounds[i] + bounds[i + 1]) / 2, 4) for i in range(len(bounds) - 1)]
+
+
+def should_skip_k_after_caption_fill(already_filled: bool) -> bool:
+    """After a caption is in the Review box, K types kkkk instead of splitting."""
+    return bool(already_filled)
+
+
+def clip_export_caption_is_complete(name: str) -> bool:
+    """True for a 15-word The-person sentence that must not be pasted over."""
+    n = (name or "").strip()
+    if not n:
+        return False
+    if is_garbled_clip_export_caption(n) or is_clip_export_placeholder(n):
+        return False
+    if is_empty_clip_label(n) or clip_export_caption_needs_rewrite(n):
+        return False
+    if not n.casefold().startswith("the person"):
+        return False
+    return len(n.split()) >= 15
+
+
+def review_panel_caption_texts(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    win_left: int,
+    win_top: int,
+    win_width: int,
+    win_height: int,
+) -> list[str]:
+    """Captions in the Review sidebar (selected clip), not every timeline chip."""
+    if win_width < 1 or win_height < 1:
+        return []
+    min_x = win_left + int(win_width * 0.48)
+    max_y = win_top + int(win_height * 0.58)
+    out: list[str] = []
+    for name, rect in named_rects or []:
+        n = (name or "").strip()
+        if not n:
+            continue
+        cx = (rect[0] + rect[2]) / 2
+        cy = (rect[1] + rect[3]) / 2
+        if cx < min_x or cy > max_y:
+            continue
+        lowered = n.casefold()
+        if lowered in {
+            "review",
+            "error",
+            "quality assistant",
+            "ignore",
+            "use",
+            "ignore all",
+            "grammar",
+        }:
+            continue
+        if (
+            is_clip_export_style_caption(n)
+            or is_empty_clip_label(n)
+            or is_clip_export_placeholder(n)
+            or is_garbled_clip_export_caption(n)
+            or lowered in {"k", "kk", "k."}
+        ):
+            out.append(n)
+    return out
+
+
+def should_skip_selected_clip_export_write(review_texts: list[str]) -> bool:
+    """Leave a selected card alone when Review already shows a complete sentence."""
+    texts = [t for t in (review_texts or []) if str(t).strip()]
+    if not texts:
+        return False
+    return all(clip_export_caption_is_complete(t) for t in texts)
+
+
+def clip_export_fill_click_limit(visible: int, n_slots: int) -> int:
+    """Click existing cards only. Extra Sub-goal slots need a split, not a re-click."""
+    vis = max(int(visible or 0), 0)
+    if vis >= 1:
+        return vis
+    return max(int(n_slots or 0), 1)
+
+
+def should_record_clip_export_k_frac(added_card: bool) -> bool:
+    """Remember a cut only when K actually created a card. A leaked 'k' is not an edge."""
+    return bool(added_card)
+
+
+def caption_has_fresh_k_leak(names_before: list[str], names_after: list[str]) -> bool:
+    """True when this K keypress typed a letter into a caption instead of splitting."""
+    before = [n for n in names_before or [] if is_garbled_clip_export_caption(n) or is_empty_clip_label(n)]
+    after = [n for n in names_after or [] if is_garbled_clip_export_caption(n) or is_empty_clip_label(n)]
+    if len(after) > len(before):
+        return True
+    after_only = {(n or "").strip().casefold() for n in after} - {
+        (n or "").strip().casefold() for n in before
+    }
+    return any(n in {"k", "kk", "k."} or _ISOLATED_K_RE.search(n) for n in after_only)
+
+
+def should_split_despite_filled(already_filled: bool, needs_split: bool) -> bool:
+    """A written Review caption must not block K-splitting the 27s card."""
+    del already_filled
+    return bool(needs_split)
+
+
+def should_split_long_clip_export(
+    long_range: tuple[float, float, float] | None,
+    visible: int,
+    n_slots: int,
+    names: list[str] | None = None,
+) -> bool:
+    """True when a long Clip Export still covers more than one Sub-goal."""
+    if not long_range or float(long_range[2]) <= 10:
+        return False
+    if any(is_clip_export_missing_error(n) for n in names or []):
+        return True
+    return clip_export_needs_more_cards(visible, n_slots, names or [])
+
+
+def clip_export_cuts_inside_long_card(
+    long_range: tuple[float, float, float] | None,
+    total_s: float,
+    end_fracs: list[float] | None = None,
+) -> list[float]:
+    """Sub-goal ends strictly inside a 27s card, never its 9.9s / 36.9s edges."""
+    if not long_range or float(long_range[2]) <= 10:
+        return []
+    span = max(float(total_s or 0.0), float(long_range[1]), 1.0)
+    start_f = float(long_range[0]) / span
+    end_f = float(long_range[1]) / span
+    out: list[float] = []
+    for frac in end_fracs or []:
+        f = float(frac)
+        if start_f + 0.025 < f < end_f - 0.025 and all(abs(f - seen) > 0.025 for seen in out):
+            out.append(round(f, 4))
+    return out
+
+
+def clip_export_card_click_fracs(
+    end_fracs: list[float] | None,
+    n_slots: int,
+    long_range: tuple[float, float, float] | None = None,
+    total_s: float = 0.0,
+    existing_ends: list[float] | None = None,
+) -> list[float]:
+    """Playhead midpoint of every Clip Export slot that should exist. No 4-card cap."""
+    n = max(int(n_slots or 0), 1)
+    if end_fracs:
+        return clip_export_slot_mid_fractions(end_fracs, n)
+    inferred = clip_export_inferred_card_fracs(
+        long_range, float(total_s or 62.0), existing_ends
+    )
+    if len(inferred) >= n:
+        return inferred[:n]
+    return clip_export_slot_mid_fractions(existing_ends or [], n)
+
+
+def review_frame_rate(
+    ocr_blob: str = "",
+    long_range: tuple[float, float, float] | None = None,
+    start_frame: int | None = None,
+) -> float:
+    """Frame clock for QA 'On frames: 297'. Header '60 FPS (0-62)' is playback + length."""
+    start_s = float(long_range[0]) if long_range else None
+    ranged = review_clip_range_from_ocr(ocr_blob or "")
+    if ranged and start_s is None:
+        start_s = float(ranged[0])
+    frame = start_frame if start_frame is not None else review_start_frame_from_ocr(ocr_blob or "")
+    if start_s and start_s > 0.2 and frame:
+        rate = float(frame) / float(start_s)
+        if 20 <= rate <= 70:
+            return float(round(rate))
+    parsed = parse_timeline_fps(ocr_blob or "")
+    span = timeline_length_from_ocr(ocr_blob or "")
+    if parsed and parsed >= 50 and span and span > 30:
+        return 30.0
+    return float(parsed or 30.0)
+
+
+def qa_frame_end_frac(frame: int, total_s: float, fps: float) -> float:
+    """297 at 30 fps on a 62s video is 9.9s, the first Sub-goal end."""
+    span = max(float(total_s or 0.0), 1.0)
+    return round(min(0.96, max(0.04, (int(frame) / max(float(fps or 30.0), 1.0)) / span)), 4)
+
+
+def one_frame_nudge_frac(total_s: float, fps: float) -> float:
+    """One video frame as a Focused Timeline fraction, not ~1 second."""
+    span = max(float(total_s or 0.0), 1.0)
+    return (1.0 / max(float(fps or 30.0), 1.0)) / span
+
+
+def should_rewrite_every_clip_export_card(names: list[str], ocr_blob: str = "") -> bool:
+    """Rewrite garbled / placeholder / hands text. Parallel-fill is a split, not a rewrite."""
+    blob = "\n".join([*(names or []), ocr_blob or ""])
+    if is_garbled_clip_export_caption(blob):
+        return True
+    if any(is_clip_export_placeholder(n) for n in names or []):
+        return True
+    if any(is_clip_export_empty_error(n) or is_clip_export_short_error(n) for n in names or []):
+        return True
+    if any(clip_export_caption_needs_rewrite(n) for n in names or []):
+        return True
+    if any(is_garbled_clip_export_caption(n) for n in names or []):
+        return True
+    return False
+
+
+def should_refill_clip_export_after_write(
+    already_filled: bool, names: list[str], ocr_blob: str = ""
+) -> bool:
+    """After the first good write, do not paste over the same three cards again."""
+    if not already_filled:
+        return True
+    return should_rewrite_every_clip_export_card(names, ocr_blob)
+
+
+def filter_ocr_person_card_hits(
+    hits: list[tuple[int, int]],
+    win_left: int,
+    win_top: int,
+    win_height: int,
+) -> list[tuple[int, int]]:
+    """Drop overlay 'The person' words (y~738, x=61). Those are not timeline cards."""
+    lo = win_top + int(win_height * 0.78)
+    hi = win_top + int(win_height * 0.92)
+    out: list[tuple[int, int]] = []
+    for x, y in hits or []:
+        if int(x) < win_left + 90:
+            continue
+        if int(y) < lo or int(y) > hi:
+            continue
+        out.append((int(x), int(y)))
+    return out
+
+
+def harvest_rewrites_to_apply(
+    items: list[dict], already: set[str] | None = None
+) -> list[dict]:
+    """Every lint-changed Sub-goal. Do not stop after the first issue."""
+    out: list[dict] = []
+    seen = set(already or [])
+    for item in items or []:
+        if item.get("skip_edit"):
+            continue
+        lint = item.get("lint")
+        if lint is None or not getattr(lint, "changed", False):
+            continue
+        original = getattr(lint, "original", "") or ""
+        key = " ".join(original.split()[:5]).casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
+REVIEW_RANGE_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*s\s*[-–]\s*(\d+(?:\.\d+)?)\s*s"
+    r"(?:[^.\d]{0,40}?(\d+(?:\.\d+)?)\s*s)?",
+    re.I,
+)
+
+
+def review_clip_range_from_ocr(blob: str) -> tuple[float, float, float] | None:
+    """Review header '9.9s - 36.9s (f296 - f1106) · 27.0s'."""
+    match = REVIEW_RANGE_RE.search(blob or "")
+    if not match:
+        return None
+    start = float(match.group(1))
+    end = float(match.group(2))
+    if end <= start + 0.4:
+        return None
+    dur = float(match.group(3)) if match.group(3) else round(end - start, 3)
+    if dur < 0.4:
+        return None
+    return start, end, dur
+
+
+def long_range_interior_fracs(
+    start_s: float, end_s: float, total_s: float, step_s: float = 4.5
+) -> list[float]:
+    """Cuts inside a 27s card (9.9s-36.9s), never on its 9.9s / 36.9s edges."""
+    span = max(float(total_s or 0.0), float(end_s), 0.01)
+    out: list[float] = []
+    t = float(start_s) + max(float(step_s), 2.0)
+    while t < float(end_s) - 1.5:
+        frac = t / span
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+        t += max(float(step_s), 2.0)
+    return out
+
+
+def clip_durations_from_ocr(blob: str) -> list[float]:
+    """Timeline card lengths like 9.9s / 27.0s / 5.3s. Ignore FPS and a lone OCR '3s'."""
+    vals: list[float] = []
+    for raw in re.findall(r"(\d+(?:\.\d+)?)\s*s\b", blob or "", flags=re.I):
+        val = float(raw)
+        if 0.4 <= val <= 180 and val not in {15.0, 60.0}:
+            vals.append(val)
+    if len(vals) == 1 and vals[0] < 5.0:
+        return []
+    return vals
+
+
+def duration_end_fractions(durations: list[float]) -> list[float]:
+    """Clip ends as fractions of the summed card lengths."""
+    if not durations:
+        return []
+    total = sum(max(float(d), 0.01) for d in durations) or 1.0
+    acc = 0.0
+    out: list[float] = []
+    for dur in durations[:-1]:
+        acc += max(float(dur), 0.01)
+        frac = acc / total
+        if 0.04 <= frac <= 0.96:
+            out.append(round(frac, 4))
+    return out
+
+
+def clip_export_interior_cut_fracs(
+    needed: list[float],
+    existing: list[float],
+    min_sep: float = 0.03,
+) -> list[float]:
+    """Sub-goal ends that are not already a Clip Export card edge."""
+    out: list[float] = []
+    for frac in needed or []:
+        f = max(0.04, min(0.96, float(frac)))
+        if any(abs(f - seen) < min_sep for seen in (existing or [])):
+            continue
+        if any(abs(f - seen) < min_sep for seen in out):
+            continue
+        out.append(round(f, 4))
+    return out
+
+
+def long_card_interior_fracs(
+    durations: list[float], max_ok: float = 10.0, step_s: float = 5.0
+) -> list[float]:
+    """A 27s Clip Export covers several Sub-goals; cut inside that card, not on its ends."""
+    if not durations:
+        return []
+    total = sum(max(float(d), 0.01) for d in durations) or 1.0
+    acc = 0.0
+    out: list[float] = []
+    for dur in durations:
+        start = acc
+        acc += max(float(dur), 0.01)
+        if float(dur) <= max_ok:
+            continue
+        t = start + max(float(step_s), 2.0)
+        while t < acc - 1.0:
+            frac = t / total
+            if 0.04 <= frac <= 0.96:
+                out.append(round(frac, 4))
+            t += max(float(step_s), 2.0)
+    return out
+
+
+def clip_export_visible_card_count(
+    chip_count: int, duration_count: int, inferred_count: int = 0
+) -> int:
+    """Write every card on screen, including ones UIA did not name as done."""
+    return max(
+        int(chip_count or 0),
+        int(duration_count or 0),
+        int(inferred_count or 0),
+        1,
+    )
+
+
+def chip_end_fractions(
+    rects: list[tuple[int, int, int, int]],
+    timeline_left: int,
+    timeline_right: int,
+) -> list[float]:
+    """Existing Clip Export card edges from on-screen chips when OCR has no durations."""
+    return clip_export_end_fractions_from_status_rects(rects, timeline_left, timeline_right)
+
+
+def wide_card_cut_fracs(
+    chip_rects: list[tuple[int, int, int, int]],
+    needed: list[float],
+    timeline_left: int,
+    timeline_right: int,
+    min_span_frac: float = 0.18,
+) -> list[float]:
+    """Sub-goal ends that fall inside the widest Clip Export card, not on its edges."""
+    if timeline_right <= timeline_left:
+        return []
+    span = float(timeline_right - timeline_left)
+    ordered = sorted(chip_rects or [], key=lambda row: row[0])
+    bounds = [float(timeline_left)]
+    for rect in ordered:
+        x = float(rect[0])
+        if x - bounds[-1] > 40:
+            bounds.append(x)
+    bounds.append(float(timeline_right))
+    widest_i = 0
+    widest = 0.0
+    for i in range(len(bounds) - 1):
+        width = bounds[i + 1] - bounds[i]
+        if width > widest:
+            widest = width
+            widest_i = i
+    if widest / span < min_span_frac and len(ordered) <= 1:
+        start, end = 0.08, 0.92
+    else:
+        start = (bounds[widest_i] - timeline_left) / span
+        end = (bounds[widest_i + 1] - timeline_left) / span
+    out: list[float] = []
+    for frac in needed or []:
+        f = float(frac)
+        if start + 0.03 < f < end - 0.03 and all(abs(f - seen) > 0.03 for seen in out):
+            out.append(round(f, 4))
+    return out
+
+
+def clip_export_needs_more_cards(visible: int, n_slots: int, names: list[str]) -> bool:
+    """Keep splitting while QA still wants one Clip Export per Sub-goal."""
+    if any(is_clip_export_missing_error(n) for n in names or []) and visible < max(int(n_slots or 0), 2):
+        return True
+    return int(visible or 0) < max(int(n_slots or 0), 2)
+
+
+def pick_ocr_timeline_person_centers(
+    words: list[dict[str, Any]], min_y: int
+) -> list[tuple[int, int]]:
+    """Each 'person' word on Focused Timeline is one Clip Export card caption."""
+    hits: list[tuple[int, int]] = []
+    for word in words or []:
+        if str(word.get("text") or "").strip().casefold() != "person":
+            continue
+        cx, cy = _center(word)
+        if cy < min_y:
+            continue
+        if hits and cx - hits[-1][0] < 80:
+            continue
+        hits.append((cx, cy))
+    hits.sort(key=lambda row: row[0])
+    return hits
+
+
+def pick_ocr_duration_centers(
+    words: list[dict[str, Any]], min_y: int
+) -> list[tuple[int, int, float]]:
+    """Focused Timeline duration chips such as 9.9s / 27.0s / 5.3s."""
+    hits: list[tuple[int, int, float]] = []
+    items = list(words or [])
+    for i, word in enumerate(items):
+        text = str(word.get("text") or "").strip()
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)s", text, flags=re.I)
+        if not match and i + 1 < len(items):
+            nxt = str(items[i + 1].get("text") or "").strip()
+            if re.fullmatch(r"\d+(?:\.\d+)?", text) and nxt.casefold() in {"s", "sec"}:
+                match = re.fullmatch(r"(\d+(?:\.\d+)?)", text)
+        if not match:
+            continue
+        val = float(match.group(1))
+        if val < 0.4 or val > 180 or val in {15.0, 60.0}:
+            continue
+        cx, cy = _center(word)
+        if cy < min_y:
+            continue
+        hits.append((cx, cy, val))
+    hits.sort(key=lambda row: row[0])
+    out: list[tuple[int, int, float]] = []
+    for row in hits:
+        if out and row[0] - out[-1][0] < 80:
+            continue
+        out.append(row)
+    return out
+
+
+def should_open_subgoal_pending(names: list[str]) -> bool:
+    """Do not leave Clip Export to sit on a Sub-goal pending / red playhead."""
+    return not has_clip_export_quality_error(names)
+
+
+def is_quality_run_now_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"run now", "run", "rerun"} or n.startswith("run now")
+
+
+def clip_export_caption_committed(
+    names: list[str], ocr_blob: str = "", typed: str = ""
+) -> bool:
+    """True when this slot kept the sentence we typed, not some other card's caption."""
+    snippet = " ".join((typed or "").split()[:6]).casefold()
+    blob = " ".join(names or []) + " " + (ocr_blob or "")
+    if len(snippet) >= 12:
+        return snippet in blob.casefold()
+    return any(is_clip_export_caption_label(n) for n in names or [])
+
+
+def is_split_control_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if not n or is_idle_too_long_error(n):
+        return False
+    if n in {"split", "split clip", "split sub-goal", "split subgoal"}:
+        return True
+    if n.startswith("split ") and "segment" not in n:
+        return True
+    return False
+
+
+def is_create_clip_hint(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return "press k" in n or "click or press k" in n
+
+
+def is_hte_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return "hand tracking" in n or n in {"hte", "hand_tracking_error"}
+
+
+def is_hte_clip_caption(name: str) -> bool:
+    """HTE track text. Never type or K-split this as a Clip Export."""
+    n = (name or "").strip().casefold()
+    compact = n.replace(" ", "_")
+    return "missing_hand" in n or compact in {
+        "missing_hand_predictions",
+        "hand_tracking_error",
+    }
+
+
+def is_timeline_kind_label(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    return n in {"sub-goal", "subgoal", "clip export", "clip_export", "clipexport"}
+
+
+def is_clip_export_tab(name: str) -> bool:
+    n = (name or "").strip().casefold()
+    if "sub-goal" in n or "subgoal" in n:
+        return False
+    if "parallel" in n or "fully filled" in n:
+        return False
+    return n in {"clip export", "clip_export", "clipexport"} or n == "clip export"
+
+
+def timeline_dropdown_is_open(names: list[str]) -> bool:
+    """True when the Sub-goal / ClipExport / HTE menu is still expanded."""
+    kinds: set[str] = set()
+    for name in names:
+        if is_hte_label(name):
+            kinds.add("hte")
+        elif is_clip_export_tab(name):
+            kinds.add("clip export")
+        elif (name or "").strip().casefold() in {"sub-goal", "subgoal"}:
+            kinds.add("sub-goal")
+    return {"sub-goal", "clip export", "hte"} <= kinds
+
+
+def focused_timeline_kind(names: list[str]) -> str | None:
+    """Kind chip sitting after the Focused Timeline heading, not a Full Timeline track."""
+    found = False
+    for name in names or []:
+        n = (name or "").strip().casefold()
+        if n == "focused timeline":
+            found = True
+            continue
+        if not found:
+            continue
+        if is_hte_label(name):
+            return "hte"
+        if is_clip_export_tab(name):
+            return "clip export"
+        if n in {"sub-goal", "subgoal"}:
+            return "sub-goal"
+        if is_timeline_status_label(name) or is_clip_export_style_caption(name):
+            continue
+        if n in {"play", "review", "watched", "quality assistant"}:
+            break
+    return None
+
+
+def selected_timeline_kind(names: list[str]) -> str | None:
+    """Toolbar kind when the dropdown is closed. None if the menu is open.
+
+    'Sub-goal' after Focused Timeline is the Full Timeline track label, not the
+    selected kind. Header ClipExport must win so fill is not aborted.
+    """
+    if timeline_dropdown_is_open(names):
+        return None
+    focused = focused_timeline_kind(names)
+    if focused == "hte" and not any(is_clip_export_tab(n) for n in names or []):
+        return "hte"
+    for name in names:
+        if is_clip_export_missing_error(name):
+            continue
+        if is_hte_label(name):
+            return "hte"
+        if is_clip_export_tab(name):
+            return "clip export"
+        if (name or "").strip().casefold() in {"sub-goal", "subgoal"}:
+            return "sub-goal"
+    return focused
+
+
+def clip_export_track_ready(names: list[str]) -> bool:
+    """True when Clip Export can be filled. A Sub-goal chip under Focused Timeline is the other track."""
+    if any(is_hte_clip_caption(n) for n in names or []):
+        return False
+    if focused_timeline_kind(names or []) == "hte" and not any(
+        is_clip_export_tab(n) or is_clip_export_style_caption(n) for n in names or []
+    ):
+        return False
+    return any(is_clip_export_tab(n) for n in names or []) or any(
+        is_clip_export_style_caption(n) for n in names or []
+    )
+
+
+def should_abort_clip_export_k(names: list[str]) -> bool:
+    """Stop the whole K loop only if Hand Tracking Error clips are on the focused track."""
+    if any(is_hte_clip_caption(n) for n in names or []):
+        return True
+    if focused_timeline_kind(names or []) == "hte" and not any(
+        is_clip_export_style_caption(n) for n in names or []
+    ):
+        return True
+    return False
+
+
+def should_stop_clip_export_k(
+    chip_count_before: int, chip_count_after: int, names: list[str]
+) -> bool:
+    """True when this K should not be retried: HTE, or this cut was already a card edge."""
+    if should_abort_clip_export_k(names):
+        return True
+    return chip_count_after <= chip_count_before
+
+
+def review_sidebar_open(names: list[str]) -> bool:
+    return any((name or "").strip().casefold() == "review" for name in names)
+
+
+def quality_linters_remaining(names: list[str]) -> bool:
+    return any(
+        is_idle_too_long_error(n)
+        or is_clip_export_missing_error(n)
+        or is_clip_export_hands_error(n)
+        or is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_duplicate_timeline(n)
+        or is_clip_export_end_mismatch(n)
+        or is_false_idle_review_error(n)
+        for n in names
+    )
+
+
+def pick_idle_split_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+) -> tuple[tuple[int, int, int, int] | None, tuple[int, int, int, int] | None]:
+    """First Focused-Timeline Idle card and the next real clip to its right.
+
+    Ignores the overlay Idle label on the video (higher on screen / smaller y).
+    The pending chip sitting on the same Idle card (~40px to the right of the
+    Idle word) is not a card boundary; K on that chip does nothing.
+    """
+    idles: list[tuple[int, int, int, int]] = []
+    boundaries: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects:
+        left, top, _right, bottom = rect
+        mid_y = (top + bottom) / 2
+        if mid_y < min_y:
+            continue
+        n = (name or "").strip().casefold()
+        if n == "idle":
+            idles.append(rect)
+        elif is_pending_clip_label(name) or looks_like_neighbor_action(name):
+            boundaries.append(rect)
+    if not idles:
+        return None, None
+    idle = min(idles, key=lambda row: (row[0], row[1]))
+    next_hit = None
+    idle_mid = (idle[1] + idle[3]) / 2
+    for cand in boundaries:
+        if cand[0] - idle[0] < MIN_IDLE_NEIGHBOR_GAP:
+            continue
+        cand_mid = (cand[1] + cand[3]) / 2
+        if abs(cand_mid - idle_mid) > 90:
+            continue
+        if next_hit is None or cand[0] < next_hit[0]:
+            next_hit = cand
+    if next_hit is None:
+        expanded = (
+            idle[0],
+            idle[1],
+            max(idle[2], idle[0] + MIN_IDLE_CARD_SPAN),
+            idle[3],
+        )
+        return expanded, None
+    return idle, next_hit
+
+
+def idle_card_split_xy(
+    idle_rect: tuple[int, int, int, int],
+    next_rect: tuple[int, int, int, int] | None,
+    fraction: float = 0.45,
+) -> tuple[int, int]:
+    """Click inside the Idle *card*, not the tiny Idle word.
+
+    The UIA Idle control is a short label at the left of the 9.9s card. 45% of
+    the gap to the next pending is ~4.5s; 90% is ~9.0s.
+    """
+    left, top, right, bottom = idle_rect
+    if next_rect is not None and next_rect[0] >= left + MIN_IDLE_NEIGHBOR_GAP:
+        span = max(next_rect[0] - left, 1)
+    else:
+        width = max(right - left, 1)
+        span = width if width >= MIN_IDLE_CARD_SPAN else MIN_IDLE_CARD_SPAN
+    x = int(left + span * fraction)
+    y = int((top + bottom) / 2)
+    return x, y
+
+
+def clip_export_needs_new_clip(names: list[str]) -> bool:
+    """Press K only when Clip Export has no clip to type into.
+
+    Empty/short/parallel QA rows mean clips already exist. A second K on Full
+    Timeline creates another Clip Export track (QA: more than one timeline).
+    """
+    if any(is_clip_export_duplicate_timeline(n) for n in names):
+        return False
+    if any(
+        is_clip_export_empty_error(n)
+        or is_clip_export_short_error(n)
+        or is_clip_export_missing_error(n)
+        for n in names
+    ):
+        return False
+    for name in names:
+        n = (name or "").strip().casefold()
+        if is_pending_clip_label(name):
+            return False
+        if is_empty_clip_label(name):
+            return False
+        if "the person" in n or "focus annotation" in n:
+            return False
+    return True
+
+
+def is_clip_export_placeholder(text: str) -> bool:
+    """True for an unfinished stub, not a 15-word laundry Clip Export already written."""
+    n = (text or "").casefold().strip()
+    if n in {"k", "kk", "k.", "k k"}:
+        return True
+    if "kitchen" in n or "refrigerator" in n:
+        return False
+    if "focus annotation" in n:
+        return True
+    if "indoor room" in n and "household demonstration" in n:
+        return True
+    words = n.split()
+    if n in {"the person stands at", "the person stands at an indoor table"}:
+        return True
+    if n.startswith("the person stands at") and len(words) < 12:
+        return True
+    return False
+
+
+def parse_grammar_clip_count(text: str) -> int | None:
+    match = GRAMMAR_COUNT_RE.search(text or "")
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def fixable_review_work_remaining(text: str) -> bool:
+    """True when Grammar / empty / parallel / end-match still need a click or type.
+
+    A leftover second Clip Export track is removed from Full Timeline (keep one).
+    """
+    n = (text or "").casefold()
+    count = parse_grammar_clip_count(n)
+    if count:
+        return True
+    if "click to add" in n or "must contain text" in n:
+        return True
+    if "fully filled" in n or "in parallel" in n:
+        return True
+    if "more than 5" in n and "idle" in n:
+        return True
+    if "at least 15" in n or "15 word" in n:
+        return True
+    if "end must match" in n:
+        return True
+    return False
+
+
+def review_work_remaining(text: str) -> bool:
+    n = (text or "").casefold()
+    if fixable_review_work_remaining(n):
+        return True
+    if "more than one timeline" in n:
+        return True
+    return False
+
+
+def is_quality_assistant_text(text: str) -> bool:
+    n = (text or "").casefold()
+    return "quality assistant" in n or "must contain text" in n
+
+
+def should_skip_watch(
+    watched_pct: int | None,
+    *,
+    use_ready: bool = False,
+    quality_ready: bool = False,
+) -> bool:
+    """Skip the required 1x watch only after Watched is already high.
+
+    Quality Assistant reds and Review Use do not mean the video was watched.
+    Watched 0% / 48% must still play the full clip.
+    """
+    del use_ready, quality_ready
+    return watched_pct is not None and watched_pct >= 80
+
+
+def interesting_uia_names(names: list[str], limit: int = 60) -> list[str]:
+    """Prefer Review / timeline labels when logging the accessibility tree."""
+    keys = (
+        "use",
+        "ignore",
+        "click to add",
+        "add text",
+        "idle",
+        "quality",
+        "watched",
+        "play",
+        "submit",
+        "pending",
+        "done",
+        "sub-goal",
+        "review",
+        "empty",
+        "export",
+        "grammar",
+        "split",
+        "parallel",
+        "error",
+    )
+    ranked = [n for n in names if any(k in n.casefold() for k in keys)]
+    if ranked:
+        return ranked[:limit]
+    return names[:limit]

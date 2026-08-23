@@ -1,0 +1,5 @@
+# Optional LiDAR cuboid path (not needed for EGO / IX Browser attach).
+# Open3D has no wheels on some Windows Python versions (3.13/3.14).
+open3d>=0.17.0
+scikit-learn>=1.3.0
+requests>=2.31.0
