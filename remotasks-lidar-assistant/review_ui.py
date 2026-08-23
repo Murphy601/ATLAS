@@ -478,6 +478,8 @@ def is_empty_clip_label(name: str) -> bool:
     n = (name or "").strip().casefold()
     if not n:
         return False
+    if n in {"k", "kk", "k."}:
+        return True
     if "click to add" in n or "add text" in n:
         return True
     if n in {"(empty clip)", "empty clip", "empty"}:
@@ -664,13 +666,24 @@ def is_clip_export_style_caption(name: str) -> bool:
     return (name or "").strip().casefold().startswith("the person")
 
 
+_ISOLATED_K_RE = re.compile(r"(?:^|[\s,.;:!?])k(?:[\s,.;:!?]|$)")
+
+
 def is_garbled_clip_export_caption(name: str) -> bool:
-    """K leaked into the Review box: 'dkkkkuring' / 'task.kkkk'."""
+    """K leaked into the Review box: lone 'k', 'fold the k', 'dkkkkuring'."""
     n = name or ""
     if re.search(r"k{3,}", n, flags=re.I):
         return True
     compact = n.casefold().replace(" ", "")
-    return "dkkk" in compact or "kkkking" in compact
+    if "dkkk" in compact or "kkkking" in compact:
+        return True
+    stripped = n.strip().casefold()
+    stripped = re.sub(r"click or press k(?: to create)?", " ", stripped)
+    stripped = re.sub(r"press k", " ", stripped)
+    stripped = " ".join(stripped.split())
+    if stripped in {"k", "kk", "k.", "k k"}:
+        return True
+    return bool(_ISOLATED_K_RE.search(stripped))
 
 
 def clip_export_caption_needs_rewrite(name: str) -> bool:
@@ -1072,6 +1085,96 @@ def should_skip_k_after_caption_fill(already_filled: bool) -> bool:
     return bool(already_filled)
 
 
+def clip_export_caption_is_complete(name: str) -> bool:
+    """True for a 15-word The-person sentence that must not be pasted over."""
+    n = (name or "").strip()
+    if not n:
+        return False
+    if is_garbled_clip_export_caption(n) or is_clip_export_placeholder(n):
+        return False
+    if is_empty_clip_label(n) or clip_export_caption_needs_rewrite(n):
+        return False
+    if not n.casefold().startswith("the person"):
+        return False
+    return len(n.split()) >= 15
+
+
+def review_panel_caption_texts(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    win_left: int,
+    win_top: int,
+    win_width: int,
+    win_height: int,
+) -> list[str]:
+    """Captions in the Review sidebar (selected clip), not every timeline chip."""
+    if win_width < 1 or win_height < 1:
+        return []
+    min_x = win_left + int(win_width * 0.48)
+    max_y = win_top + int(win_height * 0.58)
+    out: list[str] = []
+    for name, rect in named_rects or []:
+        n = (name or "").strip()
+        if not n:
+            continue
+        cx = (rect[0] + rect[2]) / 2
+        cy = (rect[1] + rect[3]) / 2
+        if cx < min_x or cy > max_y:
+            continue
+        lowered = n.casefold()
+        if lowered in {
+            "review",
+            "error",
+            "quality assistant",
+            "ignore",
+            "use",
+            "ignore all",
+            "grammar",
+        }:
+            continue
+        if (
+            is_clip_export_style_caption(n)
+            or is_empty_clip_label(n)
+            or is_clip_export_placeholder(n)
+            or is_garbled_clip_export_caption(n)
+            or lowered in {"k", "kk", "k."}
+        ):
+            out.append(n)
+    return out
+
+
+def should_skip_selected_clip_export_write(review_texts: list[str]) -> bool:
+    """Leave a selected card alone when Review already shows a complete sentence."""
+    texts = [t for t in (review_texts or []) if str(t).strip()]
+    if not texts:
+        return False
+    return all(clip_export_caption_is_complete(t) for t in texts)
+
+
+def clip_export_fill_click_limit(visible: int, n_slots: int) -> int:
+    """Click existing cards only. Extra Sub-goal slots need a split, not a re-click."""
+    vis = max(int(visible or 0), 0)
+    if vis >= 1:
+        return vis
+    return max(int(n_slots or 0), 1)
+
+
+def should_record_clip_export_k_frac(added_card: bool) -> bool:
+    """Remember a cut only when K actually created a card. A leaked 'k' is not an edge."""
+    return bool(added_card)
+
+
+def caption_has_fresh_k_leak(names_before: list[str], names_after: list[str]) -> bool:
+    """True when this K keypress typed a letter into a caption instead of splitting."""
+    before = [n for n in names_before or [] if is_garbled_clip_export_caption(n) or is_empty_clip_label(n)]
+    after = [n for n in names_after or [] if is_garbled_clip_export_caption(n) or is_empty_clip_label(n)]
+    if len(after) > len(before):
+        return True
+    after_only = {(n or "").strip().casefold() for n in after} - {
+        (n or "").strip().casefold() for n in before
+    }
+    return any(n in {"k", "kk", "k."} or _ISOLATED_K_RE.search(n) for n in after_only)
+
+
 def should_split_despite_filled(already_filled: bool, needs_split: bool) -> bool:
     """A written Review caption must not block K-splitting the 27s card."""
     del already_filled
@@ -1461,15 +1564,12 @@ def is_quality_run_now_label(name: str) -> bool:
 def clip_export_caption_committed(
     names: list[str], ocr_blob: str = "", typed: str = ""
 ) -> bool:
-    """True when a Clip Export field kept a The-person sentence after typing."""
-    if any(is_clip_export_caption_label(n) for n in names):
-        return True
+    """True when this slot kept the sentence we typed, not some other card's caption."""
     snippet = " ".join((typed or "").split()[:6]).casefold()
+    blob = " ".join(names or []) + " " + (ocr_blob or "")
     if len(snippet) >= 12:
-        blob = " ".join(names) + " " + (ocr_blob or "")
-        if snippet in blob.casefold():
-            return True
-    return False
+        return snippet in blob.casefold()
+    return any(is_clip_export_caption_label(n) for n in names or [])
 
 
 def is_split_control_label(name: str) -> bool:
@@ -1723,6 +1823,8 @@ def clip_export_needs_new_clip(names: list[str]) -> bool:
 def is_clip_export_placeholder(text: str) -> bool:
     """True for an unfinished stub, not a 15-word laundry Clip Export already written."""
     n = (text or "").casefold().strip()
+    if n in {"k", "kk", "k.", "k k"}:
+        return True
     if "kitchen" in n or "refrigerator" in n:
         return False
     if "focus annotation" in n:

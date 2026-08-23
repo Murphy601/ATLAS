@@ -972,3 +972,74 @@ def test_sort_hits_does_not_compare_wrappers() -> None:
         )
         == 5
     )
+
+
+def test_k_in_review_box_is_garbled_and_complete_cards_are_left_alone() -> None:
+    from review_ui import (
+        caption_has_fresh_k_leak,
+        clip_export_caption_committed,
+        clip_export_caption_is_complete,
+        clip_export_caption_needs_rewrite,
+        clip_export_fill_click_limit,
+        is_clip_export_placeholder,
+        is_empty_clip_label,
+        is_garbled_clip_export_caption,
+        review_panel_caption_texts,
+        should_record_clip_export_k_frac,
+        should_rewrite_every_clip_export_card,
+        should_skip_selected_clip_export_write,
+    )
+
+    laundry = (
+        "The person stands at an indoor table and folds shirts, pants, "
+        "and a blouse during a laundry task."
+    )
+    leaked = (
+        "The person folds the pants, fold the k, put the shirt on the table "
+        "at an indoor table during a laundry k"
+    )
+    assert is_empty_clip_label("k")
+    assert is_clip_export_placeholder("k")
+    assert is_garbled_clip_export_caption("k")
+    assert is_garbled_clip_export_caption(leaked)
+    assert clip_export_caption_needs_rewrite(leaked)
+    assert not is_garbled_clip_export_caption("click or press k to create")
+    assert not is_garbled_clip_export_caption(laundry)
+    assert clip_export_caption_is_complete(laundry)
+    assert not clip_export_caption_is_complete("k")
+    assert not clip_export_caption_is_complete(leaked)
+    assert should_skip_selected_clip_export_write([laundry])
+    assert not should_skip_selected_clip_export_write(["k"])
+    assert not should_skip_selected_clip_export_write([leaked])
+    assert not should_skip_selected_clip_export_write([])
+    assert should_rewrite_every_clip_export_card(
+        ["All ClipExports must be fully filled in parallel with Sub-goals", "k"]
+    )
+    assert not should_rewrite_every_clip_export_card(
+        ["All ClipExports must be fully filled in parallel with Sub-goals", laundry]
+    )
+    assert clip_export_fill_click_limit(4, 9) == 4
+    assert clip_export_fill_click_limit(1, 8) == 1
+    assert clip_export_fill_click_limit(0, 8) == 8
+    assert not should_record_clip_export_k_frac(False)
+    assert should_record_clip_export_k_frac(True)
+    assert caption_has_fresh_k_leak([laundry], [laundry, "k"])
+    assert not caption_has_fresh_k_leak([laundry], [laundry])
+    typed = "The person unstacks the blouse at an indoor table during a laundry folding task during this indoor recorded demonstration of the task."
+    assert not clip_export_caption_committed([laundry, "review"], typed=typed)
+    assert clip_export_caption_committed(
+        [laundry, "The person unstacks the blouse at an indoor table during a laundry folding task during this indoor recorded demonstration of the task."],
+        typed=typed,
+    )
+    review_hits = review_panel_caption_texts(
+        [
+            ("k", (900, 280, 1100, 340)),
+            (laundry, (180, 820, 520, 860)),
+        ],
+        0,
+        0,
+        1575,
+        1050,
+    )
+    assert review_hits == ["k"]
+    assert not should_skip_selected_clip_export_write(review_hits)

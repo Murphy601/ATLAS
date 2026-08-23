@@ -113,8 +113,14 @@ from review_ui import (
     should_delete_duplicate_clip_export,
     pick_review_description_rects,
     review_description_click_xy,
+    caption_has_fresh_k_leak,
+    clip_export_caption_is_complete,
     clip_export_caption_needs_rewrite,
+    clip_export_fill_click_limit,
     is_clip_export_style_caption,
+    review_panel_caption_texts,
+    should_record_clip_export_k_frac,
+    should_skip_selected_clip_export_write,
     pick_idle_split_rects,
     pick_click_to_add_text_target,
     clip_export_caption_committed,
@@ -811,25 +817,43 @@ def _send_vk(vk: int) -> None:
     user32.keybd_event(vk, 0, 2, 0)
 
 
+def _send_ctrl_z() -> None:
+    """Undo a K that landed in the Review box instead of splitting."""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    user32.keybd_event(0x11, 0, 0, 0)  # Ctrl
+    user32.keybd_event(0x5A, 0, 0, 0)  # Z
+    user32.keybd_event(0x5A, 0, 2, 0)
+    user32.keybd_event(0x11, 0, 2, 0)
+
+
 def _press_k_to_create(hwnd: int, at: tuple[int, int] | None = None) -> bool:
-    """PDF / on-screen hint: click or press K to create a subgoal or clip-export cut."""
+    """Seek the playhead, leave the Review box, then Split/K. Never type k into a caption."""
     _text, nodes = _read_uia(hwnd, verbose=False)
     names = [_uia_name(ctrl) for ctrl in nodes]
     if should_abort_clip_export_k(names):
         say("Not pressing K on Hand Tracking Error")
         return False
-    # Do not SetForegroundWindow first: that restores the Review caret and types kkkk.
-    _blur_caption(hwnd, nodes)
-    time.sleep(0.08)
+    names_before = names
     if at is not None:
+        # One click sets the playhead. A second click opens Review and K types "k".
         _click_screen(int(at[0]), int(at[1]))
-        time.sleep(0.08)
-        _click_screen(int(at[0]), int(at[1]))
-        time.sleep(0.12)
+        time.sleep(0.10)
+    # Card clicks focus Review. Blur AFTER the seek so K is a split, not a letter.
+    _blur_caption(hwnd, nodes, prefer_quality=True)
+    time.sleep(0.12)
     if _click_split_control(hwnd):
         return True
     _send_vk(0x4B)  # K
     say("Pressed K to create/split a clip (never HTE)")
+    time.sleep(0.2)
+    _text, after = _read_uia(hwnd, verbose=False)
+    names_after = [_uia_name(ctrl) for ctrl in after]
+    if caption_has_fresh_k_leak(names_before, names_after):
+        _send_ctrl_z()
+        say("K typed into the caption; undid that letter and left the Review box")
+        _blur_caption(hwnd, after, prefer_quality=True)
     return True
 
 
@@ -1138,7 +1162,10 @@ def _close_timeline_dropdown(hwnd: int, nodes: list[Any] | None = None) -> bool:
 def _named_rects(nodes: list[Any]) -> list[tuple[str, tuple[int, int, int, int]]]:
     out: list[tuple[str, tuple[int, int, int, int]]] = []
     for ctrl in nodes:
-        name = _uia_name(ctrl)
+        try:
+            name = _uia_name(ctrl)
+        except Exception:
+            continue
         if not name:
             continue
         try:
@@ -1515,17 +1542,11 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     existing_ends = duration_end_fractions(card_durs) or chip_end_fractions(
         status_chips or chips_now, bar_left, bar_right
     )
-    inferred_mids = clip_export_inferred_card_fracs(
-        long_range, total_s or (long_range[1] + 10.0 if long_range else 40.0), existing_ends
-    )
     visible = clip_export_visible_card_count(
         max(len(chips_now), len(person_hits)),
         len(card_durs),
-        len(inferred_mids),
+        0,
     )
-    for frac in existing_ends:
-        if all(abs(frac - seen) > 0.02 for seen in _CLIP_EXPORT_SNAPPED):
-            _CLIP_EXPORT_SNAPPED.append(frac)
     interior = clip_export_interior_cut_fracs(end_fracs, existing_ends)
     if card_durs and any(d > 10 for d in card_durs):
         interior.extend(
@@ -1591,7 +1612,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         if added:
             _text, nodes = _read_uia(hwnd, verbose=False)
             chips_now = pick_clip_export_review_rects(_named_rects(nodes), min_y)
-            visible = max(visible, len(chips_now), len(inferred_mids), n_slots)
+            visible = max(len(chips_now), visible)
             _CLIP_EXPORT_FILLED = False
             _CLIP_EXPORT_WRITTEN_CARDS = 0
             say(f"Clip Export now has {visible} card(s) after split; will write each one")
@@ -1636,7 +1657,7 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     elif dirty or rewrite_all:
         say("Rewriting garbled or placeholder Clip Export cards only")
     if need_slots:
-        fill_slots = max(n_slots, visible, 1)
+        fill_slots = clip_export_fill_click_limit(visible, n_slots)
         if visible >= 1 or empty or empty_now or short_now or rewrite_all or fill_slots:
             wrote = _fill_each_clip_export_slot(
                 hwnd,
@@ -1888,10 +1909,10 @@ def _align_clip_export_on_focused_timeline(
                 f"K at {int(frac * 100)}% did not add a card (already an edge); "
                 "trying the next Sub-goal end inside the long card"
             )
-            _CLIP_EXPORT_SNAPPED.append(frac)
             continue
         cuts += 1
-        _CLIP_EXPORT_SNAPPED.append(frac)
+        if should_record_clip_export_k_frac(True):
+            _CLIP_EXPORT_SNAPPED.append(frac)
         chips_before = chips_after
     if not unique:
         say("Clip Export ends already snapped; not pressing K again")
@@ -2260,6 +2281,7 @@ def _focus_filled_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
         y = int((rect[1] + rect[3]) / 2)
         _click_screen(x, y)
         say(f"Clicked filled Clip Export chip at {x},{y} before snap")
+        _blur_caption(hwnd, nodes, prefer_quality=True)
         return True
     return False
 
@@ -2268,10 +2290,19 @@ def _write_clip_export_sentence(
     hwnd: int, nodes: list[Any], sentence: str, *, force: bool = False
 ) -> bool:
     """Paste into this slot's Review box or existing The-person caption. Never require click-to-add-text."""
-    del force
     names_now = [_uia_name(ctrl) for ctrl in nodes]
     if selected_timeline_kind(names_now) == "hte" or any(is_hte_clip_caption(n) for n in names_now):
         say("On Hand Tracking Error; not typing into this track")
+        return False
+    left, top, width, height = _window_rect(hwnd)
+    review_texts = review_panel_caption_texts(
+        _named_rects(nodes), left, top, width, height
+    )
+    if not force and should_skip_selected_clip_export_write(review_texts):
+        say("Selected Clip Export already has a complete caption; leaving it")
+        return False
+    if not force and review_texts and all(clip_export_caption_is_complete(t) for t in review_texts):
+        say("Selected Clip Export already has a complete caption; leaving it")
         return False
     field = None
     for ctrl in nodes:
@@ -2339,7 +2370,7 @@ def _fill_clip_export_from_qa_errors(hwnd: int, sentence: str) -> int:
         say("Clicked Quality Assistant Clip Export empty/short row")
         time.sleep(0.3)
         _text, nodes = _read_uia(hwnd, verbose=False)
-        if _write_clip_export_sentence(hwnd, nodes, sentence):
+        if _write_clip_export_sentence(hwnd, nodes, sentence, force=True):
             wrote += 1
             stuck = 0
         else:
@@ -2366,6 +2397,7 @@ def _nudge_clip_export_end_one_frame(
         x2, y2 = _focused_timeline_xy(hwnd, min(0.96, frac + delta), nodes)
         if abs(x2 - x1) < 3:
             x2 = x1 + 3
+        _blur_caption(hwnd, nodes, prefer_quality=True)
         _click_screen(x1, y1)
         time.sleep(0.1)
         _drag_screen(x1, y1, x2, y2)
@@ -2538,19 +2570,20 @@ def _fill_each_clip_export_slot(
     )
     inferred = clip_export_inferred_card_fracs(long_range, span or 62.0, existing_ends)
     targets: list[tuple[int, int, str]] = []
-    if fill_fracs:
-        for frac in fill_fracs[:12]:
-            x, y = _focused_timeline_xy(hwnd, frac, nodes)
-            targets.append((x, y, f"{int(frac * 100)}%"))
-    elif inferred:
-        for frac in inferred[:12]:
-            x, y = _focused_timeline_xy(hwnd, frac, nodes)
-            targets.append((x, y, f"{int(frac * 100)}%"))
-    else:
+    if chips:
         for i, rect in enumerate(chips):
             x = int((rect[0] + rect[2]) / 2)
             y = int((rect[1] + rect[3]) / 2)
             targets.append((x, y, f"chip {i + 1}"))
+    elif fill_fracs:
+        for frac in fill_fracs[: max(1, clip_export_fill_click_limit(len(chips), n_slots or 0))]:
+            x, y = _focused_timeline_xy(hwnd, frac, nodes)
+            targets.append((x, y, f"{int(frac * 100)}%"))
+    elif inferred:
+        for frac in inferred[:4]:
+            x, y = _focused_timeline_xy(hwnd, frac, nodes)
+            targets.append((x, y, f"{int(frac * 100)}%"))
+    else:
         for x, y, dur in duration_hits:
             sx, sy = left + x, top + y
             if any(abs(sx - tx) < 80 for tx, _ty, _label in targets):
@@ -2561,21 +2594,15 @@ def _fill_each_clip_export_slot(
             if any(abs(sx - tx) < 80 for tx, _ty, _label in targets):
                 continue
             targets.append((sx, sy, "person"))
-    for i, rect in enumerate(chips):
-        x = int((rect[0] + rect[2]) / 2)
-        y = int((rect[1] + rect[3]) / 2)
-        if any(abs(x - tx) < 80 for tx, _ty, _label in targets):
-            continue
-        targets.append((x, y, f"chip {i + 1}"))
     targets.sort(key=lambda row: row[0])
-    n = max(len(targets), int(n_slots or 0), 1)
+    n = max(len(targets), 1)
     fallback_sentence = "The person works at an indoor table during a laundry folding task."
     sentences = list(sentences or [fallback_sentence])
     if len(sentences) < n:
         sentences = sentences + [sentences[-1] if sentences else fallback_sentence] * (
             n - len(sentences)
         )
-    say(f"Filling {len(targets)} Clip Export card(s) (every visible segment, not one)")
+    say(f"Filling {len(targets)} visible Clip Export card(s); skipping complete ones")
     for i, (x, y, label) in enumerate(targets):
         sentence = sentences[i]
         if not _ensure_clip_export_track(hwnd):
@@ -2585,9 +2612,20 @@ def _fill_each_clip_export_slot(
         say(f"Clicked Clip Export card {i + 1}/{len(targets)} ({label}) at {x},{y}")
         time.sleep(0.3)
         _text, nodes = _read_uia(hwnd, verbose=False)
-        if _write_clip_export_sentence(hwnd, nodes, sentence, force=True):
+        left, top, width, height = _window_rect(hwnd)
+        review_texts = review_panel_caption_texts(
+            _named_rects(nodes), left, top, width, height
+        )
+        names_now = [_uia_name(ctrl) for ctrl in nodes]
+        if any((n or "").strip().casefold() in {"k", "kk", "k."} for n in names_now):
+            say(f"Clip Export card {i + 1} is only 'k'; writing a real caption")
+        elif should_skip_selected_clip_export_write(review_texts):
+            say(f"Clip Export card {i + 1} already complete; not pasting over it")
+            _blur_caption(hwnd, nodes, prefer_quality=True)
+            continue
+        if _write_clip_export_sentence(hwnd, nodes, sentence, force=False):
             wrote += 1
-        _blur_caption(hwnd, nodes)
+        _blur_caption(hwnd, nodes, prefer_quality=True)
         time.sleep(0.2)
     return wrote
 
