@@ -532,6 +532,84 @@ def is_clip_export_duplicate_timeline(name: str) -> bool:
     return "clipexport" in n.replace(" ", "") or "clip export" in n or "same type" in n
 
 
+def is_delete_timeline_label(name: str) -> bool:
+    """Context-menu Delete for a Full Timeline track. Never Delete all / Submit."""
+    n = (name or "").strip().casefold()
+    if not n or "all" in n or "submit" in n:
+        return False
+    if n in {
+        "delete",
+        "remove",
+        "delete timeline",
+        "remove timeline",
+        "delete track",
+        "remove track",
+    }:
+        return True
+    if n.startswith("delete timeline") or n.startswith("remove timeline"):
+        return True
+    return False
+
+
+def pick_full_timeline_kind_rects(
+    named_rects: list[tuple[str, tuple[int, int, int, int]]],
+    min_y: int,
+    *,
+    clip_export: bool = False,
+    subgoal: bool = False,
+) -> list[tuple[int, int, int, int]]:
+    """Full Timeline track labels (lower band). Header ClipExport is above min_y."""
+    found: list[tuple[int, int, int, int]] = []
+    for name, rect in named_rects or []:
+        mid_y = (rect[1] + rect[3]) / 2
+        if mid_y < min_y:
+            continue
+        n = (name or "").strip().casefold()
+        if clip_export and is_clip_export_tab(name):
+            found.append(rect)
+        elif subgoal and n in {"sub-goal", "subgoal"}:
+            found.append(rect)
+    found.sort(key=lambda row: (row[1], row[0]))
+    out: list[tuple[int, int, int, int]] = []
+    for rect in found:
+        if out and abs(rect[1] - out[-1][1]) < 14 and abs(rect[0] - out[-1][0]) < 40:
+            continue
+        out.append(rect)
+    return out
+
+
+def extra_clip_export_track_rect(
+    clip_rects: list[tuple[int, int, int, int]],
+    subgoal_rects: list[tuple[int, int, int, int]] | None = None,
+) -> tuple[int, int, int, int] | None:
+    """Lowest extra ClipExport row. Never a Sub-goal row. Never the last ClipExport."""
+    if len(clip_rects or []) < 2:
+        return None
+    ordered = sorted(clip_rects, key=lambda row: (row[1], row[0]))
+    extra = ordered[-1]
+    for sg in subgoal_rects or []:
+        extra_mid = (extra[1] + extra[3]) / 2
+        sg_mid = (sg[1] + sg[3]) / 2
+        if abs(extra_mid - sg_mid) < 18:
+            extra = ordered[-2]
+            break
+    remaining = [rect for rect in ordered if rect != extra]
+    if not remaining:
+        return None
+    return extra
+
+
+def should_delete_duplicate_clip_export(
+    names: list[str] | None, track_count: int = 0
+) -> bool:
+    """QA wants one ClipExport track. Delete only when a second Full Timeline row exists."""
+    if not any(is_clip_export_duplicate_timeline(n) for n in names or []):
+        return False
+    if int(track_count or 0) == 1:
+        return False
+    return True
+
+
 def has_clip_export_quality_error(names: list[str]) -> bool:
     return any(
         is_clip_export_missing_error(n)
@@ -1669,7 +1747,7 @@ def parse_grammar_clip_count(text: str) -> int | None:
 def fixable_review_work_remaining(text: str) -> bool:
     """True when Grammar / empty / parallel / end-match still need a click or type.
 
-    A leftover second Clip Export track cannot be deleted safely.
+    A leftover second Clip Export track is removed from Full Timeline (keep one).
     """
     n = (text or "").casefold()
     count = parse_grammar_clip_count(n)

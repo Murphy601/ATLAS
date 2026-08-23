@@ -407,6 +407,46 @@ def test_clip_export_playhead_split_and_every_slot() -> None:
     )
 
 
+def test_duplicate_clip_export_track_is_the_extra_full_timeline_row() -> None:
+    from review_ui import (
+        extra_clip_export_track_rect,
+        is_delete_timeline_label,
+        pick_full_timeline_kind_rects,
+        should_delete_duplicate_clip_export,
+    )
+
+    extra = (
+        "Text Annotation ClipExport: We cannot have more than one timeline from the same type, "
+        "and we should have at last one Sub-goal and ClipExport"
+    )
+    assert should_delete_duplicate_clip_export([extra], 2)
+    assert not should_delete_duplicate_clip_export([extra], 1)
+    assert not should_delete_duplicate_clip_export(
+        ["All ClipExports must be fully filled in parallel with Sub-goals"], 2
+    )
+    header = ("ClipExport", (40, 180, 140, 210))
+    original = ("ClipExport", (48, 880, 150, 908))
+    duplicate = ("ClipExport", (48, 930, 150, 958))
+    subgoal = ("Sub-goal", (48, 830, 150, 858))
+    rects = pick_full_timeline_kind_rects(
+        [header, original, duplicate, subgoal],
+        min_y=700,
+        clip_export=True,
+    )
+    assert rects == [original[1], duplicate[1]]
+    subs = pick_full_timeline_kind_rects(
+        [header, original, duplicate, subgoal],
+        min_y=700,
+        subgoal=True,
+    )
+    assert extra_clip_export_track_rect(rects, subs) == duplicate[1]
+    assert extra_clip_export_track_rect([original[1]], subs) is None
+    assert is_delete_timeline_label("Delete")
+    assert is_delete_timeline_label("Delete timeline")
+    assert not is_delete_timeline_label("Delete all")
+    assert not is_delete_timeline_label("Submit")
+
+
 def test_idle_card_split_is_between_idle_label_and_next_pending() -> None:
     from review_ui import idle_card_split_xy, pick_idle_split_rects
 

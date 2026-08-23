@@ -87,6 +87,7 @@ from review_ui import (
     is_clip_export_placeholder,
     is_clip_export_tab,
     is_create_clip_hint,
+    is_delete_timeline_label,
     is_empty_clip_label,
     is_grammar_row_label,
     is_false_idle_review_error,
@@ -108,6 +109,8 @@ from review_ui import (
     parse_grammar_clip_count,
     parse_watched_percent,
     pick_clip_export_review_rects,
+    pick_full_timeline_kind_rects,
+    should_delete_duplicate_clip_export,
     pick_review_description_rects,
     review_description_click_xy,
     clip_export_caption_needs_rewrite,
@@ -116,6 +119,7 @@ from review_ui import (
     pick_click_to_add_text_target,
     clip_export_caption_committed,
     duplicate_clip_export_only,
+    extra_clip_export_track_rect,
     fillable_clip_export_qa,
     fixable_review_work_remaining,
     has_clip_export_quality_error,
@@ -459,8 +463,15 @@ def drive_open_task(write: bool = True, watch_seconds: float | None = None) -> d
             )
             if fillable_clip_export_qa(names_now) or fixable_review_work_remaining(screen_now):
                 clip_export_qa = True
+            if any(is_clip_export_duplicate_timeline(n) for n in names_now) or (
+                "more than one timeline" in screen_now.casefold()
+            ):
+                if _delete_extra_clip_export_track(hwnd):
+                    idle_rounds = 0
+                    clip_export_qa = False
+                    continue
             if duplicate_clip_export_only(names_now, screen_now) and not clip_export_qa:
-                say("Duplicate Clip Export track remains; not deleting it")
+                say("Extra Clip Export track is still on Full Timeline after Delete")
                 say("No more Review / Quality Assistant work on screen.")
                 break
             if not quality_linters_remaining(names_now) and used["applied"] == 0:
@@ -751,6 +762,16 @@ def _click_screen(x: int, y: int) -> None:
     time.sleep(0.05)
     user32.mouse_event(0x0002, 0, 0, 0, 0)
     user32.mouse_event(0x0004, 0, 0, 0, 0)
+
+
+def _right_click_screen(x: int, y: int) -> None:
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    user32.SetCursorPos(int(x), int(y))
+    time.sleep(0.05)
+    user32.mouse_event(0x0008, 0, 0, 0, 0)
+    user32.mouse_event(0x0010, 0, 0, 0, 0)
 
 
 def _drag_screen(x1: int, y1: int, x2: int, y2: int) -> None:
@@ -1427,14 +1448,21 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         "\n".join([uia_text or "", ocr_blob])
     )
     if _CLIP_EXPORT_FILLED and not fillable and not should_fill_clip_export(names, True):
-        if duplicate_clip_export_only(names, uia_text):
-            say("Duplicate Clip Export track remains; not deleting it")
+        deleted = 0
+        if any(is_clip_export_duplicate_timeline(n) for n in names):
+            deleted = int(_delete_extra_clip_export_track(hwnd))
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            names = [_uia_name(ctrl) for ctrl in nodes]
+            uia_text = "\n".join(names)
+        still_dup = any(is_clip_export_duplicate_timeline(n) for n in names)
+        if still_dup:
+            say("Extra Clip Export track is still on Full Timeline after Delete")
         _switch_timeline_kind(hwnd, "sub-goal")
         return {
-            "wrote": 0,
+            "wrote": deleted,
             "text": uia_text,
             "qa_text": uia_text,
-            "qa_remaining": False,
+            "qa_remaining": still_dup,
         }
     if not missing and not end_mismatch and not hands and not empty_err and not short_err:
         say("Filling Clip Export from Sub-goal captions (no Clip Export Quality Assistant row this pass)")
@@ -1456,6 +1484,11 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
     duplicate = any(is_clip_export_duplicate_timeline(n) for n in names)
     if duplicate:
         say("Not creating a second Clip Export track on Full Timeline")
+        if _delete_extra_clip_export_track(hwnd):
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            names = [_uia_name(ctrl) for ctrl in nodes]
+            duplicate = any(is_clip_export_duplicate_timeline(n) for n in names)
+            _focus_filled_clip_export_track(hwnd, nodes)
     left, top, width, height = _window_rect(hwnd)
     named = _named_rects(nodes)
     min_y = top + int(height * 0.62)
@@ -1673,8 +1706,19 @@ def _fill_clip_export(hwnd: int, write: bool = True) -> dict:
         words_left, _lw, _lh = _ocr_window(hwnd, "qa_after_export")
         qa_text = "\n".join([qa_text, ocr_text(words_left)])
     qa_remaining = fillable_clip_export_qa(names_left) or fixable_review_work_remaining(qa_text)
-    if duplicate_clip_export_only(names_left, qa_text) and not qa_remaining:
-        say("Duplicate Clip Export track remains; not deleting it")
+    if any(is_clip_export_duplicate_timeline(n) for n in names_left) or (
+        "more than one timeline" in qa_text.casefold()
+    ):
+        if _delete_extra_clip_export_track(hwnd):
+            wrote += 1
+            _text, nodes = _read_uia(hwnd, verbose=False)
+            names_left = [_uia_name(ctrl) for ctrl in nodes]
+            qa_text = "\n".join(names_left)
+            qa_remaining = fillable_clip_export_qa(names_left) or fixable_review_work_remaining(
+                qa_text
+            )
+        elif duplicate_clip_export_only(names_left, qa_text) and not qa_remaining:
+            say("Extra Clip Export track is still on Full Timeline after Delete")
     if not qa_remaining:
         _switch_timeline_kind(hwnd, "sub-goal")
         _close_timeline_dropdown(hwnd)
@@ -2095,8 +2139,86 @@ def _ensure_clip_export_track(hwnd: int, nodes: list[Any] | None = None) -> bool
     return False
 
 
+def _click_delete_timeline_menu(hwnd: int, nodes: list[Any] | None = None) -> bool:
+    """Click Delete / Remove timeline on the open context menu. Never Delete all."""
+    if nodes is None:
+        _text, nodes = _read_uia(hwnd, verbose=False)
+    for ctrl in nodes:
+        if not is_delete_timeline_label(_uia_name(ctrl)):
+            continue
+        if _uia_click(ctrl):
+            say("Clicked Delete on the extra Clip Export timeline")
+            time.sleep(0.35)
+            return True
+    if _OCR_BROKEN:
+        return False
+    words, img_w, img_h = _ocr_window(hwnd, "delete_timeline")
+    left, top, _w, _h = _window_rect(hwnd)
+    for phrase in ("delete timeline", "remove timeline", "delete"):
+        hit = find_phrase_click(
+            words,
+            phrase,
+            img_w,
+            img_h,
+            y_min_frac=0.35,
+            y_max_frac=0.98,
+            x_min_frac=0.0,
+            x_max_frac=0.55,
+        )
+        if hit:
+            _click_screen(left + hit[0], top + hit[1])
+            say(f"Clicked OCR '{phrase}' on the extra Clip Export timeline")
+            time.sleep(0.35)
+            return True
+    return False
+
+
+def _delete_extra_clip_export_track(hwnd: int) -> bool:
+    """Remove the extra Full Timeline ClipExport row. Keep one ClipExport and Sub-goal."""
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names = [_uia_name(ctrl) for ctrl in nodes]
+    left, top, width, height = _window_rect(hwnd)
+    min_y = top + int(height * 0.52)
+    named = _named_rects(nodes)
+    clips = pick_full_timeline_kind_rects(named, min_y, clip_export=True)
+    subs = pick_full_timeline_kind_rects(named, min_y, subgoal=True)
+    if not should_delete_duplicate_clip_export(names, len(clips)):
+        return False
+    extra = extra_clip_export_track_rect(clips, subs)
+    if extra is None:
+        say("Duplicate Clip Export QA is on screen but only one Full Timeline ClipExport row was found")
+        return False
+    if not subs:
+        say("Not deleting a Clip Export track: no Sub-goal track is visible")
+        return False
+    x = int((extra[0] + extra[2]) / 2)
+    y = int((extra[1] + extra[3]) / 2)
+    _right_click_screen(x, y)
+    say(f"Right-clicked extra Clip Export track at {x},{y}")
+    time.sleep(0.3)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    if not _click_delete_timeline_menu(hwnd, nodes):
+        say("No Delete control on the extra Clip Export track; left both tracks")
+        _send_vk(0x1B)
+        time.sleep(0.1)
+        return False
+    time.sleep(0.35)
+    _text, nodes = _read_uia(hwnd, verbose=False)
+    names_after = [_uia_name(ctrl) for ctrl in nodes]
+    if any(is_hte_clip_caption(n) for n in names_after):
+        say("Delete landed on Hand Tracking Error; stopping")
+        return False
+    clips_after = pick_full_timeline_kind_rects(_named_rects(nodes), min_y, clip_export=True)
+    if not clips_after and not any(is_clip_export_tab(n) for n in names_after):
+        say("Clip Export track vanished; not deleting further")
+        return False
+    say("Removed the extra Clip Export timeline; keeping one ClipExport and Sub-goal")
+    _click_quality_run_now(hwnd)
+    return True
+
+
 def _click_full_timeline_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
-    """Click the lowest ClipExport label so Focused Timeline shows that track, not Sub-goal."""
+    """Click the topmost Full Timeline ClipExport (the original), not the extra row."""
     left, top, _width, height = _window_rect(hwnd)
     hits: list[tuple[int, Any]] = []
     for ctrl in nodes:
@@ -2107,9 +2229,9 @@ def _click_full_timeline_clip_export_track(hwnd: int, nodes: list[Any]) -> bool:
             hits.append((center[1], ctrl))
     if not hits:
         return False
-    hits.sort(key=lambda row: -row[0])
+    hits.sort(key=lambda row: row[0])
     if _uia_click(hits[0][1]):
-        say("Clicked Full Timeline Clip Export track so Focused Timeline shows Clip Export")
+        say("Clicked the original Full Timeline Clip Export track (not the extra row)")
         time.sleep(0.25)
         return True
     return False
