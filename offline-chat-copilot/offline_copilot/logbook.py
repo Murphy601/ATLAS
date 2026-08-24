@@ -24,6 +24,7 @@ class ClientRecord:
     name: str = ""
     city: str = ""
     facts: list[str] = field(default_factory=list)
+    interests: list[str] = field(default_factory=list)
     used_ctas: list[str] = field(default_factory=list)
     used_drafts: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
@@ -35,6 +36,7 @@ class ClientRecord:
             "name": self.name,
             "city": self.city,
             "facts": list(self.facts),
+            "interests": list(self.interests),
             "used_ctas": list(self.used_ctas),
             "used_drafts": list(self.used_drafts),
             "notes": list(self.notes),
@@ -48,6 +50,7 @@ class ClientRecord:
             name=str(data.get("name") or ""),
             city=str(data.get("city") or ""),
             facts=list(data.get("facts") or []),
+            interests=list(data.get("interests") or []),
             used_ctas=list(data.get("used_ctas") or []),
             used_drafts=list(data.get("used_drafts") or []),
             notes=list(data.get("notes") or []),
@@ -58,6 +61,10 @@ class ClientRecord:
 class Logbook:
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path or "logbook.json")
+        if self.path.exists() and self.path.is_dir():
+            self.path = self.path / "logbook.json"
+        elif self.path.suffix == "" and not self.path.exists():
+            self.path = self.path / "logbook.json"
         self._clients: dict[str, ClientRecord] = {}
         self.load()
 
@@ -118,3 +125,35 @@ class Logbook:
 
     def used_draft_set(self, client_id: str) -> set[str]:
         return set(self.get(client_id).used_drafts)
+
+    def apply_ingest(
+        self,
+        client_id: str,
+        ingest: Any,
+        *,
+        name: str = "",
+        city: str = "",
+    ) -> ClientRecord:
+        """Merge parsed history into the record. Never overwrite a good city with a guess."""
+        record = self.get(client_id, name=name or getattr(ingest, "client_name", ""), city=city)
+        incoming_name = (getattr(ingest, "client_name", "") or name or "").strip()
+        incoming_city = (getattr(ingest, "client_city", "") or "").strip()
+        if incoming_name and not record.name:
+            record.name = incoming_name.split()[0]
+        if incoming_city and not record.city:
+            record.city = incoming_city
+        for fact in getattr(ingest, "facts", []) or []:
+            text = " ".join(str(fact).split())
+            if text and fingerprint(text) not in {fingerprint(item) for item in record.facts}:
+                record.facts.append(text)
+        for interest in getattr(ingest, "interests", []) or []:
+            label = str(interest).strip()
+            if label and label not in record.interests:
+                record.interests.append(label)
+        for question in getattr(ingest, "operator_questions", []) or []:
+            fp = fingerprint(question)
+            if fp and fp not in record.used_ctas:
+                record.used_ctas.append(fp)
+        record.updated_at = _now()
+        self.save()
+        return record

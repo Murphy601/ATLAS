@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .cities import NOT_A_CITY_MARKERS, TIMEZONE_CODES, TIMEZONE_MARKERS, US_CITIES
+from .cities import CITY_STOPWORDS, NOT_A_CITY_MARKERS, TIMEZONE_CODES, TIMEZONE_MARKERS, US_CITIES, US_STATES
 
 MIN_MINUTES = 30
 MAX_MINUTES = 60
@@ -51,6 +51,10 @@ def validate_city(name: str) -> tuple[bool, str]:
         return False, "That is a time zone, not a city"
     if looks_like_street_address(raw):
         return False, "That looks like a street address"
+    if n in CITY_STOPWORDS:
+        return False, "That is not a city or town"
+    if n in US_STATES and n not in US_CITIES:
+        return False, "That is a state, not a city"
     if n in US_CITIES:
         return True, raw
     if any(marker in n for marker in NOT_A_CITY_MARKERS):

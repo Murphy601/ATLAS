@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from .compliance import validate_draft
+from .controller import serve_forever
 from .engine import draft_replies
 from .logbook import Logbook
 
@@ -40,6 +41,11 @@ def _parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show", help="Print a client logbook record")
     show.add_argument("--id", dest="client_id", required=True)
     show.add_argument("--logbook", default="logbook.json")
+
+    serve = sub.add_parser("serve", help="Localhost desktop controller for the userscript")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--logbook", default="logbook.json")
     return parser
 
 
@@ -92,6 +98,9 @@ def main(argv: list[str] | None = None) -> int:
         print("facts:")
         for fact in record.facts:
             print(f"  - {fact}")
+        return 0
+    if args.cmd == "serve":
+        serve_forever(args.host, args.port, args.logbook)
         return 0
     return 1
 

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Offline copilot demo dashboard</title>
+  <style>
+    body { font: 14px/1.4 sans-serif; margin: 20px; background: #f4f4f4; }
+    .row { display: flex; gap: 16px; }
+    .pane { background: #fff; border: 1px solid #ccc; padding: 12px; flex: 1; }
+    .status-badge { display: inline-block; padding: 4px 8px; background: #eee; }
+    .chat-history-container { height: 240px; overflow: auto; border: 1px solid #ddd; padding: 8px; }
+    .message-bubble { margin: 8px 0; padding: 6px 8px; border-radius: 6px; }
+    .client-msg { background: #e8f0fe; }
+    .operator-msg { background: #f0f0f0; text-align: right; }
+    textarea.reply-input { width: 100%; height: 80px; }
+    #logbook { margin-top: 12px; display: none; }
+    #logbook.open { display: block; }
+    label { display: block; margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>Demo operator dashboard</h1>
+  <p>Start <code>python3 -m offline_copilot serve --port 8765</code>, then click Claim. Send must stay empty of automation.</p>
+  <div class="row">
+    <div class="pane">
+      <div>Chat <span class="conversation-id" data-chat-id="demo-chat-1">demo-chat-1</span></div>
+      <div>Client <span class="client-name">Nthabiseng</span></div>
+      <div>Status <span class="status-badge" id="status">Open</span></div>
+      <button type="button" id="claim-btn">Claim</button>
+      <div class="chat-history-container" id="history">
+        <div class="message-bubble client-msg">Hi I'm Nthabiseng from Atlanta</div>
+        <div class="message-bubble operator-msg">Hey, how's your day going?</div>
+        <div class="message-bubble client-msg">Where are you located? Are you watching any games today?</div>
+      </div>
+      <textarea class="reply-input" placeholder="draft lands here"></textarea>
+      <button type="button" class="send" id="send-btn">Send</button>
+    </div>
+    <div class="pane">
+      <button type="button" id="open-logbook-btn">Open logbook</button>
+      <div id="logbook">
+        <label>Name <input id="logbook-client-name" name="clientName" /></label>
+        <label>City <input id="logbook-client-city" name="clientCity" /></label>
+        <label>Interests <input id="logbook-interests" name="interests" /></label>
+        <label>My city <input id="logbook-my-city" name="personaCity" /></label>
+        <button type="button" id="save-logbook-btn">Save logbook</button>
+        <div id="logbook-saved"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.getElementById("claim-btn").onclick = function () {
+      document.getElementById("status").textContent = "Claimed";
+    };
+    document.getElementById("open-logbook-btn").onclick = function () {
+      document.getElementById("logbook").classList.add("open");
+    };
+    document.getElementById("save-logbook-btn").onclick = function () {
+      document.getElementById("logbook-saved").textContent = "saved";
+    };
+    document.getElementById("send-btn").onclick = function () {
+      document.getElementById("send-btn").dataset.clicked = "1";
+    };
+  </script>
+  <script src="../userscript/chat-copilot.user.js"></script>
+</body>
+</html>

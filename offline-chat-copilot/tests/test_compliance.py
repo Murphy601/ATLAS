@@ -35,6 +35,8 @@ def test_location_window_and_city() -> None:
     assert validate_city("Central Park")[0] is False
     assert validate_city("EST")[0] is False
     assert validate_city("123 Peachtree Street")[0] is False
+    assert validate_city("Texas")[0] is False
+    assert validate_city("Monday")[0] is False
     sentence = location_sentence("Atlanta", 45)
     assert "45 minutes" in sentence
     assert "Atlanta" in sentence

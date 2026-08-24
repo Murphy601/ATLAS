@@ -1,33 +1,55 @@
 # Offline Chat Copilot
 
-Local, **non-AI** operator copilot. No LLM API, no token bill. It parses an incoming message with regex, fills a 3-slot template, then runs a hard-coded compliance filter. The operator still sends the message.
+Local, **non-AI** operator copilot. No LLM API, no token bill. A Tampermonkey userscript watches the dashboard for a **Claimed** edge, scrolls chat history, and POSTs it to a localhost Python controller. The controller parses entities, updates a JSON logbook, fills logbook fields via the userscript, and puts one compliant draft in the reply box. The operator still sends.
 
-## Why this is not the sample `rule_engine.py` pasted as-is
+## Why the pasted userscript is not shipped as-is
 
-The sketch in the request would fail real penalties:
-
-| Policy | Sample engine | This engine |
+| Risk | Sample script | This tree |
 | --- | --- | --- |
-| Answer **every** question | First regex match wins (`where` beats sports) | Location and sports (and activity) can all land in Slot A |
-| Location is a **city + 30–60 min** | `"right outside {city}"` is too close; `"neighborhood"` is not a city | `I'm about 45 minutes outside of Atlanta.` Minutes are 30–60 only |
-| No parks / streets / time zones | No city validator | Rejects `Central Park`, `123 Peachtree St`, `EST` |
-| Incoming illegal topics | Still drafts a flirty reply | Hard block, zero options |
-| Meetup / `come over` | Only scans the outgoing string | Incoming meetup is **deflected**, never accepted |
-| Unique messages | `random.choice` can emit the same CTA three times | Logbook remembers CTAs/drafts per client |
-| Exactly one CTA | Count of `?` only | Assembly always ends with one question, then the filter checks it |
-| 500+ CTAs | 10 canned questions | Generated bank of 500+ single questions, none of them meetup/contact asks |
+| `@match https://*/*` | Runs on every HTTPS site | Placeholder match; set it to **one** dashboard |
+| `from Monday` / `from Texas` as a city | `\b(?:in\|from\|near)\s+([A-Z][a-z]+)\b` | US city list; states, weekdays, parks rejected |
+| React/controlled inputs | `el.value =` | `setNativeValue` + `input`/`change` |
+| Observer spam | `document.body`, no debounce, claimed flag flicker | 200ms debounce; rising edge only; `Unclaimed` is not claimed |
+| Lazy history | `scrollTop = 0` three times | Incremental scroll-up until height stops growing |
+| Engine | None; regex in the page | `POST http://127.0.0.1:8765/claim` to the stdlib controller |
+| Send | Easy to wire a send click later | `autoSend` locked false; send button is never clicked |
+| Bind | n/a | Controller refuses anything except localhost |
+
+Meetup / `come over` in history is **deflected**, not accepted. Incoming illegal topics (minors, rape, etc.) hard-block: zero drafts, nothing is filled in the reply box.
 
 ## Install / run
 
 Stdlib only. From this folder:
 
 ```bash
+# One-shot CLI (no browser)
 python3 rule_engine.py
 python3 -m offline_copilot draft --name Nthabiseng --city Atlanta --id USETN4695969 \
   --message "Hey! Where are you located? Are you watching any games today?"
-python3 -m offline_copilot check --text "I'm about 45 minutes outside of Atlanta. What's been the highlight of your week so far?" --city Atlanta --location-required
-python3 -m offline_copilot note --id USETN4695969 --fact "Restores old Chevys"
+
+# Local desktop controller for the userscript (127.0.0.1 only)
+python3 -m offline_copilot serve --host 127.0.0.1 --port 8765
 ```
+
+Then in Tampermonkey / Violentmonkey:
+
+1. Create a new script and paste `userscript/chat-copilot.user.js`.
+2. Change `@match` from `https://YOUR-OPERATOR-DASHBOARD.example/*` to the real dashboard origin.
+3. Adjust `CONFIG.selectors` to that dashboard's classes. The defaults are placeholders.
+4. Set `CONFIG.personaCity` if the logbook has a "my city" field.
+
+The userscript POSTs:
+
+```json
+{
+  "client_id": "...",
+  "client_name": "...",
+  "persona_city": "...",
+  "history": [{"sender": "client|operator", "text": "..."}]
+}
+```
+
+The controller always returns `"never_send": true`. Option 1 is copied into the draft box only. It never clicks Send / Submit.
 
 Tests:
 
@@ -45,4 +67,4 @@ Then `validate_draft` must pass or the option is discarded.
 
 ## Operator still owns the send
 
-The tool prints **three** options. It does not message the client. Edit if needed, then `check` the edited text before sending. Do not paste the same option to every client.
+The tool prints **three** options (and the userscript overlays them). It does not message the client. Edit if needed, then `check` the edited text before sending. Do not paste the same option to every client.

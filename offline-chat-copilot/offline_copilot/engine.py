@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .assembler import assemble
 from .compliance import validate_draft, validate_incoming
+from .ingest import ingest_history
 from .location import WINDOW_MINUTES, validate_city
 from .logbook import Logbook, fingerprint
 from .parser import parse_message
@@ -21,6 +22,16 @@ class CopilotResult:
     checks: list[str] = field(default_factory=list)
     suggested_facts: list[str] = field(default_factory=list)
     location_required: bool = False
+    logbook_fields: dict[str, str] = field(default_factory=dict)
+    save_logbook: bool = False
+    save_reason: str = ""
+    never_send: bool = True
+
+    @property
+    def fill_draft(self) -> str | None:
+        if self.blocked or not self.options:
+            return None
+        return self.options[0]
 
 
 def draft_replies(
@@ -123,3 +134,61 @@ def draft_replies(
         location_required=location_required,
         suggested_facts=list(parsed.story_bits),
     )
+
+
+def handle_claimed_chat(
+    history: list[dict] | list[tuple[str, str]],
+    *,
+    client_id: str = "",
+    client_name: str = "",
+    header_name: str = "",
+    header_city: str = "",
+    persona_city: str = "",
+    logbook: Logbook | None = None,
+    logbook_path: str | Path | None = None,
+    logbook_dir: str | Path | None = None,
+    remember: bool = True,
+    today: date | None = None,
+) -> CopilotResult:
+    """Ingest scrolled history, update the JSON logbook, then draft. Never sends."""
+    name_hint = (header_name or client_name or "").strip()
+    ingest = ingest_history(history, header_name=name_hint, header_city=header_city)
+    if logbook is None:
+        path: str | Path | None = logbook_path
+        if path is None and logbook_dir is not None:
+            path = Path(logbook_dir) / "logbook.json"
+        book = Logbook(path)
+    else:
+        book = logbook
+    record = book.apply_ingest(
+        client_id or ingest.client_name or "unknown",
+        ingest,
+        name=name_hint or ingest.client_name,
+        city=header_city or ingest.client_city,
+    )
+    name = record.name or ingest.client_name or name_hint
+    city = record.city or ingest.client_city or header_city
+    message = " ".join(ingest.client_messages).strip() or ingest.last_client_message
+    fields = ingest.to_fields(persona_city)
+    if not message:
+        return CopilotResult(
+            blocked=True,
+            reason="No client messages in the scrolled history",
+            logbook_fields=fields,
+            save_logbook=ingest.save_logbook,
+            save_reason=ingest.save_reason,
+        )
+    drafted = draft_replies(
+        name,
+        city,
+        message,
+        client_id=record.client_id,
+        logbook=book,
+        remember=remember,
+        today=today,
+    )
+    drafted.logbook_fields = fields
+    drafted.save_logbook = ingest.save_logbook
+    drafted.save_reason = ingest.save_reason
+    drafted.suggested_facts = list(dict.fromkeys([*drafted.suggested_facts, *ingest.facts]))
+    return drafted

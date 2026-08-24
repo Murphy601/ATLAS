@@ -263,3 +263,104 @@ TIMEZONE_MARKERS = (
 TIMEZONE_CODES = frozenset(
     {"est", "edt", "cst", "cdt", "mst", "mdt", "pst", "pdt", "akst", "akdt", "hst", "utc", "gmt"}
 )
+
+# States are not cities. "I'm from Texas" must not become a location answer.
+US_STATES = frozenset(
+    {
+        "alabama",
+        "alaska",
+        "arizona",
+        "arkansas",
+        "california",
+        "colorado",
+        "connecticut",
+        "delaware",
+        "florida",
+        "georgia",
+        "hawaii",
+        "idaho",
+        "illinois",
+        "indiana",
+        "iowa",
+        "kansas",
+        "kentucky",
+        "louisiana",
+        "maine",
+        "maryland",
+        "massachusetts",
+        "michigan",
+        "minnesota",
+        "mississippi",
+        "missouri",
+        "montana",
+        "nebraska",
+        "nevada",
+        "new hampshire",
+        "new jersey",
+        "new mexico",
+        "new york",  # also a city; city list wins
+        "north carolina",
+        "north dakota",
+        "ohio",
+        "oklahoma",
+        "oregon",
+        "pennsylvania",
+        "rhode island",
+        "south carolina",
+        "south dakota",
+        "tennessee",
+        "texas",
+        "utah",
+        "vermont",
+        "virginia",
+        "washington",  # also a city; city list wins
+        "west virginia",
+        "wisconsin",
+        "wyoming",
+    }
+)
+
+CITY_STOPWORDS = frozenset(
+    {
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "fact",
+        "love",
+        "here",
+        "there",
+        "chat",
+        "home",
+        "bed",
+        "work",
+        "school",
+        "college",
+        "truth",
+        "life",
+        "you",
+        "me",
+        "yeah",
+        "today",
+        "tonight",
+        "tomorrow",
+        "town",
+        "city",
+        "place",
+    }
+)
+
+
+def extract_city_from_text(text: str) -> str | None:
+    """First validated city in free text, or None. Days, states, and parks do not count."""
+    blob = text or ""
+    if not blob.strip():
+        return None
+    # Prefer "I'm from/in {City}" over a bare city mention.
+    from .ingest import extract_cities
+
+    found = extract_cities(blob)
+    return found[0] if found else None
