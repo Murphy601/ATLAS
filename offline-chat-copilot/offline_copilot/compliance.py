@@ -6,6 +6,7 @@ import re
 
 from .cities import NOT_A_CITY_MARKERS, TIMEZONE_CODES, TIMEZONE_MARKERS
 from .location import MIN_MINUTES, MAX_MINUTES, has_travel_window, looks_like_street_address
+from .assembler import MIN_DRAFT_CHARS
 
 BANNED_BODY_PHRASES = (
     "my dick",
@@ -194,4 +195,6 @@ def validate_draft(
         return False, "Draft must be first-person, not he/she narration"
     if not FIRST_PERSON_RE.search(body):
         return False, "Draft must be a first-person reply"
+    if len(raw) < MIN_DRAFT_CHARS:
+        return False, f"Draft is under the site minimum of {MIN_DRAFT_CHARS} characters"
     return True, "Passed"

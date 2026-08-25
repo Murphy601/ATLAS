@@ -49,6 +49,7 @@ def test_location_plus_sports_drafts_are_compliant(tmp_path) -> None:
         assert "come over" not in option.casefold()
         assert "my dick" not in option.casefold()
         assert "UFC" in option or "MLB" in option or "NFL" in option
+        assert len(option) >= 75
 
 
 def test_logbook_does_not_reuse_the_same_cta(tmp_path) -> None:

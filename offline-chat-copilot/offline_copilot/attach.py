@@ -15,7 +15,6 @@ from .chathomebase import (
     EXTRACT_MESSAGES_JS,
     READ_PAGE_JS,
     SCROLL_HISTORY_JS,
-    SET_NATIVE_VALUE_JS,
     SHOW_PANEL_JS,
     PageSnapshot,
     claim_became_live,
@@ -182,10 +181,20 @@ def _assert_safe_click(testid: str) -> None:
 
 
 def fill_draft(page, text: str) -> bool:
+    """Type into the reply box. Chat Home Base rejects paste / set-value."""
     if not text:
         return False
     _assert_safe_click("messageTextArea")
-    return bool(page.evaluate(SET_NATIVE_VALUE_JS, text))
+    root = page.locator('[data-testid="messageTextArea"]')
+    if root.count() == 0:
+        return False
+    box = root.locator("textarea")
+    target = box.first if box.count() else root.first
+    target.click()
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Backspace")
+    target.press_sequentially(text, delay=20)
+    return True
 
 
 def fill_customer_log(page, fields: dict[str, str]) -> bool:
@@ -211,7 +220,7 @@ def fill_customer_log(page, fields: dict[str, str]) -> bool:
         box = comment_root.locator("textarea")
         target = box.first if box.count() else comment_root.first
         target.click()
-        target.fill(comment)
+        target.press_sequentially(comment, delay=15)
     save = page.locator('[data-testid="logbookSaveButton"]')
     send = page.locator('[data-testid="sendChatMessageButton"]')
     if save.count() and (send.count() == 0 or save.first.element_handle() != send.first.element_handle()):
@@ -229,7 +238,7 @@ def show_panel(page, payload: dict[str, Any]) -> None:
 
 
 def process_live_chat(page, snapshot: PageSnapshot, logbook: Logbook) -> None:
-    _say("[Copilot] Claimed chat is live. Scrolling history...")
+    _say("[Copilot] Scrolling history so older messages can load...")
     scroll_history(page)
     history = extract_history(page)
     _say(f"[Copilot] Parsed {len(history)} messages (client vs operator).")
@@ -260,7 +269,7 @@ def process_live_chat(page, snapshot: PageSnapshot, logbook: Logbook) -> None:
             _say(f"[Copilot] Logbook DOM fill skipped: {exc}")
     if result.fill_draft:
         fill_draft(page, result.fill_draft)
-        _say("[Copilot] Draft filled. Operator still sends — Send was not clicked.")
+        _say("[Copilot] Typed the draft. Operator still sends — Send was not clicked.")
     elif result.blocked:
         _say(f"[Copilot] BLOCKED: {result.reason}. Draft box left empty.")
 

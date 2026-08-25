@@ -37,17 +37,19 @@ python3 -m playwright install chromium
 python3 -m offline_copilot attach
 ```
 
-The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room is not a claim; it waits until `messageTextArea` / messages are actually on screen.
+The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room is not a claim; it waits until `messageTextArea` / messages are actually on screen. You should see the mouse scroll the thread, click the customer logbook, then characters appearing in the reply box. Paste is never used.
 
 Optional, for full DOM (scroll history + customer logbook): in the IX profile extra launch args add `--remote-debugging-port=9222`, click Open, then run again.
 
 When a chat is claimed it:
 
-1. Scrolls `messagesList` up so `.trigger-zone` can lazy-load older messages
-2. Parses client vs operator turns
-3. Writes a customer logbook comment (`Other`: city / interests) if facts are high-confidence
-4. Puts option 1 in `messageTextArea`
-5. Overlays three compliant options
+1. Scrolls the thread so older messages can load
+2. Opens customer **PROFILE DETAILS**, then **ADD NEW LOG** (left column, not the persona)
+3. Types a customer logbook comment (`Other`) if facts are high-confidence — never paste
+4. Types option 1 into `messageTextArea` (Chat Home Base rejects copy/paste)
+5. Prints three compliant options (75+ characters; the site shows “too short” under 75)
+
+It does not click Send, Send & End Shift, or report-submit. It does not press Enter after typing.
 
 It does not click Send, Send & End Shift, or report-submit.
 

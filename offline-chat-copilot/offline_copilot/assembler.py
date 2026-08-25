@@ -36,6 +36,9 @@ MEETUP_DEFLECTS = (
     "I'm flattered by your offer, thank you. On a different note, I wanted to get your thoughts on something.",
 )
 MEETUP_DEFLECT = MEETUP_DEFLECTS[0]
+# Chat Home Base refuses drafts under 75 characters ("Your message is too short").
+MIN_DRAFT_CHARS = 75
+PAD_SENTENCE = " I've been sitting with that and I really want to hear a bit more from you."
 
 
 def meetup_deflect_line(option_index: int) -> str:
@@ -167,4 +170,24 @@ def assemble(
         chunks.append(filler.rstrip(".") + ".")
     chunks.append(cta)
     draft = " ".join(chunks)
-    return draft, cta
+    return ensure_min_draft_chars(draft), cta
+
+
+def ensure_min_draft_chars(draft: str, minimum: int = MIN_DRAFT_CHARS) -> str:
+    """Pad the body, never the CTA, and never add a second '?'."""
+    text = " ".join((draft or "").split())
+    if len(text) >= minimum:
+        return text
+    extra = PAD_SENTENCE
+    if "?" in text:
+        body, cta = text.rsplit("?", 1)
+        while len(f"{body.rstrip()}{extra} {cta.strip()}?".strip()) < minimum:
+            extra += " I mean that sincerely."
+            if len(extra) > 240:
+                break
+        return " ".join(f"{body.rstrip()}{extra} {cta.strip()}?".split())
+    while len(text + extra) < minimum:
+        extra += " I mean that sincerely."
+        if len(extra) > 240:
+            break
+    return " ".join((text + extra).split())

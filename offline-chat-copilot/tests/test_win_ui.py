@@ -4,9 +4,11 @@ import pytest
 
 from offline_copilot.chathomebase import is_forbidden_click
 from offline_copilot.win_ui import (
+    _escape_keys,
     keep_enumerated_window,
     parse_messages_from_names,
     pick_draft_edit,
+    pick_named_control,
     run_uia_attach,
     score_window,
     select_ix_window,
@@ -200,3 +202,39 @@ def test_desktop_attach_requires_windows(monkeypatch) -> None:
     monkeypatch.setattr(win_ui.sys, "platform", "linux")
     with pytest.raises(RuntimeError, match="Windows-only"):
         run_uia_attach()
+
+
+def test_live_from_type_your_reply_placeholder() -> None:
+    snap = snapshot_from_uia_names(
+        ["Chat Home Base", "Type your reply here...", "USETN4695969"],
+        title="chathomebase.com - Chromium",
+    )
+    assert snap.claimed is True
+    assert snap.chat_id == "USETN4695969"
+
+
+def test_customer_add_log_is_leftmost() -> None:
+    persona = {"name": "ADD NEW LOG", "left": 900, "control_type": "Button"}
+    customer = {"name": "ADD NEW LOG", "left": 80, "control_type": "Button"}
+    send = {"name": "Send", "left": 10, "control_type": "Button"}
+    chosen = pick_named_control([persona, customer, send], "add new log", leftmost=True)
+    assert chosen is customer
+
+
+def test_escape_keys_does_not_emit_paste() -> None:
+    typed = _escape_keys("I'm about 40 minutes outside of Atlanta. What's up?")
+    assert "^v" not in typed.casefold()
+    assert "{ENTER}" not in typed.upper()
+
+
+def test_parse_skips_reply_placeholder() -> None:
+    rows = parse_messages_from_names(
+        [
+            "Type your reply here...",
+            "Your message is too short",
+            "PROFILE DETAILS",
+            "Where would you like to fuck and you don't have to worry about other men?",
+        ]
+    )
+    assert len(rows) == 1
+    assert "worry about other men" in rows[0]["text"]

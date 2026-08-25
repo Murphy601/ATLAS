@@ -1,5 +1,6 @@
 """Penalty-table checks for outgoing drafts and incoming hard blocks."""
 
+from offline_copilot.assembler import MIN_DRAFT_CHARS, ensure_min_draft_chars
 from offline_copilot.compliance import validate_draft, validate_incoming
 from offline_copilot.location import location_sentence, validate_city
 
@@ -29,7 +30,16 @@ def test_exactly_one_cta_at_the_end() -> None:
     assert ok, why
 
 
-def test_location_window_and_city() -> None:
+def test_site_minimum_character_count() -> None:
+    short = "I'm here. What's up?"
+    ok, why = validate_draft(short)
+    assert not ok
+    assert "75" in why
+    padded = ensure_min_draft_chars(short)
+    assert len(padded) >= MIN_DRAFT_CHARS
+    assert padded.count("?") == 1
+    ok, why = validate_draft(padded)
+    assert ok, why
     ok, why = validate_city("Atlanta")
     assert ok, why
     assert validate_city("Central Park")[0] is False
