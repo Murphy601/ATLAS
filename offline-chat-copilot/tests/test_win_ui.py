@@ -118,6 +118,15 @@ def test_pick_draft_edit_is_lowest_not_address_bar_or_send() -> None:
     assert chosen is not None
     assert chosen["top"] == 880
     assert not is_forbidden_click(label=chosen.get("name") or "")
+    marked = pick_draft_edit(
+        [
+            {"name": "", "control_type": "Edit", "top": 880, "width": 420},
+            {"name": "reply", "automation_id": "messageTextArea", "control_type": "Edit", "top": 700, "width": 300},
+        ],
+        allow_fallback=False,
+    )
+    assert marked is not None
+    assert marked.get("automation_id") == "messageTextArea"
 
 
 def test_snapshot_waiting_vs_live_from_uia() -> None:
@@ -130,13 +139,41 @@ def test_snapshot_waiting_vs_live_from_uia() -> None:
     assert waiting.waiting is True
     assert waiting.claimed is False
     live = snapshot_from_uia_names(
-        ["Chat Home Base", "USETN4695969", "Nthabiseng", "Hey! Where are you located?"],
+        [
+            "Chat Home Base",
+            "messageTextArea",
+            "messagesList",
+            "messageItem",
+            "chat-id",
+            "USETN4695969",
+            "Nthabiseng",
+            "Hey! Where are you located?",
+        ],
         has_edit=True,
         has_send=True,
-        title="SensorFusionLab - Chromium",
+        title="-> CHAT IS CLAIMED - Chromium",
     )
     assert live.claimed is True
     assert live.chat_id == "USETN4695969"
+
+
+def test_waiting_room_is_not_live_just_because_chromium_has_an_edit() -> None:
+    snap = snapshot_from_uia_names(
+        [
+            "Chat Home Base",
+            "Claimed",
+            "Unclaimed",
+            "chathomebase.com",
+            "Search",
+            "claimLoaderContainer",
+        ],
+        has_edit=True,
+        has_send=True,
+        title="chathomebase.com - Chromium",
+    )
+    assert snap.waiting is True
+    assert snap.claimed is False
+    assert snap.chat_id == ""
 
 
 def test_parse_messages_skips_chrome_and_send() -> None:
@@ -145,6 +182,8 @@ def test_parse_messages_skips_chrome_and_send() -> None:
             "SensorFusionLab",
             "Address and search bar",
             "Send",
+            "chathomebase.com - Chromium",
+            "Add new log",
             "Hey! Where are you located? Are you watching any games today?",
             "USETN4695969",
         ]

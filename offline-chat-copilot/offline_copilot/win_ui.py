@@ -16,7 +16,6 @@ from typing import Any
 from .chathomebase import (
     CLAIMED_URL,
     PageSnapshot,
-    claim_became_live,
     is_forbidden_click,
 )
 from .engine import handle_claimed_chat
@@ -41,14 +40,25 @@ HINDI_CHROMIUM = "क्रोमियम"
 CHROME_CLASS = "Chrome_WidgetWin_1"
 PICK_WAIT_S = 45.0
 PICK_INTERVAL_S = 2.5
-CHAT_ID_RE = re.compile(r"\b([A-Z]{3,}[A-Z0-9]{5,})\b")
+# Chat Home Base ids look like USETN4695969 — letters then a run of digits.
+CHAT_ID_RE = re.compile(r"\b([A-Z]{4,8}\d{5,12})\b")
 WAITING_HINTS = (
     "waiting for a claim",
     "waiting for next",
+    "waiting for claim",
     "searching for a chat",
     "looking for a chat",
     "claiming chat",
+    "claimloadercontainer",
 )
+LIVE_TESTIDS = (
+    "messagetextarea",
+    "messageslist",
+    "messageitem",
+    "claimednotification",
+)
+DRAFT_TESTIDS = ("messagetextarea",)
+LOADER_TESTIDS = ("claimloadercontainer", "claimloader")
 CHROME_UI_TOKENS = (
     "address and search bar",
     "address bar",
@@ -95,13 +105,29 @@ CHAT_CHROME_EXACT = {
     "send message",
     "send & end shift",
     "add log",
+    "add new log",
+    "create the log",
     "customer",
     "profile",
     "category",
     "comment",
     "chat home base",
     "claimed chat",
+    "search",
+    "end shift",
 }
+CHAT_CHROME_TOKENS = (
+    "chathomebase.com",
+    "chat home base",
+    "add new log",
+    "create the log",
+    "send & end",
+    "type a message",
+    "claimloader",
+    "messagetextarea",
+    "messageslist",
+    "logbook",
+)
 
 
 def say(msg: str) -> None:
@@ -176,6 +202,15 @@ def keep_enumerated_window(
     return True
 
 
+def _norm_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (value or "").casefold())
+
+
+def _has_token(names: list[str], *needles: str) -> bool:
+    blob = " ".join(_norm_token(name) for name in names)
+    return any(needle in blob for needle in needles)
+
+
 def is_chrome_ui_name(name: str) -> bool:
     text = (name or "").strip()
     lowered = text.casefold()
@@ -190,20 +225,41 @@ def is_send_control_name(name: str) -> bool:
     return is_forbidden_click(label=name)
 
 
+def _candidate_blob(candidate: dict) -> str:
+    return " ".join(
+        str(candidate.get(key) or "")
+        for key in ("name", "automation_id")
+    )
+
+
+def is_chat_draft_marker(candidate: dict | str) -> bool:
+    blob = _candidate_blob(candidate) if isinstance(candidate, dict) else str(candidate)
+    return _has_token([blob], *DRAFT_TESTIDS)
+
+
 def is_draft_edit(candidate: dict) -> bool:
     control_type = str(candidate.get("control_type") or "").casefold()
     name = str(candidate.get("name") or "")
+    if is_chat_draft_marker(candidate):
+        return True
     if "edit" not in control_type:
         return False
     if is_chrome_ui_name(name):
+        return False
+    if name.strip().casefold() in {"search", "find"}:
         return False
     if is_send_control_name(name):
         return False
     return True
 
 
-def pick_draft_edit(candidates: list[dict]) -> dict | None:
-    """Lowest page Edit, never the address bar, never Send."""
+def pick_draft_edit(candidates: list[dict], *, allow_fallback: bool = True) -> dict | None:
+    """Prefer the Chat Home Base draft box. Never the address bar, never Send."""
+    marked = [row for row in candidates if is_chat_draft_marker(row)]
+    if marked:
+        return marked[0]
+    if not allow_fallback:
+        return None
     edits = [row for row in candidates if is_draft_edit(row)]
     if not edits:
         return None
@@ -215,16 +271,25 @@ def looks_like_chat_line(name: str) -> bool:
     text = " ".join((name or "").split())
     if len(text) < 8:
         return False
+    lowered = text.casefold()
     if is_chrome_ui_name(text):
         return False
-    if text.casefold() in CHAT_CHROME_EXACT:
+    if lowered in CHAT_CHROME_EXACT:
+        return False
+    if any(token in lowered for token in CHAT_CHROME_TOKENS):
         return False
     if is_send_control_name(text):
+        return False
+    if "://" in text or ".com" in lowered:
         return False
     compact = text.replace(" ", "")
     if CHAT_ID_RE.fullmatch(compact):
         return False
+    if _has_token([text], *LIVE_TESTIDS, *LOADER_TESTIDS, "chatid", "sendchatmessagebutton"):
+        return False
     if not any(ch.isalpha() for ch in text):
+        return False
+    if " " not in text and "?" not in text:
         return False
     return True
 
@@ -244,6 +309,19 @@ def parse_messages_from_names(names: list[str]) -> list[dict[str, str]]:
     return out
 
 
+def extract_chat_id(names: list[str]) -> str:
+    for idx, name in enumerate(names):
+        compact = (name or "").replace(" ", "").strip()
+        if CHAT_ID_RE.fullmatch(compact):
+            return compact
+        if "chat-id" in (name or "").casefold() or _norm_token(name) == "chatid":
+            if idx + 1 < len(names):
+                nxt = names[idx + 1].replace(" ", "").strip()
+                if CHAT_ID_RE.fullmatch(nxt):
+                    return nxt
+    return ""
+
+
 def snapshot_from_uia_names(
     names: list[str],
     *,
@@ -251,24 +329,30 @@ def snapshot_from_uia_names(
     has_send: bool = False,
     title: str = "",
 ) -> PageSnapshot:
-    blob = " ".join(names)
-    lowered = blob.casefold()
-    waiting_hint = any(hint in lowered for hint in WAITING_HINTS)
-    chat_id = ""
-    match = CHAT_ID_RE.search(blob)
-    if match:
-        chat_id = match.group(1)
+    """Waiting room vs live claim. Any Chromium Edit is not enough; /chat/claimed is not enough."""
+    del has_edit, has_send  # Generic address-bar / search edits are not a claimed chat.
+    lowered = " ".join(names).casefold()
+    title_l = (title or "").casefold()
+    has_loader = _has_token(names, *LOADER_TESTIDS) or any(hint in lowered for hint in WAITING_HINTS)
+    has_draft = _has_token(names, *DRAFT_TESTIDS)
+    has_messages = _has_token(names, "messageslist", "messageitem")
+    has_claimed_notice = (
+        _has_token(names, "claimednotification")
+        or "chat is claimed" in lowered
+        or "chat is claimed" in title_l
+    )
+    chat_id = extract_chat_id(names)
+    live = bool(has_draft or has_messages or has_claimed_notice or chat_id)
+    if has_loader and not has_draft and not has_messages:
+        live = False
+    waiting = not live
     customer_name = ""
     for idx, name in enumerate(names):
         if "customer" in name.casefold() and idx + 1 < len(names):
             nxt = names[idx + 1].strip()
-            if nxt and len(nxt.split()) <= 3 and nxt[0].isalpha():
+            if nxt and len(nxt.split()) <= 3 and nxt[0].isalpha() and nxt.casefold() not in CHAT_CHROME_EXACT:
                 customer_name = nxt
                 break
-    live = bool(has_edit and not waiting_hint)
-    if has_edit and has_send:
-        live = True
-    waiting = waiting_hint and not live
     return PageSnapshot(
         url=CLAIMED_URL,
         waiting=waiting,
@@ -295,7 +379,9 @@ def run_uia_attach(
     _ensure_dpi_aware()
     prev_a11y = _enable_chromium_a11y()
     logbook = Logbook(logbook_path)
-    previous = PageSnapshot()
+    previous = PageSnapshot(waiting=True)
+    drafted_key: str | None = None
+    say("Waiting for a live claimed conversation (loader is not a claim)...")
     try:
         hwnd, title = _pick_ix_window()
         say(f"Using IX window: {title or '(no title)'}")
@@ -309,26 +395,31 @@ def run_uia_attach(
                 time.sleep(poll_s)
                 continue
             infos = [_node_info(ctrl) for ctrl in nodes]
-            names = [row["name"] for row in infos if row.get("name")]
-            has_edit = pick_draft_edit(infos) is not None
-            has_send = any(
-                is_send_control_name(str(row.get("name") or ""))
-                and "button" in str(row.get("control_type") or "").casefold()
-                for row in infos
-            )
-            current = snapshot_from_uia_names(
-                names,
-                has_edit=has_edit,
-                has_send=has_send,
-                title=title,
-            )
+            tokens = _uia_tokens(infos)
+            current = snapshot_from_uia_names(tokens, title=title)
             if current.waiting:
-                if previous.live or previous.waiting is False:
+                if previous.claimed:
                     say("[Copilot] Waiting for next claim...")
-            if claim_became_live(previous, current):
-                _process_live_chat(hwnd, nodes, infos, names, current, logbook)
-                if once:
-                    return 0
+                    drafted_key = None
+                previous = current
+                time.sleep(poll_s)
+                continue
+            history = parse_messages_from_names(tokens)
+            if not history:
+                if previous.waiting:
+                    say("[Copilot] Claimed chat is live. Waiting for customer messages...")
+                previous = current
+                time.sleep(poll_s)
+                continue
+            key = current.chat_id or "|".join(row["text"] for row in history[-3:])
+            if key == drafted_key:
+                previous = current
+                time.sleep(poll_s)
+                continue
+            _process_live_chat(hwnd, nodes, infos, tokens, current, logbook, history)
+            drafted_key = key
+            if once:
+                return 0
             previous = current
             time.sleep(poll_s)
     except KeyboardInterrupt:
@@ -347,9 +438,10 @@ def _process_live_chat(
     names: list[str],
     snapshot: PageSnapshot,
     logbook: Logbook,
+    history: list[dict[str, str]] | None = None,
 ) -> None:
     say("[Copilot] Claimed chat is live (desktop attach). Reading visible messages...")
-    history = parse_messages_from_names(names)
+    history = list(history or parse_messages_from_names(names))
     say(f"[Copilot] Parsed {len(history)} visible lines from the IX window.")
     result = handle_claimed_chat(
         history,
@@ -392,6 +484,30 @@ def _fill_draft(hwnd: int, nodes: list[Any], infos: list[dict], text: str) -> bo
     return True
 
 
+def _uia_tokens(infos: list[dict]) -> list[str]:
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for row in infos:
+        for key in ("name", "automation_id"):
+            value = str(row.get(key) or "").strip()
+            if not value:
+                continue
+            folded = value.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            tokens.append(value)
+    return tokens
+
+
+def _uia_automation_id(ctrl: Any) -> str:
+    try:
+        value = getattr(ctrl.element_info, "automation_id", None) or ""
+        return str(value).strip()
+    except Exception:
+        return ""
+
+
 def _node_info(ctrl: Any) -> dict:
     name = _uia_name(ctrl)
     control_type = _uia_type(ctrl)
@@ -406,6 +522,7 @@ def _node_info(ctrl: Any) -> dict:
         pass
     return {
         "name": name,
+        "automation_id": _uia_automation_id(ctrl),
         "control_type": control_type,
         "top": top,
         "left": left,
