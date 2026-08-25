@@ -18,10 +18,13 @@ Customer bubbles use `.message-customer`. Persona/operator bubbles use `.message
 
 ```powershell
 cd $env:USERPROFILE\ATLAS
-git pull origin cursor/offline-chat-copilot-7517
+git fetch origin
+git checkout -B cursor/offline-chat-copilot-7517 origin/cursor/offline-chat-copilot-7517
 cd offline-chat-copilot
 powershell -ExecutionPolicy Bypass -File .\run.ps1
 ```
+
+`git pull origin cursor/offline-chat-copilot-7517` while you are still on another branch tries to merge and then asks for a git name/email. **Checkout** the copilot branch instead. You do not need `git config user.name` for that.
 
 Or:
 

@@ -7,7 +7,8 @@
   Open IX Browser yourself, open https://chathomebase.com/chat/claimed, then:
 
   cd $env:USERPROFILE\ATLAS
-  git pull origin cursor/offline-chat-copilot-7517
+  git fetch origin
+  git checkout -B cursor/offline-chat-copilot-7517 origin/cursor/offline-chat-copilot-7517
   cd offline-chat-copilot
   powershell -ExecutionPolicy Bypass -File .\run.ps1
 #>
