@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Offline Chat Copilot
 // @namespace    local.offline-chat-copilot
-// @version      1.1
-// @description  On Claimed: scroll history, POST to local engine, fill logbook + draft. Never sends.
-// @match        https://YOUR-OPERATOR-DASHBOARD.example/*
+// @version      1.2
+// @description  Chat Home Base claimed chats: scroll history, local engine, fill logbook + draft. Never sends.
+// @match        https://chathomebase.com/*
+// @match        https://*.chathomebase.com/*
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @connect      localhost
@@ -11,12 +12,12 @@
 // ==UserScript==
 
 /*
-  Do not use @match https://*/*. This script is for ONE operator dashboard.
+  Preferred: attach from Python to the already-open IX profile:
 
-  Start the desktop controller first:
-    python3 -m offline_copilot serve --port 8765
+    cd offline-chat-copilot
+    python -m offline_copilot attach
 
-  This userscript never clicks Send / Submit.
+  This userscript is the in-page fallback. Never clicks Send.
 */
 
 (function () {
@@ -28,26 +29,30 @@
     autoFillDraft: true,
     autoSaveLogbook: true,
     autoSend: false, // locked. This script never clicks Send.
-    scrollPasses: 8,
+    scrollPasses: 12,
     scrollWaitMs: 450,
     selectors: {
-      chatContainer: ".chat-history-container, [data-chat-history], .message-list",
-      messageItem: ".message-bubble, [data-message], .chat-message",
-      clientMessage: ".client-msg, .message-in, [data-sender='client']",
-      operatorMessage: ".operator-msg, .message-out, [data-sender='operator']",
-      claimStatus: ".status-badge, [data-status], .claim-status",
-      chatId: "[data-chat-id], .conversation-id",
-      clientName: ".client-name, [data-client-name]",
-      logbookButton: "#open-logbook-btn, [data-open-logbook]",
+      chatContainer: '[data-testid="messagesList"]',
+      messageItem: '[data-testid="messageItem"]',
+      clientMessage: ".message-customer",
+      operatorMessage: ".message-profile",
+      claimLoader: '[data-testid="claimLoaderContainer"]',
+      draftRoot: '[data-testid="messageTextArea"]',
+      chatId: '[data-testid="chat-id"]',
+      clientName: '[data-testid="logbookCustomerName"]',
+      profileLocation: '[data-testid="profileLocation"]',
+      logbookButton: '[data-testid="addNewLogbookButton-customer"]',
+      logbookCategory: '[data-testid="logbookCategorySelect"]',
+      logbookComment: '[data-testid="logbookComment"]',
       logbookFields: {
-        clientName: "#logbook-client-name, [name='clientName']",
-        clientCity: "#logbook-client-city, [name='clientCity']",
-        clientInterests: "#logbook-interests, [name='interests']",
-        personaCity: "#logbook-my-city, [name='personaCity']",
+        clientName: '[data-testid="logbookCustomerName"]',
+        clientCity: '[data-testid="profileLocation"]',
+        clientInterests: '[data-testid="logbookComment"]',
+        personaCity: '[data-testid="logbookProfileName"]',
       },
-      saveLogbookBtn: "#save-logbook-btn, [data-save-logbook]",
-      inputBox: "textarea.reply-input, textarea[name='message'], [contenteditable='true'].reply-input",
-      sendButton: "button.send, [data-send], button[type='submit']",
+      saveLogbookBtn: '[data-testid="logbookSaveButton"]',
+      inputBox: '[data-testid="messageTextArea"] textarea, [data-testid="messageTextArea"]',
+      sendButton: '[data-testid="sendChatMessageButton"]',
     },
   };
 
@@ -93,24 +98,31 @@
 
   function setNativeValue(el, value) {
     if (!el) return false;
-    if (el.isContentEditable) {
-      el.focus();
-      el.textContent = value;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+    const target = el.tagName === "TEXTAREA" || el.tagName === "INPUT" ? el : el.querySelector("textarea, input") || el;
+    if (target.isContentEditable) {
+      target.focus();
+      target.textContent = value;
+      target.dispatchEvent(new Event("input", { bubbles: true }));
       return true;
     }
-    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const proto = target.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    if (desc && desc.set) desc.set.call(el, value);
-    else el.value = value;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    if (desc && desc.set) desc.set.call(target, value);
+    else target.value = value;
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
     return true;
   }
 
+  function isLiveClaimed() {
+    const loader = qs(CONFIG.selectors.claimLoader);
+    const draft = qs(CONFIG.selectors.draftRoot);
+    if (loader && !draft) return false;
+    return !!draft;
+  }
+
   function statusText() {
-    const el = qs(CONFIG.selectors.claimStatus);
-    return (el && (el.innerText || el.textContent || el.getAttribute("data-status"))) || "";
+    return isLiveClaimed() ? "claimed" : "waiting";
   }
 
   function chatId() {
@@ -121,8 +133,8 @@
 
   function isClaimed(text) {
     const t = (text || "").toLowerCase();
-    if (/\bunclaimed\b/.test(t)) return false;
-    return /\bclaimed\b/.test(t);
+    if (/\bunclaimed\b/.test(t) || t === "waiting") return false;
+    return t === "claimed" || /\bclaimed\b/.test(t);
   }
 
   function claimRisingEdge(prev, curr) {
@@ -130,24 +142,29 @@
   }
 
   function senderFor(el) {
-    if (el.matches(CONFIG.selectors.clientMessage) || el.classList.contains("client-msg")) return "client";
-    if (el.matches(CONFIG.selectors.operatorMessage) || el.classList.contains("operator-msg")) return "operator";
-    if (el.closest && el.closest(CONFIG.selectors.clientMessage)) return "client";
-    if (el.closest && el.closest(CONFIG.selectors.operatorMessage)) return "operator";
-    const side = (el.getAttribute("data-sender") || "").toLowerCase();
-    if (side === "client" || side === "operator") return side;
-    return el.className.toLowerCase().includes("out") ? "operator" : "client";
+    if (el.querySelector && el.querySelector(".message-customer")) return "client";
+    if (el.querySelector && el.querySelector(".message-profile")) return "operator";
+    if (el.matches && (el.matches(CONFIG.selectors.clientMessage) || el.classList.contains("message-customer"))) return "client";
+    if (el.matches && (el.matches(CONFIG.selectors.operatorMessage) || el.classList.contains("message-profile"))) return "operator";
+    return "client";
   }
 
   async function scrollAndFetchHistory() {
     const box = qs(CONFIG.selectors.chatContainer);
     if (!box) return readMessages();
+    let root = box;
+    for (let hop = 0; hop < 8 && root && root.scrollHeight <= root.clientHeight + 4; hop += 1) {
+      root = root.parentElement;
+    }
+    root = root || box;
     for (let i = 0; i < CONFIG.scrollPasses; i += 1) {
-      const before = box.scrollHeight;
-      box.scrollTop = Math.max(0, box.scrollTop - box.clientHeight);
-      if (box.scrollTop === 0) box.scrollTop = 0;
+      const before = qsa(CONFIG.selectors.messageItem).length;
+      root.scrollTop = 0;
+      const zone = document.querySelector(".trigger-zone");
+      if (zone && zone.scrollIntoView) zone.scrollIntoView({ block: "start" });
       await sleep(CONFIG.scrollWaitMs);
-      if (box.scrollHeight <= before && box.scrollTop === 0) break;
+      const after = qsa(CONFIG.selectors.messageItem).length;
+      if (after === before && root.scrollTop === 0) break;
     }
     return readMessages();
   }
@@ -155,7 +172,7 @@
   function readMessages() {
     return qsa(CONFIG.selectors.messageItem).map((el) => ({
       sender: senderFor(el),
-      text: (el.innerText || "").trim(),
+      text: ((el.querySelector(".message-content") || el).innerText || "").trim(),
     })).filter((row) => row.text);
   }
 
@@ -187,17 +204,30 @@
     });
   }
 
+  function composeComment(fields) {
+    const parts = [];
+    if (fields.clientName) parts.push("Name: " + fields.clientName);
+    if (fields.clientCity) parts.push("City: " + fields.clientCity);
+    if (fields.clientInterests) parts.push("Interests: " + fields.clientInterests);
+    return parts.join(". ");
+  }
+
   async function fillLogbook(fields, shouldSave) {
     const openBtn = qs(CONFIG.selectors.logbookButton);
     if (openBtn) {
       openBtn.click();
       await sleep(250);
     }
-    const map = CONFIG.selectors.logbookFields;
-    if (fields.clientName) setNativeValue(qs(map.clientName), fields.clientName);
-    if (fields.clientCity) setNativeValue(qs(map.clientCity), fields.clientCity);
-    if (fields.clientInterests) setNativeValue(qs(map.clientInterests), fields.clientInterests);
-    if (fields.personaCity) setNativeValue(qs(map.personaCity), fields.personaCity);
+    const category = qs(CONFIG.selectors.logbookCategory);
+    if (category) {
+      category.click();
+      await sleep(150);
+      const other = [...document.querySelectorAll(".v-list-item, [role='option']")].find((el) => (el.innerText || "").trim() === "Other");
+      if (other) other.click();
+      await sleep(150);
+    }
+    const comment = composeComment(fields);
+    if (comment) setNativeValue(qs(CONFIG.selectors.logbookComment), comment);
     if (shouldSave && CONFIG.autoSaveLogbook) {
       const save = qs(CONFIG.selectors.saveLogbookBtn);
       const send = qs(CONFIG.selectors.sendButton);
@@ -228,6 +258,15 @@
       <div style="margin-top:8px;opacity:.7">${payload.save_reason || ""}</div>`;
   }
 
+  function personaCity() {
+    if (CONFIG.personaCity) return CONFIG.personaCity;
+    const el = qs(CONFIG.selectors.profileLocation);
+    if (!el) return "";
+    const blob = ((el.parentElement && el.parentElement.innerText) || el.innerText || "").trim();
+    const match = blob.match(/locality:\s*([^,\n]+)/i);
+    return match ? match[1].trim() : "";
+  }
+
   async function processClaimedChat() {
     if (state.busy) return;
     state.busy = true;
@@ -237,7 +276,7 @@
       const payload = {
         client_id: chatId(),
         client_name: nameEl ? (nameEl.innerText || "").trim() : "",
-        persona_city: CONFIG.personaCity || "",
+        persona_city: personaCity(),
         history,
         remember: true,
       };

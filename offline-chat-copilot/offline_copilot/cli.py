@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 
+from .attach import run_attach
+from .chathomebase import CLAIMED_URL
 from .compliance import validate_draft
 from .controller import serve_forever
 from .engine import draft_replies
@@ -46,6 +48,12 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--logbook", default="logbook.json")
+
+    attach = sub.add_parser("attach", help="Attach to already-open IX Browser on Chat Home Base")
+    attach.add_argument("--cdp", default="", help="Optional CDP URL, e.g. http://127.0.0.1:9222")
+    attach.add_argument("--url", default=CLAIMED_URL)
+    attach.add_argument("--logbook", default="logbook.json")
+    attach.add_argument("--once", action="store_true", help="Process one claimed chat then exit")
     return parser
 
 
@@ -102,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "serve":
         serve_forever(args.host, args.port, args.logbook)
         return 0
+    if args.cmd == "attach":
+        return run_attach(
+            cdp_url=args.cdp or None,
+            target_url=args.url,
+            logbook_path=args.logbook,
+            once=args.once,
+        )
     return 1
 
 
