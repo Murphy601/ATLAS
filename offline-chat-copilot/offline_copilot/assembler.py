@@ -7,7 +7,7 @@ from datetime import date
 from .cta import CTA_BANK, CTA_BY_CATEGORY
 from .location import WINDOW_MINUTES, location_sentence, validate_city
 from .logbook import fingerprint
-from .parser import ParsedMessage
+from .ingest import is_junk_client_text
 from .sports import sports_banter
 
 
@@ -83,6 +83,8 @@ def _usable_facts(facts: list[str]) -> list[str]:
         text = " ".join((fact or "").split())
         lowered = text.casefold()
         if not text or len(text) > 90:
+            continue
+        if is_junk_client_text(text):
             continue
         if any(marker in lowered for marker in SELF_DRAFT_MARKERS):
             continue

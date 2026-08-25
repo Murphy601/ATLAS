@@ -13,6 +13,7 @@ from offline_copilot.win_ui import (
     keep_enumerated_window,
     parse_messages_from_names,
     pick_draft_edit,
+    pick_logbook_save,
     pick_named_control,
     run_uia_attach,
     score_window,
@@ -305,6 +306,13 @@ def test_customer_add_log_is_leftmost() -> None:
     send = {"name": "Send", "left": 10, "control_type": "Button"}
     chosen = pick_named_control([persona, customer, send], "add new log", leftmost=True)
     assert chosen is customer
+
+
+def test_logbook_save_is_create_the_log_not_send() -> None:
+    save = {"name": "Create the log", "control_type": "Button", "left": 200}
+    send = {"name": "Send", "control_type": "Button", "left": 10}
+    assert pick_logbook_save([send, save]) is save
+    assert pick_logbook_save([send]) is None
 
 
 def test_escape_keys_does_not_emit_paste() -> None:

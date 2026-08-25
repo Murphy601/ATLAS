@@ -190,16 +190,26 @@ def parse_testid_text(html: str, testid: str) -> str:
 
 
 def logbook_comment(fields: dict[str, str]) -> str:
+    """Operator-facing customer log: likes, places, and other important details."""
     parts: list[str] = []
-    city = (fields.get("clientCity") or "").strip()
-    interests = (fields.get("clientInterests") or "").strip()
     name = (fields.get("clientName") or "").strip()
+    city = (fields.get("clientCity") or "").strip()
+    places = (fields.get("clientPlaces") or "").strip()
+    likes = (fields.get("clientLikes") or "").strip()
+    interests = (fields.get("clientInterests") or "").strip()
+    notes = (fields.get("clientNotes") or fields.get("clientFacts") or "").strip()
     if name:
         parts.append(f"Name: {name}")
     if city:
         parts.append(f"City: {city}")
-    if interests:
+    if places:
+        parts.append(f"Places: {places}")
+    if likes:
+        parts.append(f"Likes: {likes}")
+    if interests and interests.casefold() not in likes.casefold():
         parts.append(f"Interests: {interests}")
+    if notes:
+        parts.append(f"Details: {notes}")
     return ". ".join(parts)
 
 

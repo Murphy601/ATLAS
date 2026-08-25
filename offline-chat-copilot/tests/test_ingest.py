@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from offline_copilot.chathomebase import logbook_comment
 from offline_copilot.cities import extract_city_from_text
 from offline_copilot.engine import handle_claimed_chat
 from offline_copilot.ingest import (
     claim_rising_edge,
     extract_cities,
     extract_interests,
+    extract_likes,
     extract_name,
+    extract_places_for_log,
     ingest_history,
 )
 from offline_copilot.location import validate_city
@@ -141,6 +144,42 @@ def test_ingest_history_skips_save_on_weak_facts() -> None:
     assert ingest.save_logbook is False
     assert ingest.city == ""
     assert ingest.client_name == ""
+
+
+def test_ingest_captures_likes_places_and_important_details() -> None:
+    ingest = ingest_history(
+        [
+            {
+                "sender": "client",
+                "text": "I have had a lot of experiences in life and solo travel had a lot to do with that.",
+            },
+            {
+                "sender": "client",
+                "text": "My fave place is Florence, Italy. Really old and its a great walking city.",
+            },
+            {
+                "sender": "client",
+                "text": "Most of my workdays were in SE Asia and I often traveled to Germany and countries like Thailand and China.",
+            },
+            {
+                "sender": "client",
+                "text": "I can move around by myself and have a cane and walker that I once used.",
+            },
+        ]
+    )
+    assert ingest.save_logbook is True
+    assert any("Florence" in place for place in ingest.places)
+    assert any("Italy" in place for place in ingest.places)
+    assert "Germany" in ingest.places or any("Germany" in place for place in ingest.places)
+    assert any("solo travel" in like.casefold() for like in ingest.likes)
+    assert any("cane" in note.casefold() for note in ingest.notes)
+    comment = logbook_comment(ingest.to_fields())
+    assert "Places:" in comment
+    assert "Florence" in comment
+    assert "solo travel" in comment.casefold()
+    assert "cane" in comment.casefold()
+    assert extract_places_for_log("My fave place is Florence, Italy.")[0].startswith("Florence")
+    assert "solo travel" in extract_likes("solo travel had a lot to do with that.")
 
 
 def test_apply_ingest_does_not_overwrite_existing_city(tmp_path: Path) -> None:

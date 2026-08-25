@@ -428,6 +428,20 @@ def pick_named_control(
     return hits[0]
 
 
+def pick_logbook_save(candidates: list[dict]) -> dict | None:
+    """Create the log — never Send."""
+    for needle in ("create the log", "logbooksavebutton", "create log"):
+        hit = pick_named_control(candidates, needle)
+        if hit and not is_send_control_name(str(hit.get("name") or "")):
+            return hit
+    for row in candidates:
+        name = str(row.get("name") or "").strip().casefold()
+        ctype = str(row.get("control_type") or "").casefold()
+        if name in {"save", "create"} and "button" in ctype and not is_send_control_name(name):
+            return row
+    return None
+
+
 def pick_draft_edit(
     candidates: list[dict],
     *,
@@ -513,17 +527,39 @@ def extract_chat_id(names: list[str]) -> str:
     return ""
 
 
+HANDLE_SKIP = {
+    "widow",
+    "widower",
+    "bald",
+    "retired",
+    "nurse",
+    "villa",
+    "customer",
+    "profile",
+    "chromium",
+    "document",
+    "toolbar",
+    "non-smoker",
+    "nonsmoker",
+}
+
+
 def _looks_like_handle(text: str) -> bool:
     value = (text or "").strip()
     if not value or len(value) > 32:
         return False
-    if value.casefold() in CHAT_CHROME_EXACT:
+    lowered = value.casefold()
+    if lowered in CHAT_CHROME_EXACT or lowered in HANDLE_SKIP:
         return False
-    if is_send_control_name(value):
+    if is_send_control_name(value) or is_chrome_ui_name(value):
         return False
-    if len(value.split()) > 3:
+    if CHAT_ID_RE.fullmatch(value.replace(" ", "")):
         return False
-    return True
+    if value.isdigit():
+        return False
+    if " " in value:
+        return len(value.split()) <= 2 and value[0].isalpha()
+    return bool(re.match(r"^[A-Za-z0-9_]{3,24}$", value))
 
 
 def extract_customer_name(names: list[str]) -> str:
@@ -533,6 +569,8 @@ def extract_customer_name(names: list[str]) -> str:
         if name.strip().casefold() in {"you are", "youare"}:
             if idx + 1 < len(names):
                 blocked.add(names[idx + 1].strip().casefold())
+            if idx + 2 < len(names):
+                blocked.add(names[idx + 2].strip().casefold())
     for idx, name in enumerate(names):
         token = _norm_token(name)
         if token in {"logbookcustomername", "logbookcustomer"}:
@@ -545,6 +583,11 @@ def extract_customer_name(names: list[str]) -> str:
             nxt = names[idx + 1].strip()
             if _looks_like_handle(nxt) and nxt.casefold() not in blocked:
                 return nxt
+    for name in names:
+        value = name.strip()
+        if _looks_like_handle(value) and value.casefold() not in blocked:
+            if re.search(r"\d", value) or value[0].islower():
+                return value
     return ""
 
 
@@ -631,7 +674,8 @@ def run_uia_attach(
                 timed_out=timed_out,
             )
             now = time.monotonic()
-            if status != last_status or (now - last_beat) >= HEARTBEAT_S:
+            beat_s = 30.0 if current.waiting else HEARTBEAT_S
+            if status != last_status or (now - last_beat) >= beat_s:
                 say(status)
                 preview = preview_window_names(tokens)
                 if preview and status != last_status:
@@ -712,7 +756,8 @@ def _process_live_chat(
     for idx, option in enumerate(result.options, 1):
         say(f"Option {idx}: {option}")
     fields = dict(result.logbook_fields or {})
-    if result.save_logbook or fields.get("clientCity") or fields.get("clientName"):
+    comment = logbook_comment(fields)
+    if comment:
         try:
             if _fill_customer_log(hwnd, infos, fields):
                 say("[Copilot] Customer logbook Other comment typed and saved. Send was not clicked.")
@@ -807,14 +852,19 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
     time.sleep(0.12)
     _clear_focused_edit()
     say("[Copilot] Typing the customer logbook comment...")
+    say(f"[Copilot] Logbook: {comment}")
     _type_into_focused(comment)
-    save = pick_named_control(after, "create the log", "logbooksavebutton")
+    time.sleep(0.35)
+    after, _timed_out = _read_window(hwnd, announce=False)
+    save = pick_logbook_save(after)
     if save is None:
+        time.sleep(0.4)
         after, _timed_out = _read_window(hwnd, announce=False)
-        save = pick_named_control(after, "create the log", "logbooksavebutton")
+        save = pick_logbook_save(after)
     if save is None or is_send_control_name(str(save.get("name") or "")):
         say("[Copilot] Logbook save control was not found (Send was not clicked).")
         return False
+    say("[Copilot] Saving the customer log (Send was not clicked)...")
     return _click_candidate(hwnd, save)
 
 

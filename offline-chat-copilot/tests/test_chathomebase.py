@@ -68,6 +68,21 @@ def test_logbook_comment_and_locality() -> None:
     assert locality_from_profile_location("locality: Dallas") == "Dallas"
 
 
+def test_logbook_comment_includes_places_likes_and_details() -> None:
+    comment = logbook_comment(
+        {
+            "clientName": "47larry",
+            "clientPlaces": "Florence, Italy, SE Asia, Germany, Thailand, China",
+            "clientLikes": "solo travel, walking cities",
+            "clientNotes": "Worked in SE Asia; Uses a cane/walker",
+        }
+    )
+    assert "Name: 47larry" in comment
+    assert "Places: Florence, Italy" in comment
+    assert "Likes: solo travel" in comment
+    assert "cane" in comment.casefold()
+
+
 def test_ix_attach_ignores_stock_chrome() -> None:
     assert is_stock_chrome_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe") is True
     assert is_ix_chromium_exe(r"C:\Users\user\AppData\Local\IXBrowser\chrome.exe") is True
