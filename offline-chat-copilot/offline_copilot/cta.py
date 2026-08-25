@@ -232,8 +232,21 @@ def build_cta_bank() -> tuple[str, ...]:
 
 
 CTA_BANK = build_cta_bank()
+INTIMATE_CTAS = _unique(
+    [
+        "Want me to go that slow with my mouth, or a little greedier?",
+        "Should I stay on top of you while I kiss my way down?",
+        "Does that kind of attention sound like what you were craving?",
+        "Want me to tell you how I'd sound when you find it?",
+        "Should I keep teasing you like that, or take more of you in?",
+        "Do you want me kissing you the whole time I work my way down?",
+        "Should I take my time on you, or let you feel how hungry I am?",
+        "Want me to stay right there until you tell me you can't wait?",
+    ]
+)
 CTA_BY_CATEGORY = {
     "general": tuple(q for q in CTA_BANK if not any(w in q.casefold() for w in ("ufc", "mlb", "nfl", "game", "baseball", "football", "fight"))),
     "sports": tuple(q for q in CTA_BANK if any(w in q.casefold() for w in ("ufc", "mlb", "nfl", "game", "baseball", "football", "fight", "team", "sports"))),
     "weekend": tuple(q for q in CTA_BANK if any(w in q.casefold() for w in ("weekend", "sunday", "saturday"))),
+    "intimate": INTIMATE_CTAS,
 }

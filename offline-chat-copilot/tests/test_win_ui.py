@@ -10,8 +10,10 @@ from offline_copilot.win_ui import (
     describe_copilot_state,
     extract_customer_name,
     has_live_composer,
+    human_key_delay_s,
     keep_enumerated_window,
     latest_client_line_from_infos,
+    looks_like_chat_line,
     parse_messages_from_names,
     pick_draft_edit,
     pick_logbook_save,
@@ -389,6 +391,40 @@ def test_latest_client_line_is_the_lowest_bubble_not_old_history() -> None:
     )
     assert "Florence" in line
     assert "i am here is because" not in line.casefold()
+
+
+def test_profile_fields_are_not_chat_or_latest_line() -> None:
+    assert looks_like_chat_line("Rental home") is False
+    assert looks_like_chat_line("Ground floor") is False
+    assert looks_like_chat_line("Data analyst") is False
+    line = latest_client_line_from_infos(
+        [
+            {"name": "Rental home", "top": 920, "left": 40, "width": 200, "control_type": "Text"},
+            {"name": "Ground floor", "top": 900, "left": 40, "width": 200, "control_type": "Text"},
+            {
+                "name": "I would like you to start being on top of me, you kissing me working your way down",
+                "top": 640,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {"name": "Your message is too short", "top": 910, "left": 400, "width": 400, "control_type": "Text"},
+            {"name": "Data analyst", "top": 700, "left": 1500, "width": 180, "control_type": "Text"},
+        ]
+    )
+    assert "on top of me" in line.casefold()
+    assert "rental home" not in line.casefold()
+    assert "ground floor" not in line.casefold()
+
+
+def test_view_1_is_not_the_customer_handle() -> None:
+    assert extract_customer_name(["view_1", "you are", "Annie", "Type your reply here..."]) == ""
+    assert extract_customer_name(["Bruce8111", "you are", "Annie", "Type your reply here..."]) == "Bruce8111"
+
+
+def test_human_typing_delay_is_slow_enough_to_avoid_auto_typing() -> None:
+    assert human_key_delay_s("a", 0) >= 0.22
+    assert human_key_delay_s(".", 3) >= 0.70
 
 
 def test_parse_skips_reply_placeholder() -> None:

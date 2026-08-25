@@ -37,17 +37,17 @@ python3 -m playwright install chromium
 python3 -m offline_copilot attach
 ```
 
-The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room shows **Waiting for conversation to be claimed...** That is not a claim. Performance / wish-list overlays are not a claim either. The copilot must not type into the Chromium address bar or the page search box. Clients rotate: each new chat-id / customer handle is a new claim (left column, not the persona under “you are”). On a real claim you should see the mouse scroll the thread, return to the latest bubble, click the customer logbook, then characters appearing in **Type your reply here...**. Paste is never used: drafts are typed with real US-keyboard keys.
+The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room shows **Waiting for conversation to be claimed...** That is not a claim. Performance / wish-list overlays are not a claim either. The copilot must not type into the Chromium address bar or the page search box. Clients rotate: each new chat-id / customer handle is a new claim (left column, not the persona under “you are”). On a real claim you should see the mouse scroll the thread, scroll both profile columns, click the customer logbook, then **slow** characters appearing in **Type your reply here...**. Paste is never used. Typing stays around 200ms+ per key so Chat Home Base does not fire the auto-typing warning.
 
 Optional, for full DOM (scroll history + customer logbook): in the IX profile extra launch args add `--remote-debugging-port=9222`, click Open, then run again.
 
 When a chat is claimed it:
 
-1. Scrolls the thread so older messages can load, then returns to the **latest** client message
-2. Opens customer **PROFILE DETAILS**, then **ADD NEW LOG** (left column, not the persona)
-3. Types a customer logbook comment (`Other`) if facts are high-confidence — never paste
-4. Types option 1 into `messageTextArea` with real keypresses (Chat Home Base rejects copy/paste)
-5. Prints three compliant options (75+ characters; the site shows “too short” under 75)
+1. Scrolls the thread so older messages can load, then returns to the **latest** client message (never a profile label like Rental home)
+2. Scrolls the **customer** and **persona** sidebars, opens PROFILE DETAILS, and writes Other logs on both ADD NEW LOG buttons
+3. Types a customer/persona logbook comment if facts are high-confidence — never paste
+4. Types option 1 into `messageTextArea` with slow real keypresses (Chat Home Base rejects copy/paste and flags fast auto-typing)
+5. Prints three compliant options that stay on the latest client topic (75+ characters; the site shows “too short” under 75)
 
 The reply answers the **most recent client message**, in US English. Older history is only used for the logbook. It does not click Send, Send & End Shift, or report-submit. It does not press Enter after typing.
 

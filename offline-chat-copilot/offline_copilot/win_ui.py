@@ -7,6 +7,7 @@ ixBrowser | v2.9.20 is the profile manager and is ignored. Never clicks Send.
 from __future__ import annotations
 
 import logging
+import random
 import re
 import sys
 import threading
@@ -22,6 +23,7 @@ from .chathomebase import (
     claim_identity,
     is_forbidden_click,
     logbook_comment,
+    persona_logbook_comment,
 )
 from .engine import handle_claimed_chat
 from .ix_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
@@ -175,6 +177,49 @@ CHAT_CHROME_TOKENS = (
     "total messages",
     "get insights about your message",
     "input-135-messages",
+    "auto-typing",
+    "message was removed",
+    "sexual preferences",
+    "rental home",
+    "ground floor",
+    "data analyst",
+    "living apart together",
+)
+PROFILE_FIELD_EXACT = {
+    "rental home",
+    "ground floor",
+    "data analyst",
+    "sexual preferences",
+    "profile details",
+    "add new log",
+    "non-smoker",
+    "nonsmoker",
+    "no smoking",
+    "living apart together",
+    "widow",
+    "widower",
+    "divorced",
+    "single",
+    "athletic",
+    "credits",
+    "locality",
+    "timezone",
+    "blond hair",
+    "brown hair",
+    "black hair",
+    "blue eyes",
+    "brown eyes",
+    "normal",
+    "auto",
+    "sexy",
+    "you are",
+    "view_1",
+    "view_2",
+    "view 1",
+}
+INTIMATE_LINE_RE = re.compile(
+    r"\b(?:cock|clit|pussy|g-?spot|nipples?|balls?|suck|kiss|on top|mouth|wet|tease|horny)\b",
+    re.I,
 )
 
 
@@ -438,6 +483,7 @@ def pick_named_control(
     candidates: list[dict],
     *needles: str,
     leftmost: bool = False,
+    rightmost: bool = False,
 ) -> dict | None:
     hits: list[dict] = []
     for row in candidates:
@@ -451,6 +497,9 @@ def pick_named_control(
         return None
     if leftmost:
         hits.sort(key=lambda row: int(row.get("left") or 10**9))
+        return hits[0]
+    if rightmost:
+        hits.sort(key=lambda row: int(row.get("left") or -1), reverse=True)
         return hits[0]
     return hits[0]
 
@@ -516,8 +565,9 @@ def pick_draft_edit(
 
 
 def latest_client_line_from_infos(infos: list[dict]) -> str:
-    """Lowest on-screen chat bubble, just above the composer. That is the newest client line."""
+    """Newest customer bubble in the center column. Never a profile field like Rental home."""
     warning_top = 10**9
+    min_x, max_x = _x_bounds(infos)
     for row in infos:
         name = str(row.get("name") or "")
         if "your message is too short" in name.casefold() or "type your reply here" in name.casefold():
@@ -526,6 +576,11 @@ def latest_client_line_from_infos(infos: list[dict]) -> str:
     for row in infos:
         name = str(row.get("name") or "").strip()
         if not looks_like_chat_line(name):
+            continue
+        left = int(row.get("left") or 0)
+        if _column_for_left(left, min_x, max_x) != "chat":
+            continue
+        if _chat_sender(left, min_x, max_x) != "client":
             continue
         top = int(row.get("top") or 0)
         if top <= 0:
@@ -539,11 +594,30 @@ def latest_client_line_from_infos(infos: list[dict]) -> str:
     return lines[-1][1]
 
 
+def is_profile_field_text(name: str) -> bool:
+    lowered = " ".join((name or "").split()).casefold()
+    if not lowered:
+        return False
+    if lowered in PROFILE_FIELD_EXACT:
+        return True
+    if re.fullmatch(r"view[_\s-]?\d+", lowered):
+        return True
+    if re.fullmatch(r"\d+\s*credits?", lowered):
+        return True
+    if re.search(r"\b\d+ft\b", lowered) or re.search(r"\b\d{3}\s*-\s*\d{3}\s*cm\b", lowered):
+        return True
+    if re.match(r"^america[/, ]", lowered):
+        return True
+    return False
+
+
 def looks_like_chat_line(name: str) -> bool:
     text = " ".join((name or "").split())
     if len(text) < 8:
         return False
     lowered = text.casefold()
+    if is_profile_field_text(text):
+        return False
     if is_chrome_ui_name(text):
         return False
     if lowered in CHAT_CHROME_EXACT:
@@ -563,7 +637,56 @@ def looks_like_chat_line(name: str) -> bool:
         return False
     if " " not in text and "?" not in text:
         return False
+    if len(text) < 22 and not INTIMATE_LINE_RE.search(text) and not any(ch in text for ch in "?!."):
+        return False
     return True
+
+
+def _x_bounds(infos: list[dict]) -> tuple[int, int]:
+    lefts = [int(row.get("left") or 0) for row in infos]
+    rights = [int(row.get("left") or 0) + max(int(row.get("width") or 0), 1) for row in infos]
+    return (min(lefts) if lefts else 0, max(rights) if rights else 1)
+
+
+def _column_for_left(left: int, min_x: int, max_x: int) -> str:
+    span = max_x - min_x
+    if span < 120:
+        return "chat"
+    rel = (left - min_x) / span
+    if rel < 0.18:
+        return "customer_profile"
+    if rel > 0.80:
+        return "persona_profile"
+    return "chat"
+
+
+def _chat_sender(left: int, min_x: int, max_x: int) -> str:
+    span = max_x - min_x
+    if span < 120:
+        return "client"
+    rel = (left - min_x) / span
+    if rel < 0.50:
+        return "client"
+    return "operator"
+
+
+def parse_messages_from_infos(infos: list[dict]) -> list[dict[str, str]]:
+    min_x, max_x = _x_bounds(infos)
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in infos:
+        text = " ".join(str(row.get("name") or "").split())
+        if not looks_like_chat_line(text):
+            continue
+        left = int(row.get("left") or 0)
+        if _column_for_left(left, min_x, max_x) != "chat":
+            continue
+        key = text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"sender": _chat_sender(left, min_x, max_x), "text": text})
+    return out
 
 
 def parse_messages_from_names(names: list[str]) -> list[dict[str, str]]:
@@ -615,6 +738,12 @@ HANDLE_SKIP = {
     "nonsmoker",
     "trying",
     "search",
+    "view_1",
+    "view_2",
+    "credits",
+    "athletic",
+    "single",
+    "divorced",
 }
 
 
@@ -630,6 +759,8 @@ def _looks_like_handle(text: str) -> bool:
     if CHAT_ID_RE.fullmatch(value.replace(" ", "")):
         return False
     if value.isdigit():
+        return False
+    if re.fullmatch(r"view[_\s-]?\d+", lowered):
         return False
     if " " in value:
         return len(value.split()) <= 2 and value[0].isalpha()
@@ -663,6 +794,71 @@ def extract_customer_name(names: list[str]) -> str:
             if re.search(r"\d", value) or value[0].islower():
                 return value
     return ""
+
+
+def extract_sidebar_facts(infos: list[dict]) -> dict[str, str]:
+    """Likes/places/details from the left customer column and right persona column."""
+    min_x, max_x = _x_bounds(infos)
+    customer_bits: list[str] = []
+    persona_bits: list[str] = []
+    customer_name = ""
+    persona_name = ""
+    customer_city = ""
+    persona_city = ""
+    for row in infos:
+        text = " ".join(str(row.get("name") or "").split())
+        if not text or looks_like_chat_line(text):
+            continue
+        col = _column_for_left(int(row.get("left") or 0), min_x, max_x)
+        lowered = text.casefold()
+        if col == "customer_profile":
+            if _looks_like_handle(text) and re.search(r"\d", text):
+                customer_name = customer_name or text
+            if re.search(r"\b[A-Z][a-z]+,\s*[A-Z][a-z]+", text):
+                customer_city = customer_city or text
+            if is_profile_field_text(text) or lowered in {"widow", "single", "divorced", "athletic", "rental home", "ground floor"}:
+                customer_bits.append(text)
+        elif col == "persona_profile":
+            if _looks_like_handle(text) and not re.fullmatch(r"view[_\s-]?\d+", lowered):
+                if not persona_name and not re.search(r"\d", text):
+                    persona_name = text
+            if re.search(r"\b[A-Z][a-z]+,\s*[A-Z][a-z]+", text):
+                persona_city = persona_city or text
+            if is_profile_field_text(text) or "data analyst" in lowered or "rental home" in lowered:
+                persona_bits.append(text)
+    return {
+        "clientName": customer_name,
+        "clientCity": customer_city.split(",")[0].strip() if customer_city else "",
+        "clientNotes": "; ".join(dict.fromkeys(customer_bits) ),
+        "personaName": persona_name,
+        "personaCity": persona_city.split(",")[0].strip() if persona_city else "",
+        "personaNotes": "; ".join(dict.fromkeys(persona_bits)),
+    }
+
+
+def pick_logbook_comment(candidates: list[dict], *, composer_top: int | None = None) -> dict | None:
+    hit = pick_named_control(candidates, "logbookcomment", "logbook comment", "add a comment")
+    if hit and not is_search_or_chrome_edit(hit) and not is_chat_draft_marker(hit):
+        return hit
+    edits: list[dict] = []
+    for row in candidates:
+        ctype = str(row.get("control_type") or "").casefold()
+        if "edit" not in ctype:
+            continue
+        if is_search_or_chrome_edit(row) or is_chat_draft_marker(row) or is_send_control_name(str(row.get("name") or "")):
+            continue
+        top = int(row.get("top") or 0)
+        if composer_top and abs(top - composer_top) < 90:
+            continue
+        name = str(row.get("name") or "").casefold()
+        if name in {"search", "find", "filter"}:
+            continue
+        if "comment" in name or not name.strip() or "logbook" in name:
+            edits.append(row)
+    if not edits:
+        return None
+    edits.sort(key=lambda row: int(row.get("top") or 0))
+    return edits[0]
 
 
 def snapshot_from_uia_names(
@@ -819,13 +1015,13 @@ def _process_live_chat(
     _scroll_load_older(hwnd)
     time.sleep(0.4)
     infos_hist, _timed_out = _read_window(hwnd, announce=False)
-    history_all = parse_messages_from_names(_uia_tokens(infos_hist))
+    history_all = parse_messages_from_infos(infos_hist) or parse_messages_from_names(_uia_tokens(infos_hist))
     say("[Copilot] Returning to the latest client message...")
     _scroll_to_latest(hwnd)
     time.sleep(0.35)
     infos, _timed_out = _read_window(hwnd, announce=False)
     tokens = _uia_tokens(infos)
-    history_now = history_all or parse_messages_from_names(tokens)
+    history_now = history_all or parse_messages_from_infos(infos) or parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
     if current.waiting:
         say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
@@ -839,26 +1035,62 @@ def _process_live_chat(
     client_id = current.chat_id or snapshot.chat_id or current.customer_name or snapshot.customer_name or "claimed"
     client_name = current.customer_name or snapshot.customer_name
     say(f"[Copilot] Client on screen: {client_name or 'unknown'} ({client_id})")
+    say("[Copilot] Scrolling customer and persona profiles for extra details...")
+    _scroll_profile_column(hwnd, 0.16)
+    _open_named(hwnd, infos, "profile details", leftmost=True)
+    time.sleep(0.3)
+    _open_named(hwnd, infos, "sexual preferences", leftmost=True)
+    _scroll_profile_column(hwnd, 0.16)
+    _scroll_profile_column(hwnd, 0.86)
+    infos, _timed_out = _read_window(hwnd, announce=False)
+    side = extract_sidebar_facts(infos)
+    if side.get("clientName") and (not client_name or client_name.casefold().startswith("view")):
+        client_name = side["clientName"]
+        say(f"[Copilot] Customer profile handle: {client_name}")
+    if side.get("clientNotes"):
+        say(f"[Copilot] Customer profile notes: {side['clientNotes'][:160]}")
+    if side.get("personaNotes"):
+        say(f"[Copilot] Persona profile notes: {side['personaNotes'][:160]}")
     result = handle_claimed_chat(
         history_now,
         client_id=client_id,
         client_name=client_name,
-        persona_city=snapshot.profile_location,
+        header_name=client_name,
+        header_city=side.get("clientCity") or "",
+        persona_city=snapshot.profile_location or side.get("personaCity") or "",
         logbook=logbook,
     )
     for idx, option in enumerate(result.options, 1):
         say(f"Option {idx}: {option}")
     fields = dict(result.logbook_fields or {})
-    comment = logbook_comment(fields)
-    _open_customer_profile(hwnd, infos)
-    time.sleep(0.3)
-    infos, _timed_out = _read_window(hwnd, announce=False)
-    if comment:
+    if side.get("clientName") and not fields.get("clientName"):
+        fields["clientName"] = side["clientName"]
+    if side.get("clientCity") and not fields.get("clientCity"):
+        fields["clientCity"] = side["clientCity"]
+    if side.get("clientNotes"):
+        fields["clientNotes"] = "; ".join(
+            part for part in (fields.get("clientNotes"), side["clientNotes"]) if part
+        )
+    fields["personaName"] = side.get("personaName") or fields.get("personaName") or ""
+    fields["personaCity"] = side.get("personaCity") or ""
+    fields["personaNotes"] = side.get("personaNotes") or ""
+    customer_comment = logbook_comment(fields)
+    persona_comment = persona_logbook_comment(fields)
+    if customer_comment:
         try:
-            if _fill_customer_log(hwnd, infos, fields):
+            if _fill_sided_log(hwnd, infos, customer_comment, leftmost=True):
                 say("[Copilot] Customer logbook Other comment typed and saved. Send was not clicked.")
         except Exception as exc:
-            say(f"[Copilot] Logbook click skipped: {exc}")
+            say(f"[Copilot] Customer logbook skipped: {exc}")
+        _dismiss_overlays()
+        time.sleep(0.25)
+        infos, _timed_out = _read_window(hwnd, announce=False)
+    if persona_comment:
+        try:
+            if _fill_sided_log(hwnd, infos, persona_comment, leftmost=False):
+                say("[Copilot] Persona logbook Other comment typed and saved. Send was not clicked.")
+        except Exception as exc:
+            say(f"[Copilot] Persona logbook skipped: {exc}")
         _dismiss_overlays()
         time.sleep(0.25)
         infos, _timed_out = _read_window(hwnd, announce=False)
@@ -907,8 +1139,13 @@ def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
         return False
     time.sleep(0.25)
     _clear_focused_edit()
-    say("[Copilot] Typing slowly into the reply box (real keys, no paste, no search bar)...")
-    _type_into_focused(text)
+    blob = " ".join(_uia_tokens(infos)).casefold()
+    extra_slow = "auto-typing" in blob or "message was removed" in blob
+    if extra_slow:
+        say("[Copilot] Typing extra slowly after an auto-typing warning (no paste)...")
+    else:
+        say("[Copilot] Typing slowly into the reply box (real keys, no paste, no search bar)...")
+    _type_into_focused(text, extra_slow=extra_slow)
     return True
 
 
@@ -931,32 +1168,50 @@ def _click_composer(hwnd: int, chosen: dict) -> bool:
     return True
 
 
-def _open_customer_profile(hwnd: int, infos: list[dict]) -> bool:
-    chosen = pick_named_control(infos, "profile details", "profiledetails", leftmost=True)
+def _open_named(hwnd: int, infos: list[dict], needle: str, *, leftmost: bool = True) -> bool:
+    chosen = pick_named_control(infos, needle, leftmost=leftmost, rightmost=not leftmost)
     if chosen is None:
         return False
-    say("[Copilot] Clicking customer PROFILE DETAILS...")
+    say(f"[Copilot] Clicking {needle.upper()}...")
     _focus(hwnd)
     return _click_candidate(hwnd, chosen)
 
 
-def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> bool:
-    comment = logbook_comment(fields)
+def _scroll_profile_column(hwnd: int, x_ratio: float) -> None:
+    _focus(hwnd)
+    left, top, width, height = _window_rect(hwnd)
+    x = left + int(width * x_ratio)
+    y = top + int(height * 0.48)
+    _click_screen(x, y)
+    time.sleep(0.15)
+    for _ in range(7):
+        _mouse_wheel(-120)
+        time.sleep(0.16)
+
+
+def _open_customer_profile(hwnd: int, infos: list[dict]) -> bool:
+    return _open_named(hwnd, infos, "profile details", leftmost=True)
+
+
+def _fill_sided_log(hwnd: int, infos: list[dict], comment: str, *, leftmost: bool) -> bool:
     if not comment:
         return False
+    side = "customer" if leftmost else "persona"
     add = pick_named_control(
         infos,
         "add new log",
         "addnewlogbookbutton-customer",
-        leftmost=True,
+        "addnewlogbookbutton-profile",
+        leftmost=leftmost,
+        rightmost=not leftmost,
     )
     if add is None:
-        say("[Copilot] Customer ADD NEW LOG was not in the window tree.")
+        say(f"[Copilot] {side} ADD NEW LOG was not in the window tree.")
         return False
-    say("[Copilot] Clicking customer ADD NEW LOG...")
+    say(f"[Copilot] Clicking {side} ADD NEW LOG...")
     _focus(hwnd)
     _click_candidate(hwnd, add)
-    time.sleep(0.45)
+    time.sleep(0.7)
     after, _timed_out = _read_window(hwnd, announce=False)
     category = pick_named_control(after, "logbookcategoryselect", "category")
     if category:
@@ -971,33 +1226,23 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
     if other:
         say("[Copilot] Choosing logbook category Other...")
         _click_candidate(hwnd, other)
-        time.sleep(0.2)
+        time.sleep(0.25)
         after, _timed_out = _read_window(hwnd, announce=False)
-    box = pick_named_control(after, "logbookcomment", "logbook comment")
-    if box is None:
-        for row in after:
-            blob = _candidate_blob(row).casefold()
-            ctype = str(row.get("control_type") or "").casefold()
-            if (
-                "comment" in blob
-                and "edit" in ctype
-                and not is_search_or_chrome_edit(row)
-                and not is_chat_draft_marker(row)
-            ):
-                box = row
-                break
+    warning = pick_named_control(after, "your message is too short")
+    composer_top = int(warning.get("top") or 0) if warning else None
+    box = pick_logbook_comment(after, composer_top=composer_top)
     if box is None:
         say("[Copilot] Logbook comment box was not found.")
         return False
     if not _click_candidate(hwnd, box):
         say("[Copilot] Logbook comment box was not found.")
         return False
-    time.sleep(0.12)
+    time.sleep(0.18)
     _clear_focused_edit()
-    say("[Copilot] Typing the customer logbook comment...")
+    say(f"[Copilot] Typing the {side} logbook comment slowly...")
     say(f"[Copilot] Logbook: {comment}")
     _type_into_focused(comment)
-    time.sleep(0.5)
+    time.sleep(0.6)
     after, _timed_out = _read_window(hwnd, announce=False)
     save = pick_logbook_save(after)
     if save is None:
@@ -1008,8 +1253,12 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
         say("[Copilot] Logbook save control was not found (Send was not clicked).")
         _dismiss_overlays()
         return False
-    say("[Copilot] Saving the customer log (Send was not clicked)...")
+    say("[Copilot] Saving the log (Send was not clicked)...")
     return _click_candidate(hwnd, save)
+
+
+def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> bool:
+    return _fill_sided_log(hwnd, infos, logbook_comment(fields), leftmost=True)
 
 
 def _scroll_chat_history(hwnd: int) -> None:
@@ -1523,17 +1772,30 @@ def _send_ctrl_a() -> None:
 def _clear_focused_edit() -> None:
     """Backspace the focused field. Never clipboard paste. Never Enter. Never Ctrl+A."""
     for _ in range(24):
-        _tap_vk(0x08, shift=False)
-        time.sleep(0.012)
+        _tap_vk(0x08, shift=False, hold_s=0.02)
+        time.sleep(0.025)
 
 
-def _type_into_focused(text: str, delay_s: float = 0.05) -> None:
+def human_key_delay_s(ch: str, index: int) -> float:
+    """Human-like pause. Chat Home Base flags sub-100ms auto-typing."""
+    base = 0.22 + (index % 5) * 0.02
+    if ch in ".!?":
+        return base + 0.55
+    if ch in ",;:":
+        return base + 0.28
+    if ch == " ":
+        return base + 0.08
+    return base
+
+
+def _type_into_focused(text: str, delay_s: float = 0.22, extra_slow: bool = False) -> None:
     """US-keyboard virtual keys. Never Ctrl, never clipboard, never pywinauto send_keys."""
-    pause = max(delay_s, 0.05)
-    for ch in text:
+    del delay_s
+    for index, ch in enumerate(text):
         if ch in {"\n", "\r", "\t"}:
             continue
         pair = us_vk_for_char(ch)
+        hold = random.uniform(0.04, 0.10)
         if pair is None:
             _send_unicode_char(ch)
         else:
@@ -1541,7 +1803,10 @@ def _type_into_focused(text: str, delay_s: float = 0.05) -> None:
             if vk in {0x11, 0x12}:  # Ctrl / Alt — never
                 _send_unicode_char(ch)
             else:
-                _tap_vk(vk, shift=shift)
+                _tap_vk(vk, shift=shift, hold_s=hold)
+        pause = human_key_delay_s(ch, index) + random.uniform(0.06, 0.18)
+        if extra_slow:
+            pause += 0.12
         time.sleep(pause)
 
 
@@ -1631,16 +1896,18 @@ def us_vk_for_char(ch: str) -> tuple[int, bool] | None:
     return pair
 
 
-def _tap_vk(vk: int, *, shift: bool) -> None:
+def _tap_vk(vk: int, *, shift: bool, hold_s: float = 0.05) -> None:
     import ctypes
 
     if vk == VK_CONTROL:
         return
     user32 = ctypes.windll.user32
+    scan = user32.MapVirtualKeyW(vk, 0)
     if shift:
         user32.keybd_event(VK_SHIFT, 0, 0, 0)
-    user32.keybd_event(vk, 0, 0, 0)
-    user32.keybd_event(vk, 0, 2, 0)
+    user32.keybd_event(vk, scan, 0, 0)
+    time.sleep(max(hold_s, 0.03))
+    user32.keybd_event(vk, scan, 2, 0)
     if shift:
         user32.keybd_event(VK_SHIFT, 0, 2, 0)
 

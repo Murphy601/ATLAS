@@ -117,6 +117,32 @@ def test_drafts_answer_the_latest_client_message(tmp_path) -> None:
         assert "colour" not in option.casefold()
 
 
+def test_drafts_answer_intimate_latest_not_small_talk(tmp_path) -> None:
+    result = handle_claimed_chat(
+        [
+            {
+                "sender": "client",
+                "text": "I would like you to start being on top of me, you kissing me working your way down to put my cock in your mouth, sucking my balls from time to time",
+            },
+        ],
+        client_id="bruce-latest",
+        client_name="Bruce8111",
+        logbook_dir=tmp_path,
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "kiss" in blob or "on top" in blob or "mouth" in blob
+    assert "weekday morning" not in blob
+    assert "playlist" not in blob
+    assert "hobby you'd pick back up" not in blob
+    for option in result.options:
+        assert option.count("?") == 1
+        assert "my dick" not in option.casefold()
+        assert "come over" not in option.casefold()
+        assert len(option) >= 75
+
+
 def test_illegal_incoming_returns_no_options(tmp_path) -> None:
     result = draft_replies(
         "Alex",

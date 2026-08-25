@@ -30,6 +30,12 @@ DATING_RE = re.compile(
     r"are\s+we\s+dating|boyfriend|girlfriend)\b",
     flags=re.I,
 )
+INTIMATE_RE = re.compile(
+    r"\b(?:cock|clit|pussy|g-?spot|nipples?|balls?|suck(?:ing)?|kiss(?:ing)?|"
+    r"on top of me|in your mouth|blowjob|oral|horny|fuck|tease my|wet clit|"
+    r"come hither|medical students?)\b",
+    flags=re.I,
+)
 
 
 @dataclass
@@ -39,6 +45,7 @@ class ParsedMessage:
     asked_location: bool = False
     asked_activity: bool = False
     asked_sports: bool = False
+    asked_intimate: bool = False
     meetup_request: bool = False
     dating_request: bool = False
     story_bits: list[str] = field(default_factory=list)
@@ -65,6 +72,7 @@ def parse_message(user_message: str) -> ParsedMessage:
     parsed.asked_sports = bool(SPORTS_RE.search(text))
     parsed.meetup_request = bool(MEETUP_RE.search(text))
     parsed.dating_request = bool(DATING_RE.search(text))
+    parsed.asked_intimate = bool(INTIMATE_RE.search(text))
     # Keep short first-person notes so drafts can reference them.
     for match in re.finditer(r"\bI(?:'m| am| have| like| love)\s+[^.]{3,80}", text, flags=re.I):
         parsed.story_bits.append(match.group(0).strip())

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from .cta import CTA_BANK, CTA_BY_CATEGORY
+from .cta import CTA_BANK, CTA_BY_CATEGORY, INTIMATE_CTAS
 from .location import WINDOW_MINUTES, location_sentence, validate_city
 from .logbook import fingerprint
 from .parser import ParsedMessage
@@ -44,6 +44,12 @@ BAD_FIRST_NAMES = frozenset(
         "like",
         "love",
         "actually",
+        "view",
+        "rental",
+        "ground",
+        "floor",
+        "data",
+        "analyst",
     }
 )
 
@@ -80,7 +86,9 @@ FACT_BRIDGES = (
 
 
 def _cta_pool(parsed: ParsedMessage, used: set[str]) -> list[str]:
-    if parsed.asked_sports:
+    if parsed.asked_intimate:
+        ordered = list(INTIMATE_CTAS) + list(CTA_BANK)
+    elif parsed.asked_sports:
         ordered = list(CTA_BY_CATEGORY.get("sports") or ()) + list(CTA_BANK)
     elif parsed.asked_activity:
         ordered = list(CTA_BY_CATEGORY.get("weekend") or ()) + list(CTA_BANK)
@@ -125,12 +133,15 @@ def us_english(text: str) -> str:
 
 
 def _safe_first_name(name: str) -> str:
-    first = (name or "").strip().split()[0] if (name or "").strip() else ""
-    if not first:
+    raw = (name or "").strip().split()[0] if (name or "").strip() else ""
+    if not raw:
         return ""
+    match = re.match(r"^([A-Za-z]{3,20})", raw)
+    if not match:
+        return ""
+    first = match.group(1)
+    first = first[:1].upper() + first[1:]
     if first.casefold() in BAD_FIRST_NAMES:
-        return ""
-    if not first.isalpha() or not first[:1].isupper() or len(first) < 3:
         return ""
     if first.casefold().endswith("ing") and first.casefold() not in {"king"}:
         return ""
@@ -192,6 +203,27 @@ def react_to_latest(text: str, ack_index: int) -> str:
             "You are kind to say that. I want you to feel just as sure around me.",
         )
         return lines[ack_index % 3]
+    if re.search(r"\b(?:on top of me|kissing me|in your mouth|sucking my balls|put my cock)\b", lowered):
+        lines = (
+            "I like how clearly you pictured that. I'd climb on top of you, kiss you slow, and work my way down when I feel you getting impatient.",
+            "Thank you for telling me exactly what you want. I'd stay over you, kissing down your chest, taking my time with my mouth until you melt.",
+            "That image is doing something to me. I'd pin you under me a little, kiss you, then slide down and spoil you with my mouth.",
+        )
+        return lines[ack_index % 3]
+    if re.search(r"\b(?:g-?spot|come hither|medical students?|find it)\b", lowered):
+        lines = (
+            "I love that you know a woman's body that well. A man who can actually find it, not just talk about it, is incredibly attractive to me.",
+            "That confidence is so sexy. I'd let you take your time showing me, and I'd be loud enough that you'd know you were right.",
+            "Thank you for saying that like you mean it. I like being with a man who taught that kind of care, and I'd enjoy every second of it.",
+        )
+        return lines[ack_index % 3]
+    if re.search(r"\b(?:clit|nipples?|pussy|cock|wet|sucking|tease)\b", lowered):
+        lines = (
+            "Mmm, I can already feel that. I'd let you take your time with me and I'd be so wet for the way you talk.",
+            "That made me a little breathless. I like a man who knows what he wants, and I'd answer you with my body, not a shy little yes.",
+            "I love how direct you are. I'd stay right there with you, teasing you back until you could feel how much I want it.",
+        )
+        return lines[ack_index % 3]
     if "dog" in lowered:
         lines = (
             "I love that you make time for your dog. That softness is really attractive to me.",
@@ -231,7 +263,7 @@ def slot_a(
         parts.append(banter[ack_index % len(banter)])
     if not parts:
         parts.append(react_to_latest(parsed.text, ack_index))
-        if first and ack_index == 1:
+        if first and ack_index == 1 and not parsed.asked_intimate:
             parts.append(f"{first}, I like how present you are with me.")
     # Deduplicate while keeping order.
     seen: set[str] = set()
@@ -248,7 +280,7 @@ def slot_a(
 
 
 def slot_b(parsed: ParsedMessage, *, include_sports: bool, today: date | None = None) -> str:
-    if parsed.asked_sports or parsed.asked_location:
+    if parsed.asked_sports or parsed.asked_location or parsed.asked_intimate:
         return ""
     if not include_sports:
         return ""

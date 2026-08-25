@@ -213,6 +213,21 @@ def logbook_comment(fields: dict[str, str]) -> str:
     return ". ".join(parts)
 
 
+def persona_logbook_comment(fields: dict[str, str]) -> str:
+    """Operator-facing persona log from the right-hand 'you are' column."""
+    parts: list[str] = []
+    name = (fields.get("personaName") or "").strip()
+    city = (fields.get("personaCity") or "").strip()
+    notes = (fields.get("personaNotes") or "").strip()
+    if name:
+        parts.append(f"Persona: {name}")
+    if city:
+        parts.append(f"City: {city}")
+    if notes:
+        parts.append(f"Details: {notes}")
+    return ". ".join(parts)
+
+
 def locality_from_profile_location(text: str) -> str:
     blob = " ".join((text or "").split())
     match = re.search(r"locality:\s*([^,\n]+)", blob, flags=re.I)
