@@ -11,7 +11,7 @@ def sports_banter(today: date | None = None) -> list[str]:
     day = today or date.today()
     lines: list[str] = [
         "I've been flipping between MLB games whenever I get a spare minute.",
-        "NFL pre-season has been on in the background here.",
+        "I've had NFL pre-season on in the background here.",
     ]
     start, end = UFC_NIGHT
     if start <= day <= end:

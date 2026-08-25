@@ -57,7 +57,7 @@ The Tampermonkey file `userscript/chat-copilot.user.js` is a fallback (`@match` 
 
 ## Message formula
 
-1. **Slot A** — answer every asked question first (location window, activity, sports). Meetup / come over is deflected, never accepted. Incoming illegal topics hard-block with an empty draft box.
+1. **Slot A** — first-person answer to every asked question (location window, activity, sports). Meetup / come over is deflected, never accepted. Incoming illegal topics hard-block with an empty draft box.
 2. **Slot B** — optional sports/small-talk from the calendar.
 3. **Slot C** — exactly one open-ended CTA.
 

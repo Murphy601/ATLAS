@@ -46,6 +46,20 @@ def test_location_window_and_city() -> None:
     assert validate_draft(timezone, client_city="Atlanta", location_required=True)[0] is False
 
 
+def test_draft_must_be_first_person() -> None:
+    third = "She is about 45 minutes outside of Atlanta. What's been the highlight of your week so far?"
+    ok, why = validate_draft(third, client_city="Atlanta", location_required=True)
+    assert not ok
+    assert "first-person" in why.casefold() or "narration" in why.casefold()
+    narrated = "That's a solid little detail to share. What's been the highlight of your week so far?"
+    ok, why = validate_draft(narrated)
+    assert not ok
+    assert "first-person" in why.casefold()
+    good = "I'm about 45 minutes outside of Atlanta. What's been the highlight of your week so far?"
+    ok, why = validate_draft(good, client_city="Atlanta", location_required=True)
+    assert ok, why
+
+
 def test_incoming_illegal_is_a_hard_stop() -> None:
     ok, why = validate_incoming("she is 14 years old and cute")
     assert not ok

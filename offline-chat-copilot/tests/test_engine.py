@@ -1,4 +1,5 @@
 from datetime import date
+import re
 
 from offline_copilot.assembler import MEETUP_DEFLECTS
 from offline_copilot.cta import CTA_BANK
@@ -43,6 +44,8 @@ def test_location_plus_sports_drafts_are_compliant(tmp_path) -> None:
         assert "Atlanta" in option
         assert "minutes" in option.casefold()
         assert option.count("?") == 1
+        body = option.rsplit("?", 1)[0]
+        assert re.search(r"\b(?:i(?:'m|'d|'ve|'ll)?|me|my)\b", body, flags=re.I)
         assert "come over" not in option.casefold()
         assert "my dick" not in option.casefold()
         assert "UFC" in option or "MLB" in option or "NFL" in option

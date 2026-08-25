@@ -12,11 +12,11 @@ from .sports import sports_banter
 
 
 ACKS = (
-    "That's a solid little detail to share.",
+    "I like that little detail you shared.",
     "I like how you put that.",
-    "That actually paints a clear picture.",
+    "I can actually picture that clearly.",
     "I'm glad you said that instead of keeping it generic.",
-    "That stuck with me for a second.",
+    "I sat with that for a second.",
 )
 
 ACTIVITY_LINES = (
@@ -29,9 +29,9 @@ MEETUP_DEFLECTS = (
     # Acknowledge & redirect — no later-week promise, no extra question (Slot C is the CTA).
     "I won't be able to fit that into my schedule. By the way, I was meaning to ask you something else.",
     # Cool the intensity without talking about dates or meeting up.
-    "That's sweet of you to ask, but right now isn't the best time for me. That reminds me of something I wanted to ask.",
+    "I think that's sweet of you to ask, but right now isn't the best time for me. That reminds me of something I wanted to ask.",
     # Humor, then shift. No bar/spot invite that sounds like a meetup.
-    "Wow, that's a lot to process. I need to think about it. I deserve a drink or two after that.",
+    "I've got to process that. That's a lot to process. I deserve a drink or two after that.",
     # Gratitude and a clean topic change.
     "I'm flattered by your offer, thank you. On a different note, I wanted to get your thoughts on something.",
 )
@@ -42,9 +42,9 @@ def meetup_deflect_line(option_index: int) -> str:
     return MEETUP_DEFLECTS[option_index % len(MEETUP_DEFLECTS)]
 
 FACT_BRIDGES = (
-    "That reminds me of what you said about {fact}.",
+    "I'm thinking back to what you said about {fact}.",
     "I keep thinking back to you mentioning {fact}.",
-    "It tracks with what you told me about {fact}.",
+    "I've been turning over what you told me about {fact}.",
 )
 
 
@@ -97,7 +97,7 @@ def slot_a(
     if parsed.story_bits and not parts:
         bit = parsed.story_bits[0]
         parts.append(f"{ACKS[ack_index % len(ACKS)]}")
-        parts.append(f"You mentioning '{bit}' actually tells me a lot.")
+        parts.append(f"I'm glad you mentioned '{bit}'. That actually tells me a lot.")
     if facts and not parsed.asked_location:
         fact = _clip_fact(facts[ack_index % len(facts)])
         bridge = FACT_BRIDGES[ack_index % len(FACT_BRIDGES)].format(fact=fact)

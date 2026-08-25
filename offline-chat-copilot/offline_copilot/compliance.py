@@ -80,6 +80,12 @@ HANDLE_SHARE_RE = re.compile(
     flags=re.I,
 )
 
+FIRST_PERSON_RE = re.compile(r"\b(?:i(?:'m|'d|'ve|'ll)?|me|my)\b", flags=re.I)
+THIRD_PERSON_NARRATION_RE = re.compile(
+    r"\b(?:he|she|they)\s+(?:is|are|'s)\s+(?:about\s+\d+\s+minutes|located|taking|watching)\b",
+    flags=re.I,
+)
+
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip())
@@ -183,4 +189,9 @@ def validate_draft(
         return False, f"Must contain exactly 1 question mark CTA (found {questions})"
     if not raw.endswith("?"):
         return False, "CTA must be the final sentence"
+    body = raw.rsplit("?", 1)[0]
+    if THIRD_PERSON_NARRATION_RE.search(body):
+        return False, "Draft must be first-person, not he/she narration"
+    if not FIRST_PERSON_RE.search(body):
+        return False, "Draft must be a first-person reply"
     return True, "Passed"
