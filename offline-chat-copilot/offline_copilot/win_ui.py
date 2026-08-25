@@ -72,6 +72,14 @@ LIVE_TESTIDS = (
 )
 DRAFT_TESTIDS = ("messagetextarea", "typeyourreplyhere")
 LOADER_TESTIDS = ("claimloadercontainer", "claimloader")
+# UIA often exposes the composer warning, not data-testid="messageTextArea".
+LIVE_HINTS = (
+    "type your reply here",
+    "your message is too short",
+    "message is too short",
+    "0/75",
+    "0 / 75",
+)
 CHROME_UI_TOKENS = (
     "address and search bar",
     "address bar",
@@ -176,6 +184,14 @@ def waiting_reason(names: list[str], title: str = "") -> str:
     return ""
 
 
+def has_live_composer(names: list[str]) -> bool:
+    """Reply box is on screen. UIA often names the 0/75 warning, not messageTextArea."""
+    if _has_token(names, *DRAFT_TESTIDS, "messagetextarea"):
+        return True
+    lowered = " ".join(names).casefold()
+    return any(hint in lowered for hint in LIVE_HINTS)
+
+
 def describe_copilot_state(
     snapshot: PageSnapshot,
     names: list[str],
@@ -198,13 +214,15 @@ def describe_copilot_state(
         return "[Copilot] Waiting for a live claimed conversation. Not typing."
     who = snapshot.customer_name or "this client"
     cid = snapshot.chat_id or "no chat-id yet"
-    return f"[Copilot] Live claim {cid} / {who}."
+    n_msgs = len(parse_messages_from_names(names))
+    return f"[Copilot] Live claim {cid} / {who} ({n_msgs} visible lines)."
 
 
 def preview_window_names(names: list[str], limit: int = 10) -> str:
     interesting = (
         "waiting",
         "type your reply",
+        "too short",
         "claimed",
         "message",
         "profile",
@@ -410,18 +428,29 @@ def pick_named_control(
     return hits[0]
 
 
-def pick_draft_edit(candidates: list[dict], *, allow_fallback: bool = False) -> dict | None:
+def pick_draft_edit(
+    candidates: list[dict],
+    *,
+    allow_fallback: bool = False,
+    live: bool = False,
+) -> dict | None:
     """Only the Chat Home Base reply box. Never the Chromium address bar."""
     marked = [row for row in candidates if is_chat_draft_marker(row) and not is_omnibox(row)]
     if marked:
         return marked[0]
-    if not allow_fallback:
+    if not allow_fallback and not live:
         return None
-    edits = [row for row in candidates if is_draft_edit(row) and not is_omnibox(row)]
-    if not edits:
+    edits = [
+        row
+        for row in candidates
+        if is_draft_edit(row) and not is_omnibox(row) and int(row.get("top") or 0) > 200
+    ]
+    wide = [row for row in edits if int(row.get("width") or 0) >= 180]
+    pool = wide or edits
+    if not pool:
         return None
-    edits.sort(key=lambda row: (int(row.get("top") or 0), int(row.get("width") or 0)), reverse=True)
-    return edits[0]
+    pool.sort(key=lambda row: (int(row.get("top") or 0), int(row.get("width") or 0)), reverse=True)
+    return pool[0]
 
 
 def looks_like_chat_line(name: str) -> bool:
@@ -471,6 +500,11 @@ def extract_chat_id(names: list[str]) -> str:
         compact = (name or "").replace(" ", "").strip()
         if CHAT_ID_RE.fullmatch(compact):
             return compact
+        match = CHAT_ID_RE.search(name or "")
+        if match:
+            start = match.start()
+            if start == 0 or not (name or "")[start - 1].isalpha():
+                return match.group(1)
         if "chat-id" in (name or "").casefold() or _norm_token(name) == "chatid":
             if idx + 1 < len(names):
                 nxt = names[idx + 1].replace(" ", "").strip()
@@ -525,20 +559,20 @@ def snapshot_from_uia_names(
     del has_edit, has_send  # Generic address-bar / search edits are not a claimed chat.
     lowered = " ".join(names).casefold()
     title_l = (title or "").casefold()
-    has_loader = _has_token(names, *LOADER_TESTIDS) or any(hint in lowered for hint in WAITING_HINTS)
-    has_draft = _has_token(names, *DRAFT_TESTIDS)
-    has_messages = _has_token(names, "messageslist", "messageitem")
+    waiting_copy = _has_token(names, *LOADER_TESTIDS) or any(hint in lowered for hint in WAITING_HINTS)
+    composer = has_live_composer(names)
+    thread = _has_token(names, "messageslist", "messageitem") or bool(parse_messages_from_names(names))
     has_claimed_notice = (
         _has_token(names, "claimednotification")
         or "chat is claimed" in lowered
         or "chat is claimed" in title_l
     )
     chat_id = extract_chat_id(names)
-    waiting_room = has_loader or any(hint in lowered for hint in WAITING_HINTS)
-    # A leftover chat-id in the a11y tree is not a live claim. Need the reply box or thread.
-    live = bool(has_draft or has_messages or has_claimed_notice) and not waiting_room
-    if waiting_room:
+    # Green waiting copy can leave old bubbles in the tree. The composer / 0/75 warning is the lock.
+    if waiting_copy and not composer:
         live = False
+    else:
+        live = bool(composer or has_claimed_notice or thread)
     waiting = not live
     customer_name = extract_customer_name(names)
     return PageSnapshot(
@@ -698,7 +732,7 @@ def _process_live_chat(
 def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
     if not text:
         return False
-    chosen = pick_draft_edit(infos, allow_fallback=False)
+    chosen = pick_draft_edit(infos, allow_fallback=False, live=True)
     if chosen is None:
         return False
     if is_send_control_name(str(chosen.get("name") or "")):

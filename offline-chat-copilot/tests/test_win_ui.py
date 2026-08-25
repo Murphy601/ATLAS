@@ -9,6 +9,7 @@ from offline_copilot.win_ui import (
     _escape_keys,
     describe_copilot_state,
     extract_customer_name,
+    has_live_composer,
     keep_enumerated_window,
     parse_messages_from_names,
     pick_draft_edit,
@@ -144,8 +145,59 @@ def test_pick_draft_edit_is_lowest_not_address_bar_or_send() -> None:
         ],
         allow_fallback=False,
     )
-    assert marked is not None
+    assert chosen is not None
     assert marked.get("automation_id") == "messageTextArea"
+
+
+def test_live_too_short_warning_is_a_claimed_chat() -> None:
+    snap = snapshot_from_uia_names(
+        [
+            "chathomebase.com/chat/claimed",
+            "Your message is too short",
+            "I don't have anyone coming to clean if that is what you are thinking. I can move around by myself and have a cane and walker that I once used.",
+            "You are so confident and I would really want to have that with you. Can get the idea as well?",
+            "My fave place is Florence, Italy. Really old and its a great walking city.",
+        ],
+        title="Chat | Chat Home Base - Chromium",
+    )
+    assert snap.waiting is False
+    assert snap.claimed is True
+    assert has_live_composer(
+        ["Your message is too short", "chathomebase.com/chat/claimed"]
+    )
+
+
+def test_waiting_room_leftover_bubbles_are_not_live() -> None:
+    snap = snapshot_from_uia_names(
+        [
+            "Waiting for conversation to be claimed...",
+            "I don't have anyone coming to clean if that is what you are thinking. I can move around by myself.",
+        ],
+        title="Chat | Chat Home Base - Chromium",
+    )
+    assert snap.waiting is True
+    assert snap.claimed is False
+
+
+def test_live_fallback_edit_skips_address_bar() -> None:
+    chosen = pick_draft_edit(
+        [
+            {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
+            {"name": "", "control_type": "Edit", "top": 880, "width": 420},
+        ],
+        live=True,
+    )
+    assert chosen is not None
+    assert chosen["top"] == 880
+    assert (
+        pick_draft_edit(
+            [
+                {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
+            ],
+            live=True,
+        )
+        is None
+    )
 
 
 def test_snapshot_waiting_vs_live_from_uia() -> None:
