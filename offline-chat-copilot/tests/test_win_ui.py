@@ -116,11 +116,22 @@ def test_pick_draft_edit_is_lowest_not_address_bar_or_send() -> None:
             {"name": "Send", "control_type": "Button", "top": 900, "width": 80},
             {"name": "", "control_type": "Edit", "top": 880, "width": 420},
             {"name": "Search", "control_type": "Edit", "top": 120, "width": 200},
-        ]
+        ],
+        allow_fallback=True,
     )
     assert chosen is not None
     assert chosen["top"] == 880
     assert not is_forbidden_click(label=chosen.get("name") or "")
+    assert (
+        pick_draft_edit(
+            [
+                {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
+                {"name": "", "control_type": "Edit", "top": 880, "width": 420},
+            ],
+            allow_fallback=False,
+        )
+        is None
+    )
     marked = pick_draft_edit(
         [
             {"name": "", "control_type": "Edit", "top": 880, "width": 420},
@@ -158,6 +169,23 @@ def test_snapshot_waiting_vs_live_from_uia() -> None:
     )
     assert live.claimed is True
     assert live.chat_id == "USETN4695969"
+
+
+def test_waiting_room_copy_is_not_a_claimed_chat() -> None:
+    snap = snapshot_from_uia_names(
+        [
+            "Chat | Chat Home Base",
+            "Waiting for conversation to be claimed...",
+            "USETN4695969",
+            "UUSETN4695969",
+            "Address and search bar",
+        ],
+        has_edit=True,
+        has_send=True,
+        title="Chat | Chat Home Base - Chromium",
+    )
+    assert snap.waiting is True
+    assert snap.claimed is False
 
 
 def test_waiting_room_is_not_live_just_because_chromium_has_an_edit() -> None:

@@ -74,6 +74,23 @@ def test_logbook_does_not_reuse_the_same_cta(tmp_path) -> None:
     assert set(first.options).isdisjoint(set(second.options))
 
 
+def test_three_options_are_not_the_same_template(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "I had a pretty good day at work and then I walked the dog.",
+        client_id="US-opt",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    assert len(set(result.options)) == 3
+    stems = [option.split(".")[0] for option in result.options]
+    assert len(set(stems)) == 3
+    bridges = sum(1 for option in result.options if "thinking back to what you said" in option.casefold())
+    assert bridges <= 1
+
+
 def test_illegal_incoming_returns_no_options(tmp_path) -> None:
     result = draft_replies(
         "Alex",

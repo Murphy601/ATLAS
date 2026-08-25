@@ -43,9 +43,12 @@ HINDI_CHROMIUM = "क्रोमियम"
 CHROME_CLASS = "Chrome_WidgetWin_1"
 PICK_WAIT_S = 45.0
 PICK_INTERVAL_S = 2.5
-# Chat Home Base ids look like USETN4695969 — letters then a run of digits.
-CHAT_ID_RE = re.compile(r"\b([A-Z]{4,8}\d{5,12})\b")
+# Chat Home Base ids look like USETN4695969 (country + code + digits), not UUSETN... leftovers.
+CHAT_ID_RE = re.compile(r"\b([A-Z]{2}[A-Z]{2,3}\d{5,12})\b")
 WAITING_HINTS = (
+    "waiting for conversation to be claimed",
+    "waiting for a conversation",
+    "conversation to be claimed",
     "waiting for a claim",
     "waiting for next",
     "waiting for claim",
@@ -66,6 +69,9 @@ CHROME_UI_TOKENS = (
     "address and search bar",
     "address bar",
     "search or enter address",
+    "search or type a url",
+    "search or type to search",
+    "type a url",
     "bookmarks",
     "new tab",
     "reload",
@@ -124,6 +130,8 @@ CHAT_CHROME_EXACT = {
     "you are",
     "type your reply here",
     "your message is too short",
+    "waiting for conversation to be claimed",
+    "action required",
 }
 CHAT_CHROME_TOKENS = (
     "chathomebase.com",
@@ -139,6 +147,9 @@ CHAT_CHROME_TOKENS = (
     "logbook",
     "profile details",
     "no logs yet",
+    "waiting for conversation",
+    "conversation to be claimed",
+    "action required",
 )
 
 
@@ -252,9 +263,26 @@ def is_chat_draft_marker(candidate: dict | str) -> bool:
     return _has_token([blob], *DRAFT_TESTIDS)
 
 
+def is_omnibox(candidate: dict) -> bool:
+    name = str(candidate.get("name") or "").casefold()
+    if is_chrome_ui_name(name):
+        return True
+    return any(
+        token in name
+        for token in (
+            "address",
+            "omnibox",
+            "search or type",
+            "type a url",
+        )
+    )
+
+
 def is_draft_edit(candidate: dict) -> bool:
     control_type = str(candidate.get("control_type") or "").casefold()
     name = str(candidate.get("name") or "")
+    if is_omnibox(candidate):
+        return False
     if is_chat_draft_marker(candidate):
         return True
     if "edit" not in control_type:
@@ -289,14 +317,14 @@ def pick_named_control(
     return hits[0]
 
 
-def pick_draft_edit(candidates: list[dict], *, allow_fallback: bool = True) -> dict | None:
-    """Prefer the Chat Home Base draft box. Never the address bar, never Send."""
-    marked = [row for row in candidates if is_chat_draft_marker(row)]
+def pick_draft_edit(candidates: list[dict], *, allow_fallback: bool = False) -> dict | None:
+    """Only the Chat Home Base reply box. Never the Chromium address bar."""
+    marked = [row for row in candidates if is_chat_draft_marker(row) and not is_omnibox(row)]
     if marked:
         return marked[0]
     if not allow_fallback:
         return None
-    edits = [row for row in candidates if is_draft_edit(row)]
+    edits = [row for row in candidates if is_draft_edit(row) and not is_omnibox(row)]
     if not edits:
         return None
     edits.sort(key=lambda row: (int(row.get("top") or 0), int(row.get("width") or 0)), reverse=True)
@@ -413,8 +441,10 @@ def snapshot_from_uia_names(
         or "chat is claimed" in title_l
     )
     chat_id = extract_chat_id(names)
-    live = bool(has_draft or has_messages or has_claimed_notice or chat_id)
-    if has_loader and not has_draft and not has_messages:
+    waiting_room = has_loader or any(hint in lowered for hint in WAITING_HINTS)
+    # A leftover chat-id in the a11y tree is not a live claim. Need the reply box or thread.
+    live = bool(has_draft or has_messages or has_claimed_notice) and not waiting_room
+    if waiting_room:
         live = False
     waiting = not live
     customer_name = extract_customer_name(names)
@@ -508,6 +538,9 @@ def _process_live_chat(
     history: list[dict[str, str]] | None = None,
 ) -> None:
     del history
+    if snapshot.waiting:
+        say("[Copilot] Page is still waiting for a conversation to be claimed. Not typing.")
+        return
     say("[Copilot] Claimed chat is live. Scrolling the thread so older messages can load...")
     _scroll_chat_history(hwnd)
     time.sleep(0.45)
@@ -520,6 +553,9 @@ def _process_live_chat(
     tokens = _uia_tokens(infos)
     history_now = parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
+    if current.waiting:
+        say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
+        return
     say(f"[Copilot] Parsed {len(history_now)} visible lines from the IX window.")
     client_id = current.chat_id or snapshot.chat_id or current.customer_name or snapshot.customer_name or "claimed"
     client_name = current.customer_name or snapshot.customer_name
@@ -555,7 +591,7 @@ def _process_live_chat(
 def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
     if not text:
         return False
-    chosen = pick_draft_edit(infos)
+    chosen = pick_draft_edit(infos, allow_fallback=False)
     if chosen is None:
         return False
     if is_send_control_name(str(chosen.get("name") or "")):

@@ -17,6 +17,17 @@ ACKS = (
     "I can actually picture that clearly.",
     "I'm glad you said that instead of keeping it generic.",
     "I sat with that for a second.",
+    "That actually made me smile a bit.",
+    "I wasn't expecting you to put it like that.",
+    "Okay, I hear you on that.",
+)
+SELF_DRAFT_MARKERS = (
+    "thinking back to what you said",
+    "keep thinking back to you mentioning",
+    "turning over what you told me",
+    "like that little detail you shared",
+    "like how you put that",
+    "i can actually picture that clearly",
 )
 
 ACTIVITY_LINES = (
@@ -66,6 +77,19 @@ def _cta_pool(parsed: ParsedMessage, used: set[str]) -> list[str]:
     return out or list(CTA_BANK)
 
 
+def _usable_facts(facts: list[str]) -> list[str]:
+    out: list[str] = []
+    for fact in facts:
+        text = " ".join((fact or "").split())
+        lowered = text.casefold()
+        if not text or len(text) > 90:
+            continue
+        if any(marker in lowered for marker in SELF_DRAFT_MARKERS):
+            continue
+        out.append(text)
+    return out
+
+
 def _clip_fact(fact: str) -> str:
     text = " ".join((fact or "").split())
     if len(text) > 80:
@@ -99,11 +123,14 @@ def slot_a(
         parts.append(banter[ack_index % len(banter)])
     if parsed.story_bits and not parts:
         bit = parsed.story_bits[0]
-        parts.append(f"{ACKS[ack_index % len(ACKS)]}")
-        parts.append(f"I'm glad you mentioned '{bit}'. That actually tells me a lot.")
-    if facts and not parsed.asked_location:
-        fact = _clip_fact(facts[ack_index % len(facts)])
-        bridge = FACT_BRIDGES[ack_index % len(FACT_BRIDGES)].format(fact=fact)
+        if not any(marker in bit.casefold() for marker in SELF_DRAFT_MARKERS):
+            parts.append(ACKS[ack_index % len(ACKS)])
+            if ack_index == 0:
+                parts.append(f"I'm glad you mentioned '{_clip_fact(bit)}'. That actually tells me a lot.")
+    usable = _usable_facts(facts)
+    if usable and not parsed.asked_location and ack_index == 0 and not parts:
+        fact = _clip_fact(usable[0])
+        bridge = FACT_BRIDGES[0].format(fact=fact)
         if bridge not in parts:
             parts.append(bridge)
     if not parts:
