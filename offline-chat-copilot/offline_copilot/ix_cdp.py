@@ -20,7 +20,13 @@ BROWSER_NAMES = {
     "chromium",
 }
 
-IX_PATH_MARKERS = ("ixbrowser", "ix-browser", "/ix browser/", "\\ix browser\\")
+IX_PATH_MARKERS = (
+    "ixbrowser",
+    "ix-browser",
+    "/ix browser/",
+    "\\ix browser\\",
+    "sensorfusionlab",
+)
 STOCK_CHROME_MARKERS = (
     "/google/chrome/",
     "/google/chrome beta/",
@@ -33,6 +39,8 @@ USER_DIR_RE = re.compile(r'--user-data-dir(?:=|\s+)(?:"([^"]+)"|(\S+))', re.I)
 
 CLAIMED_URL = "https://chathomebase.com/chat/claimed"
 SITE_HOST = "chathomebase.com"
+DEFAULT_DEBUG_PORTS = (9222, 9229, 9333)
+CDP_EMPTY_ROUNDS_BEFORE_FALLBACK = 1
 
 
 def parse_debug_port(command_line: str) -> int | None:
@@ -79,7 +87,16 @@ def _norm_path(value: str | None) -> str:
     return (value or "").lower().replace("\\", "/")
 
 
-def is_ix_chromium_exe(exe_path: str | None) -> bool:
+def _blob_has_ix_marker(blob: str) -> bool:
+    lowered = _norm_path(blob)
+    return any(marker.replace("\\", "/") in lowered for marker in IX_PATH_MARKERS)
+
+
+def is_ix_chromium_exe(
+    exe_path: str | None,
+    parent_exe: str | None = None,
+    command_line: str | None = None,
+) -> bool:
     """The open profile Chromium, not the IX dashboard/launcher."""
     path = _norm_path(exe_path)
     name = path.rsplit("/", 1)[-1]
@@ -87,7 +104,8 @@ def is_ix_chromium_exe(exe_path: str | None) -> bool:
         return False
     if name not in {"chrome.exe", "chromium.exe"}:
         return False
-    return "ixbrowser" in path or "ix-browser" in path
+    blob = " ".join(part for part in (path, _norm_path(parent_exe), command_line or "") if part)
+    return _blob_has_ix_marker(blob)
 
 
 def is_ix_launcher(title: str | None = None, exe_path: str | None = None) -> bool:
@@ -106,8 +124,13 @@ def is_ix_launcher(title: str | None = None, exe_path: str | None = None) -> boo
         "team management",
         "purchase plan",
         "synchronizer",
+        "please enter content",
     )
-    return any(token in lowered for token in tokens)
+    if any(token in lowered for token in tokens):
+        return True
+    if "dashboard" in lowered and "profile" in lowered:
+        return True
+    return False
 
 
 def is_stock_chrome_path(exe_path: str | None) -> bool:
@@ -124,6 +147,11 @@ def is_site_url(url: str) -> bool:
     return SITE_HOST in (url or "").lower()
 
 
+def should_fallback_to_desktop(empty_rounds: int) -> bool:
+    """Stop waiting for DevTools and use the already-open SensorFusionLab window."""
+    return int(empty_rounds) >= CDP_EMPTY_ROUNDS_BEFORE_FALLBACK
+
+
 def probe_devtools(url: str, timeout: float = 0.6) -> bool:
     try:
         with urllib.request.urlopen(url.rstrip("/") + "/json/version", timeout=timeout) as resp:
@@ -133,9 +161,86 @@ def probe_devtools(url: str, timeout: float = 0.6) -> bool:
         return False
 
 
+def _parent_exe(proc) -> str:
+    try:
+        parent = proc.parent()
+        if parent is None:
+            return ""
+        return parent.exe() or parent.name() or ""
+    except Exception:
+        return ""
+
+
+def _listen_ports(proc) -> list[int]:
+    ports: list[int] = []
+    try:
+        for conn in proc.net_connections(kind="inet"):
+            if getattr(conn, "status", "") != "LISTEN":
+                continue
+            laddr = getattr(conn, "laddr", None)
+            port = getattr(laddr, "port", None) if laddr is not None else None
+            if port:
+                ports.append(int(port))
+    except Exception:
+        return []
+    return ports
+
+
+def describe_open_ix() -> list[str]:
+    """Human-readable scan of IX processes. Does not launch anything."""
+    try:
+        import psutil
+    except ImportError:
+        return ["[Scan] psutil is missing; cannot list the open IX process."]
+
+    lines: list[str] = []
+    saw_chromium = False
+    saw_launcher = False
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "exe"]):
+        try:
+            info = proc.info
+            cmdline_list = info.get("cmdline") or []
+            cmd = " ".join(str(part) for part in cmdline_list)
+            exe = info.get("exe") or ""
+            name = info.get("name") or ""
+            parent = _parent_exe(proc)
+            launcher = is_ix_launcher(name, exe)
+            chromium = is_ix_chromium_exe(exe, parent_exe=parent, command_line=cmd)
+            if not launcher and not chromium:
+                continue
+            kind = "launcher" if launcher else "chromium"
+            if launcher:
+                saw_launcher = True
+            if chromium:
+                saw_chromium = True
+            debug = parse_debug_port(cmd)
+            ports = _listen_ports(proc)
+            lines.append(
+                f"[Scan] IX {kind} pid={info.get('pid')} exe={exe or name} "
+                f"debug_port={debug or 'none'} listen={ports or 'none'}"
+            )
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    if saw_chromium:
+        lines.append(
+            "[Scan] SensorFusionLab Chromium is running. DevTools is optional; "
+            "the open window can be driven from the desktop if port 9222 is off."
+        )
+    elif saw_launcher:
+        lines.append(
+            "[Scan] Saw the IX profile manager, not SensorFusionLab. Click Open on the profile."
+        )
+    else:
+        lines.append(
+            "[Scan] No IX Browser process. Open the IX profile so SensorFusionLab is visible."
+        )
+    return lines
+
+
 def _candidate_http_urls() -> list[str]:
     found: list[str] = []
     seen: set[str] = set()
+    saw_ix_chromium = False
 
     def add(url: str) -> None:
         if url not in seen:
@@ -154,29 +259,27 @@ def _candidate_http_urls() -> list[str]:
                 cmdline_list = info.get("cmdline") or []
                 cmd = " ".join(str(part) for part in cmdline_list)
                 exe = info.get("exe") or ""
-                if is_ix_launcher(info.get("name"), exe):
+                name = info.get("name") or ""
+                if is_ix_launcher(name, exe):
                     continue
                 if is_stock_chrome_path(exe):
                     continue
-                if not is_ix_chromium_exe(exe):
+                parent = _parent_exe(proc)
+                if not is_ix_chromium_exe(exe, parent_exe=parent, command_line=cmd):
                     continue
+                saw_ix_chromium = True
                 for url in command_line_cdp_urls(cmd):
                     add(url)
-                try:
-                    for conn in proc.net_connections(kind="inet"):
-                        if getattr(conn, "status", "") != "LISTEN":
-                            continue
-                        laddr = getattr(conn, "laddr", None)
-                        port = getattr(laddr, "port", None) if laddr is not None else None
-                        if port:
-                            add(f"http://127.0.0.1:{port}")
-                except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
-                    continue
+                for port in _listen_ports(proc):
+                    add(f"http://127.0.0.1:{port}")
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
 
     for url in _ix_devtools_file_urls():
         add(url)
+    if saw_ix_chromium:
+        for port in DEFAULT_DEBUG_PORTS:
+            add(f"http://127.0.0.1:{port}")
     return found
 
 

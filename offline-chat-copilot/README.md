@@ -12,7 +12,9 @@ Customer bubbles use `.message-customer`. Persona/operator bubbles use `.message
 
 ## Run on an open IX profile
 
-1. Click **Open** on the IX profile so SensorFusionLab Chromium is visible (debug port **9222**, same as the lidar bot).
+Most IX profiles do **not** expose DevTools. The copilot still uses the SensorFusionLab window you already opened (same desktop attach as the lidar bot). Port 9222 is optional.
+
+1. Click **Open** on the IX profile so SensorFusionLab Chromium is visible. `ixBrowser | v2.9.20` is only the profile list.
 2. Leave **https://chathomebase.com/chat/claimed** on screen (login yourself).
 3. In a second PowerShell window:
 
@@ -35,7 +37,9 @@ python3 -m playwright install chromium
 python3 -m offline_copilot attach
 ```
 
-The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe`). If there is no Chat Home Base tab yet, it navigates **that already-open IX tab** to `/chat/claimed`. It never starts a second browser and never closes yours.
+The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours.
+
+Optional, for full DOM (scroll history + customer logbook): in the IX profile extra launch args add `--remote-debugging-port=9222`, click Open, then run again.
 
 When a chat is claimed it:
 

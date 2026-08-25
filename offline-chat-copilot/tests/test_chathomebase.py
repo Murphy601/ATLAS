@@ -15,6 +15,7 @@ from offline_copilot.ix_cdp import (
     is_ix_chromium_exe,
     is_stock_chrome_path,
     parse_debug_port,
+    should_fallback_to_desktop,
 )
 
 
@@ -64,3 +65,24 @@ def test_ix_attach_ignores_stock_chrome() -> None:
     assert is_ix_chromium_exe(r"C:\Users\user\AppData\Local\IXBrowser\chrome.exe") is True
     assert is_ix_chromium_exe(r"C:\Program Files\Google\Chrome\Application\chrome.exe") is False
     assert parse_debug_port("--remote-debugging-port=9222") == 9222
+
+
+def test_ix_chromium_includes_sensorfusionlab_resources() -> None:
+    assert is_ix_chromium_exe(
+        r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\148-0005\chrome.exe"
+    )
+    assert is_ix_chromium_exe(
+        r"C:\tmp\chrome.exe",
+        parent_exe=r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe",
+    )
+    assert is_ix_chromium_exe(
+        r"C:\tmp\chrome.exe",
+        command_line=r'chrome.exe --user-data-dir="C:\Users\user\AppData\Roaming\ixbrowser\p1"',
+    )
+    assert not is_ix_chromium_exe(
+        r"C:\tmp\chrome.exe",
+        parent_exe=r"C:\Windows\explorer.exe",
+    )
+    assert not is_ix_chromium_exe(r"C:\Users\user\AppData\Local\IXBrowser\IXBrowser.exe")
+    assert should_fallback_to_desktop(1) is True
+    assert should_fallback_to_desktop(0) is False

@@ -5,6 +5,7 @@ Never launches a browser. Never clicks Send.
 
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,14 @@ from .chathomebase import (
     logbook_comment,
 )
 from .engine import handle_claimed_chat
-from .ix_cdp import discover_cdp_http_urls, is_claimed_chat_url, is_site_url, probe_devtools
+from .ix_cdp import (
+    describe_open_ix,
+    discover_cdp_http_urls,
+    is_claimed_chat_url,
+    is_site_url,
+    probe_devtools,
+    should_fallback_to_desktop,
+)
 from .logbook import Logbook
 
 
@@ -35,8 +43,12 @@ def _say(msg: str) -> None:
     print(msg, flush=True)
 
 
-def attach_playwright(cdp_url: str | None = None, timeout_s: float = 180.0):
-    """Connect over CDP to the IX window the operator already opened."""
+def attach_playwright(cdp_url: str | None = None, timeout_s: float = 8.0):
+    """Connect over CDP to the IX window the operator already opened.
+
+    Most IX profiles do not expose DevTools. One empty scan is enough; the
+    caller then drives SensorFusionLab from the desktop like the lidar bot.
+    """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -45,9 +57,14 @@ def attach_playwright(cdp_url: str | None = None, timeout_s: float = 180.0):
             "From offline-chat-copilot run: python -m pip install playwright psutil && python -m playwright install chromium"
         ) from exc
 
+    for line in describe_open_ix():
+        _say(line)
+
     playwright = sync_playwright().start()
     deadline = time.monotonic() + timeout_s
     last_error: Exception | None = None
+    empty_rounds = 0
+    printed_scan = False
     while time.monotonic() < deadline:
         urls: list[str] = []
         if cdp_url:
@@ -56,12 +73,9 @@ def attach_playwright(cdp_url: str | None = None, timeout_s: float = 180.0):
             urls.extend(discover_cdp_http_urls())
         except Exception as exc:
             last_error = exc
+            _say(f"Process scan error: {exc}")
         seen: set[str] = set()
         unique = [url for url in urls if not (url in seen or seen.add(url))]
-        if not unique:
-            _say("No live DevTools on the open IX process. Leave the profile open with debug port 9222.")
-            time.sleep(2.0)
-            continue
         for url in unique:
             try:
                 if not probe_devtools(url):
@@ -72,6 +86,13 @@ def attach_playwright(cdp_url: str | None = None, timeout_s: float = 180.0):
             except Exception as exc:
                 last_error = exc
                 continue
+        empty_rounds += 1
+        if not printed_scan:
+            _say("No live DevTools on the open IX process. Debug port 9222 is optional.")
+            printed_scan = True
+        if should_fallback_to_desktop(empty_rounds):
+            playwright.stop()
+            raise RuntimeError("No live DevTools on the open IX process")
         time.sleep(2.0)
     playwright.stop()
     raise RuntimeError(
@@ -254,7 +275,25 @@ def run_attach(
 ) -> int:
     _say("Scanning your already-open IX/Chrome window. No Local API needed.")
     _say(f"Target: {target_url}")
-    playwright, browser = attach_playwright(cdp_url)
+    try:
+        playwright, browser = attach_playwright(cdp_url)
+    except Exception as exc:
+        _say(f"DevTools attach skipped: {exc}")
+        if sys.platform == "win32":
+            from .win_ui import run_uia_attach
+
+            _say("Using the SensorFusionLab window you already opened (desktop control, no debug port).")
+            return run_uia_attach(
+                target_url=target_url,
+                logbook_path=logbook_path,
+                once=once,
+                poll_s=poll_s,
+            )
+        _say(
+            "This IX profile has no debug port. On Windows the copilot uses that open window anyway. "
+            "Or add --remote-debugging-port=9222 to the IX profile extra launch args, Open the profile, and retry."
+        )
+        return 1
     logbook = Logbook(logbook_path)
     previous = PageSnapshot()
     try:

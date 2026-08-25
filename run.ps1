@@ -22,6 +22,7 @@ Paste this (no git user.name needed):
   powershell -ExecutionPolicy Bypass -File .\run.ps1
 
 Leave IX Browser open on https://chathomebase.com/chat/claimed first.
+SensorFusionLab is enough; debug port 9222 is optional.
 "@
     exit 1
 }

@@ -45,8 +45,8 @@ Use the ATLAS git repo:
   cd offline-chat-copilot
   powershell -ExecutionPolicy Bypass -File .\run.ps1
 
-Open IX Browser yourself first (debug port 9222) and leave
-https://chathomebase.com/chat/claimed on screen.
+Open IX Browser yourself first (SensorFusionLab visible) and leave
+https://chathomebase.com/chat/claimed on screen. Debug port 9222 is optional.
 "@
     exit 1
 }
@@ -76,7 +76,7 @@ if (-not $venvPython) {
     $venvPython = Join-Path $root "venv\Scripts\python.exe"
 }
 
-Write-Host "[Setup] Installing Python packages (IX attach)..."
+Write-Host "[Setup] Installing Python packages (IX attach + desktop fallback)..."
 & $venvPython -m pip install --upgrade pip
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $venvPython -m pip install -r (Join-Path $root "requirements.txt")
