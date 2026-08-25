@@ -88,4 +88,5 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "[Run] Attach to your already-open IX window. Do not close that window."
 Write-Host "[Run] Target: https://chathomebase.com/chat/claimed"
-& $venvPython -m offline_copilot attach @args
+$env:PYTHONUNBUFFERED = "1"
+& $venvPython -u -m offline_copilot attach @args

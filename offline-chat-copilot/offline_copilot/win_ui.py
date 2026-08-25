@@ -9,9 +9,11 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import threading
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from .chathomebase import (
     CLAIMED_URL,
@@ -43,6 +45,11 @@ HINDI_CHROMIUM = "क्रोमियम"
 CHROME_CLASS = "Chrome_WidgetWin_1"
 PICK_WAIT_S = 45.0
 PICK_INTERVAL_S = 2.5
+UIA_READ_TIMEOUT_S = 8.0
+UIA_MAX_NODES = 1800
+UIA_MAX_DEPTH = 14
+HEARTBEAT_S = 8.0
+_UIA_WORKER: threading.Thread | None = None
 # Chat Home Base ids look like USETN4695969 (country + code + digits), not UUSETN... leftovers.
 CHAT_ID_RE = re.compile(r"\b([A-Z]{2}[A-Z]{2,3}\d{5,12})\b")
 WAITING_HINTS = (
@@ -156,6 +163,92 @@ CHAT_CHROME_TOKENS = (
 def say(msg: str) -> None:
     print(msg, flush=True)
     logger.info(msg)
+
+
+def waiting_reason(names: list[str], title: str = "") -> str:
+    """Which waiting-room hint matched. Empty if none."""
+    blob = " ".join(names).casefold()
+    title_l = (title or "").casefold()
+    haystack = f"{blob} {title_l}"
+    for hint in WAITING_HINTS:
+        if hint in haystack:
+            return hint
+    return ""
+
+
+def describe_copilot_state(
+    snapshot: PageSnapshot,
+    names: list[str],
+    *,
+    named_count: int | None = None,
+    timed_out: bool = False,
+) -> str:
+    count = named_count if named_count is not None else len(names)
+    reason = waiting_reason(names, snapshot.title)
+    if timed_out and count == 0:
+        return "[Copilot] Still attached. Chromium accessibility is slow; retrying the window read."
+    if snapshot.waiting:
+        if reason:
+            return (
+                f"[Copilot] Waiting room on screen ({reason}). "
+                "Not typing. Send was not clicked."
+            )
+        if count == 0:
+            return "[Copilot] Still attached. Waiting for a live claimed conversation. Not typing."
+        return "[Copilot] Waiting for a live claimed conversation. Not typing."
+    who = snapshot.customer_name or "this client"
+    cid = snapshot.chat_id or "no chat-id yet"
+    return f"[Copilot] Live claim {cid} / {who}."
+
+
+def preview_window_names(names: list[str], limit: int = 10) -> str:
+    interesting = (
+        "waiting",
+        "type your reply",
+        "claimed",
+        "message",
+        "profile",
+        "logbook",
+        "add new log",
+        "you are",
+    )
+    hits: list[str] = []
+    for name in names:
+        lowered = name.casefold()
+        if CHAT_ID_RE.search(name.replace(" ", "")) or any(token in lowered for token in interesting):
+            hits.append(name)
+        if len(hits) >= limit:
+            break
+    return " | ".join(hits)
+
+
+def walk_control_tree(
+    root: Any,
+    *,
+    get_children: Callable[[Any], Iterable[Any]],
+    deadline: float,
+    limit: int = UIA_MAX_NODES,
+    max_depth: int = UIA_MAX_DEPTH,
+) -> list[Any]:
+    """Breadth-first walk with a time budget so Chromium a11y cannot freeze the copilot."""
+    out: list[Any] = []
+    queue: deque[tuple[Any, int]] = deque([(root, 0)])
+    while queue:
+        if time.monotonic() >= deadline or len(out) >= limit:
+            break
+        node, depth = queue.popleft()
+        out.append(node)
+        if depth >= max_depth:
+            continue
+        try:
+            kids = list(get_children(node) or [])
+        except Exception:
+            continue
+        for kid in kids:
+            if time.monotonic() >= deadline or len(out) >= limit:
+                break
+            queue.append((kid, depth + 1))
+    return out
 
 
 def score_window(title: str, class_name: str = "", exe_path: str = "") -> int:
@@ -476,25 +569,43 @@ def run_uia_attach(
     logbook = Logbook(logbook_path)
     previous = PageSnapshot(waiting=True)
     drafted_key: str | None = None
+    last_status = ""
+    last_beat = 0.0
     say("Waiting for a live claimed conversation (loader is not a claim)...")
+    say("You should keep seeing status lines here. Silence means the window read is stuck.")
     try:
         hwnd, title = _pick_ix_window()
         say(f"Using IX window: {title or '(no title)'}")
         _focus(hwnd)
-        time.sleep(0.8)
+        time.sleep(0.4)
+        first_read = True
         while True:
+            title = _hwnd_title(hwnd) or title
             try:
-                _text, nodes = _read_uia(hwnd, verbose=False)
+                infos, timed_out = _read_window(hwnd, announce=first_read)
             except Exception as exc:
                 say(f"[Copilot] Window read failed, retrying: {exc}")
                 time.sleep(poll_s)
                 continue
-            infos = [_node_info(ctrl) for ctrl in nodes]
+            first_read = False
             tokens = _uia_tokens(infos)
             current = snapshot_from_uia_names(tokens, title=title)
+            status = describe_copilot_state(
+                current,
+                tokens,
+                named_count=len(tokens),
+                timed_out=timed_out,
+            )
+            now = time.monotonic()
+            if status != last_status or (now - last_beat) >= HEARTBEAT_S:
+                say(status)
+                preview = preview_window_names(tokens)
+                if preview and status != last_status:
+                    say(f"[Copilot] Window text: {preview}")
+                last_status = status
+                last_beat = now
             if current.waiting:
                 if previous.claimed:
-                    say("[Copilot] Waiting for next claim...")
                     drafted_key = None
                 previous = current
                 time.sleep(poll_s)
@@ -513,10 +624,8 @@ def run_uia_attach(
                 continue
             if previous.claimed and drafted_key and key != drafted_key:
                 say("[Copilot] Next claim is on screen. Clients rotate; starting this one.")
-            label = current.customer_name or "this client"
-            cid = current.chat_id or "no chat-id yet"
-            say(f"[Copilot] Working claim {cid} / {label}")
-            _process_live_chat(hwnd, current, logbook)
+            say(f"[Copilot] Working claim {current.chat_id or 'no chat-id yet'} / {current.customer_name or 'this client'}")
+            _process_live_chat(hwnd, current, logbook, infos=infos)
             drafted_key = key
             if once:
                 return 0
@@ -536,20 +645,19 @@ def _process_live_chat(
     snapshot: PageSnapshot,
     logbook: Logbook,
     history: list[dict[str, str]] | None = None,
+    infos: list[dict] | None = None,
 ) -> None:
-    del history
+    del history, infos
     if snapshot.waiting:
         say("[Copilot] Page is still waiting for a conversation to be claimed. Not typing.")
         return
     say("[Copilot] Claimed chat is live. Scrolling the thread so older messages can load...")
     _scroll_chat_history(hwnd)
     time.sleep(0.45)
-    _text, nodes = _read_uia(hwnd, verbose=False)
-    infos = [_node_info(ctrl) for ctrl in nodes]
+    infos, _timed_out = _read_window(hwnd, announce=False)
     _open_customer_profile(hwnd, infos)
     time.sleep(0.35)
-    _text, nodes = _read_uia(hwnd, verbose=False)
-    infos = [_node_info(ctrl) for ctrl in nodes]
+    infos, _timed_out = _read_window(hwnd, announce=False)
     tokens = _uia_tokens(infos)
     history_now = parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
@@ -577,8 +685,7 @@ def _process_live_chat(
         except Exception as exc:
             say(f"[Copilot] Logbook click skipped: {exc}")
     if result.fill_draft:
-        _text, nodes = _read_uia(hwnd, verbose=False)
-        infos = [_node_info(ctrl) for ctrl in nodes]
+        infos, _timed_out = _read_window(hwnd, announce=False)
         filled = _fill_draft(hwnd, infos, result.fill_draft)
         if filled:
             say("[Copilot] Typed the draft (no paste). Operator still sends — Send was not clicked.")
@@ -598,10 +705,7 @@ def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
         return False
     _focus(hwnd)
     time.sleep(0.15)
-    ctrl = chosen.get("ctrl")
-    if ctrl is not None:
-        _uia_click(ctrl)
-    else:
+    if not _click_candidate(hwnd, chosen):
         return False
     time.sleep(0.12)
     _clear_focused_edit()
@@ -616,10 +720,7 @@ def _open_customer_profile(hwnd: int, infos: list[dict]) -> bool:
         return False
     say("[Copilot] Clicking customer PROFILE DETAILS...")
     _focus(hwnd)
-    if chosen.get("ctrl") is not None:
-        _uia_click(chosen["ctrl"])
-        return True
-    return False
+    return _click_candidate(hwnd, chosen)
 
 
 def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> bool:
@@ -637,28 +738,24 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
         return False
     say("[Copilot] Clicking customer ADD NEW LOG...")
     _focus(hwnd)
-    if add.get("ctrl") is not None:
-        _uia_click(add["ctrl"])
+    _click_candidate(hwnd, add)
     time.sleep(0.45)
-    _text, nodes = _read_uia(hwnd, verbose=False)
-    after = [_node_info(ctrl) for ctrl in nodes]
+    after, _timed_out = _read_window(hwnd, announce=False)
     category = pick_named_control(after, "logbookcategoryselect", "category")
-    if category and category.get("ctrl") is not None:
-        _uia_click(category["ctrl"])
+    if category:
+        _click_candidate(hwnd, category)
         time.sleep(0.25)
-        _text, nodes = _read_uia(hwnd, verbose=False)
-        after = [_node_info(ctrl) for ctrl in nodes]
+        after, _timed_out = _read_window(hwnd, announce=False)
     other = None
     for row in after:
         if str(row.get("name") or "").strip().casefold() == "other":
             other = row
             break
-    if other and other.get("ctrl") is not None:
+    if other:
         say("[Copilot] Choosing logbook category Other...")
-        _uia_click(other["ctrl"])
+        _click_candidate(hwnd, other)
         time.sleep(0.2)
-        _text, nodes = _read_uia(hwnd, verbose=False)
-        after = [_node_info(ctrl) for ctrl in nodes]
+        after, _timed_out = _read_window(hwnd, announce=False)
     box = pick_named_control(after, "logbookcomment")
     if box is None:
         edits = [
@@ -667,26 +764,24 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
             if is_draft_edit(row) and not is_chat_draft_marker(row)
         ]
         box = edits[0] if edits else None
-    if box is None or box.get("ctrl") is None:
+    if box is None:
         say("[Copilot] Logbook comment box was not found.")
         return False
-    _uia_click(box["ctrl"])
+    if not _click_candidate(hwnd, box):
+        say("[Copilot] Logbook comment box was not found.")
+        return False
     time.sleep(0.12)
     _clear_focused_edit()
     say("[Copilot] Typing the customer logbook comment...")
     _type_into_focused(comment)
     save = pick_named_control(after, "create the log", "logbooksavebutton")
     if save is None:
-        _text, nodes = _read_uia(hwnd, verbose=False)
-        after = [_node_info(ctrl) for ctrl in nodes]
+        after, _timed_out = _read_window(hwnd, announce=False)
         save = pick_named_control(after, "create the log", "logbooksavebutton")
     if save is None or is_send_control_name(str(save.get("name") or "")):
         say("[Copilot] Logbook save control was not found (Send was not clicked).")
         return False
-    if save.get("ctrl") is not None:
-        _uia_click(save["ctrl"])
-        return True
-    return False
+    return _click_candidate(hwnd, save)
 
 
 def _scroll_chat_history(hwnd: int) -> None:
@@ -1030,51 +1125,140 @@ def _uia_click(ctrl: Any) -> bool:
     return False
 
 
-def _iter_uia_controls(target: Any, limit: int = 6000):
+def _hwnd_title(hwnd: int) -> str:
+    if sys.platform != "win32":
+        return ""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    length = user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
+def _click_candidate(hwnd: int, chosen: dict | None) -> bool:
+    if not chosen:
+        return False
+    ctrl = chosen.get("ctrl")
+    if ctrl is not None and _uia_click(ctrl):
+        return True
+    left = int(chosen.get("left") or 0)
+    top = int(chosen.get("top") or 0)
+    width = int(chosen.get("width") or 0)
+    height = int(chosen.get("height") or 0)
+    if width <= 2 or height <= 2:
+        return False
+    _focus(hwnd)
+    _click_screen(left + width // 2, top + height // 2)
+    return True
+
+
+def _wrapper_children(ctrl: Any) -> list[Any]:
     try:
-        for i, ctrl in enumerate(target.descendants()):
-            if i >= limit:
-                break
-            yield ctrl
+        kids = ctrl.children()
     except Exception:
-        return
+        return []
+    return list(kids or [])
+
+
+def _collect_window_infos(hwnd: int, deadline: float) -> list[dict]:
+    from pywinauto import Application
+
+    remaining = max(0.4, deadline - time.monotonic())
+    app = Application(backend="uia").connect(handle=hwnd, timeout=min(2.0, remaining))
+    target = app.window(handle=hwnd)
+    nodes = walk_control_tree(
+        target,
+        get_children=_wrapper_children,
+        deadline=deadline,
+        limit=UIA_MAX_NODES,
+        max_depth=UIA_MAX_DEPTH,
+    )
+    infos: list[dict] = []
+    for ctrl in nodes:
+        if time.monotonic() >= deadline:
+            break
+        row = _node_info(ctrl)
+        row["ctrl"] = None  # wrappers from the scan thread are not used for clicks
+        infos.append(row)
+    return infos
+
+
+def _read_window(hwnd: int, *, announce: bool = False, timeout_s: float = UIA_READ_TIMEOUT_S) -> tuple[list[dict], bool]:
+    """Read named controls with a timeout. Never freeze the copilot on Chromium descendants()."""
+    global _UIA_WORKER
+    if _UIA_WORKER is not None and _UIA_WORKER.is_alive():
+        if announce:
+            say("[Copilot] Previous window scan still running. Retrying shortly...")
+        return [], True
+    if announce:
+        say("[Copilot] Reading the Chat Home Base window...")
+    payload: dict[str, Any] = {"infos": [], "error": None}
+
+    def work() -> None:
+        try:
+            if sys.platform == "win32":
+                try:
+                    import pythoncom
+
+                    pythoncom.CoInitialize()
+                except Exception:
+                    pass
+            payload["infos"] = _collect_window_infos(hwnd, time.monotonic() + timeout_s)
+        except Exception as exc:
+            payload["error"] = exc
+        finally:
+            if sys.platform == "win32":
+                try:
+                    import pythoncom
+
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+
+    worker = threading.Thread(target=work, daemon=True, name="chb-uia")
+    _UIA_WORKER = worker
+    worker.start()
+    started = time.monotonic()
+    while worker.is_alive() and (time.monotonic() - started) < timeout_s:
+        worker.join(1.2)
+        if worker.is_alive() and announce:
+            say("[Copilot] Still reading the window...")
+    timed_out = worker.is_alive()
+    if payload["error"] is not None:
+        say(f"[Copilot] Window read failed: {payload['error']}")
+    infos = list(payload.get("infos") or [])
+    named = [row for row in infos if str(row.get("name") or "").strip()]
+    if announce:
+        elapsed = time.monotonic() - started
+        if timed_out:
+            say(
+                f"[Copilot] Stopped the window scan after {elapsed:.0f}s so PowerShell does not freeze. "
+                f"Named controls so far: {len(named)}."
+            )
+        else:
+            say(f"[Copilot] Saw {len(named)} named controls in {elapsed:.1f}s.")
+    return infos, timed_out
+
+
+def _iter_uia_controls(target: Any, limit: int = UIA_MAX_NODES):
+    deadline = time.monotonic() + UIA_READ_TIMEOUT_S
+    for ctrl in walk_control_tree(
+        target,
+        get_children=_wrapper_children,
+        deadline=deadline,
+        limit=limit,
+        max_depth=UIA_MAX_DEPTH,
+    ):
+        yield ctrl
 
 
 def _read_uia(hwnd: int, verbose: bool = True) -> tuple[str, list[Any]]:
-    nodes: list[Any] = []
-    texts: list[str] = []
-    try:
-        from pywinauto import Desktop
-
-        desktop = Desktop(backend="uia")
-        target = None
-        for win in desktop.windows():
-            try:
-                if int(win.handle) == int(hwnd):
-                    target = win
-                    break
-            except Exception:
-                continue
-        if target is None:
-            if verbose:
-                say("UIA: SensorFusionLab window handle not found")
-            return "", []
-        for ctrl in _iter_uia_controls(target):
-            nodes.append(ctrl)
-            name = _uia_name(ctrl)
-            if name:
-                texts.append(name)
-    except Exception as exc:
-        if verbose:
-            say(f"UIA read failed: {exc}")
-        logger.debug("UIA read skipped", exc_info=True)
-    named = [item for item in texts if item]
-    if verbose:
-        say(f"UIA named controls: {len(named)}")
-        preview = [item for item in named if looks_like_chat_line(item) or is_send_control_name(item)][:12]
-        if preview:
-            say("UIA names: " + " | ".join(preview))
-    return "\n".join(named), nodes
+    infos, _timed_out = _read_window(hwnd, announce=verbose)
+    names = [str(row.get("name") or "") for row in infos if str(row.get("name") or "").strip()]
+    nodes = [row.get("ctrl") for row in infos if row.get("ctrl") is not None]
+    return "\n".join(names), nodes
 
 
 def _send_vk(vk: int) -> None:

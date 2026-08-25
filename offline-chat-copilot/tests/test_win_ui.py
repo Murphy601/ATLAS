@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from offline_copilot.chathomebase import is_forbidden_click
+from offline_copilot.chathomebase import PageSnapshot, is_forbidden_click
 from offline_copilot.win_ui import (
     _escape_keys,
+    describe_copilot_state,
     extract_customer_name,
     keep_enumerated_window,
     parse_messages_from_names,
@@ -14,6 +17,8 @@ from offline_copilot.win_ui import (
     score_window,
     select_ix_window,
     snapshot_from_uia_names,
+    waiting_reason,
+    walk_control_tree,
 )
 
 
@@ -285,3 +290,51 @@ def test_customer_name_is_the_claimed_client_not_the_persona() -> None:
     )
     assert rotated.customer_name == "Nthabiseng"
     assert rotated.chat_id == "USZZ9999911"
+
+
+class _FakeCtrl:
+    def __init__(self, name: str, kids: tuple["_FakeCtrl", ...] = ()) -> None:
+        self.name = name
+        self.kids = kids
+
+
+def test_waiting_reason_uses_live_site_copy() -> None:
+    assert waiting_reason(
+        ["Waiting for conversation to be claimed..."],
+        "Chat | Chat Home Base - Chromium",
+    ) == "waiting for conversation to be claimed"
+
+
+def test_describe_state_keeps_talking_on_waiting_and_timeout() -> None:
+    waiting = snapshot_from_uia_names(
+        ["Waiting for conversation to be claimed..."],
+        title="Chat | Chat Home Base - Chromium",
+    )
+    line = describe_copilot_state(waiting, ["Waiting for conversation to be claimed..."])
+    assert "Waiting room" in line
+    assert "Not typing" in line
+    stuck = describe_copilot_state(PageSnapshot(waiting=True), [], named_count=0, timed_out=True)
+    assert "retrying" in stuck.casefold()
+    live = snapshot_from_uia_names(
+        ["Type your reply here...", "USETN4695969", "Dawg1953"],
+        title="-> CHAT IS CLAIMED - Chromium",
+    )
+    live.customer_name = "Dawg1953"
+    assert "Live claim" in describe_copilot_state(live, ["Type your reply here...", "USETN4695969"])
+
+
+def test_walk_control_tree_respects_deadline_and_children() -> None:
+    child = _FakeCtrl("Type your reply here...")
+    root = _FakeCtrl("window", (child,))
+    found = walk_control_tree(
+        root,
+        get_children=lambda node: node.kids,
+        deadline=time.monotonic() + 5,
+    )
+    assert [node.name for node in found] == ["window", "Type your reply here..."]
+    expired = walk_control_tree(
+        root,
+        get_children=lambda node: node.kids,
+        deadline=time.monotonic() - 1,
+    )
+    assert expired == []
