@@ -3,7 +3,7 @@ import re
 
 from offline_copilot.assembler import MEETUP_DEFLECTS
 from offline_copilot.cta import CTA_BANK
-from offline_copilot.engine import draft_replies
+from offline_copilot.engine import draft_replies, handle_claimed_chat
 from offline_copilot.logbook import Logbook
 from offline_copilot.parser import parse_message
 
@@ -89,6 +89,32 @@ def test_three_options_are_not_the_same_template(tmp_path) -> None:
     assert len(set(stems)) == 3
     bridges = sum(1 for option in result.options if "thinking back to what you said" in option.casefold())
     assert bridges <= 1
+
+
+def test_drafts_answer_the_latest_client_message(tmp_path) -> None:
+    result = handle_claimed_chat(
+        [
+            {"sender": "client", "text": "I am here is because of sex, but we can build a friendship"},
+            {"sender": "operator", "text": "That is great to know."},
+            {
+                "sender": "client",
+                "text": "My fave place is Florence, Italy. Really old and its a great walking city.",
+            },
+        ],
+        client_id="latest-msg",
+        logbook_dir=tmp_path,
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "florence" in blob or "italy" in blob
+    assert "i am here is because" not in blob
+    assert "thinking back to what you said" not in blob
+    assert "trying," not in blob
+    for option in result.options:
+        assert option.count("?") == 1
+        assert "favourite" not in option.casefold()
+        assert "colour" not in option.casefold()
 
 
 def test_illegal_incoming_returns_no_options(tmp_path) -> None:

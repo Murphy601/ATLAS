@@ -75,7 +75,7 @@ def draft_replies(
     attempt = 0
     while len(options) < max(1, int(count)) and attempt < 40:
         minutes = WINDOW_MINUTES[attempt % len(WINDOW_MINUTES)]
-        include_sports = (attempt % 2 == 1) and not parsed.asked_sports
+        include_sports = False
         try:
             draft, cta = assemble(
                 parsed,
@@ -168,8 +168,21 @@ def handle_claimed_chat(
     )
     name = record.name or ingest.client_name or name_hint
     city = record.city or ingest.client_city or header_city
-    message = " ".join(ingest.client_messages).strip() or ingest.last_client_message
+    message = ingest.last_client_message or (ingest.client_messages[-1] if ingest.client_messages else "")
     fields = ingest.to_fields(persona_city)
+    # Block if ANY client line is illegal. Draft from the latest client line only.
+    for client_line in ingest.client_messages or ([message] if message else []):
+        ok_in, why_in = validate_incoming(client_line)
+        if not ok_in:
+            return CopilotResult(
+                blocked=True,
+                reason=why_in,
+                options=[],
+                checks=[why_in],
+                logbook_fields=fields,
+                save_logbook=ingest.save_logbook,
+                save_reason=ingest.save_reason,
+            )
     if not message:
         return CopilotResult(
             blocked=True,

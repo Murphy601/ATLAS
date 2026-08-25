@@ -166,6 +166,8 @@
       const after = qsa(CONFIG.selectors.messageItem).length;
       if (after === before && root.scrollTop === 0) break;
     }
+    root.scrollTop = root.scrollHeight;
+    await sleep(200);
     return readMessages();
   }
 
@@ -239,7 +241,16 @@
     if (!CONFIG.autoFillDraft || !text) return;
     const box = qs(CONFIG.selectors.inputBox);
     if (!box) return;
-    setNativeValue(box, text);
+    const target = box.tagName === "TEXTAREA" || box.tagName === "INPUT" ? box : box.querySelector("textarea, input") || box;
+    target.focus();
+    if (typeof target.select === "function") {
+      try { target.select(); } catch (err) {}
+    }
+    document.execCommand("delete");
+    for (const ch of String(text)) {
+      if (ch === "\n" || ch === "\r") continue;
+      document.execCommand("insertText", false, ch);
+    }
   }
 
   function showPanel(payload) {

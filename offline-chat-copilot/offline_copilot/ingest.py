@@ -30,6 +30,16 @@ NAME_STOP = frozenset(
         "doing",
         "watching",
         "living",
+        "trying",
+        "unknown",
+        "client",
+        "user",
+        "actually",
+        "glad",
+        "like",
+        "love",
+        "sure",
+        "here",
         "working",
     }
 )
@@ -417,11 +427,29 @@ def _uniq(items: list[str]) -> list[str]:
 
 
 def _pick_last_client_message(messages: list[str]) -> str:
+    """Newest real client bubble. Skip chrome/overlays, not older chat content."""
+    noise = (
+        "wish list",
+        "axioserror",
+        "personal performance",
+        "message statistics",
+        "your message is too short",
+        "waiting for conversation",
+        "failed to retrieve",
+        "type your reply",
+        "profile details",
+        "add new log",
+        "get insights about your message",
+    )
     if not messages:
         return ""
     for text in reversed(messages):
-        if len(text) >= 12:
-            return text
+        lowered = (text or "").casefold()
+        if len((text or "").strip()) < 8:
+            continue
+        if any(token in lowered for token in noise):
+            continue
+        return text
     return messages[-1]
 
 

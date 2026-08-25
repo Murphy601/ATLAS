@@ -165,6 +165,16 @@ CHAT_CHROME_TOKENS = (
     "waiting for conversation",
     "conversation to be claimed",
     "action required",
+    "personal performance",
+    "message statistics",
+    "wish list",
+    "axioserror",
+    "failed to retrieve",
+    "free messages",
+    "paid messages",
+    "total messages",
+    "get insights about your message",
+    "input-135-messages",
 )
 
 
@@ -376,7 +386,12 @@ def is_chat_draft_marker(candidate: dict | str) -> bool:
 
 def is_omnibox(candidate: dict) -> bool:
     name = str(candidate.get("name") or "").casefold()
+    auto = str(candidate.get("automation_id") or "").casefold()
     if is_chrome_ui_name(name):
+        return True
+    if name in {"search", "find", "filter"} or "search" in name:
+        return True
+    if auto.startswith("input-") or "omnibox" in auto:
         return True
     return any(
         token in name
@@ -385,8 +400,18 @@ def is_omnibox(candidate: dict) -> bool:
             "omnibox",
             "search or type",
             "type a url",
+            "find in page",
         )
     )
+
+
+def is_search_or_chrome_edit(candidate: dict) -> bool:
+    if is_omnibox(candidate):
+        return True
+    top = int(candidate.get("top") or 0)
+    if 0 < top < 180:
+        return True
+    return False
 
 
 def is_draft_edit(candidate: dict) -> bool:
@@ -400,7 +425,9 @@ def is_draft_edit(candidate: dict) -> bool:
         return False
     if is_chrome_ui_name(name):
         return False
-    if name.strip().casefold() in {"search", "find"}:
+    if name.strip().casefold() in {"search", "find", "filter"}:
+        return False
+    if "search" in name.strip().casefold() or str(candidate.get("automation_id") or "").casefold().startswith("input-"):
         return False
     if is_send_control_name(name):
         return False
@@ -447,24 +474,69 @@ def pick_draft_edit(
     *,
     allow_fallback: bool = False,
     live: bool = False,
+    chrome_bottom: int = 180,
 ) -> dict | None:
-    """Only the Chat Home Base reply box. Never the Chromium address bar."""
-    marked = [row for row in candidates if is_chat_draft_marker(row) and not is_omnibox(row)]
-    if marked:
-        return marked[0]
-    if not allow_fallback and not live:
-        return None
-    edits = [
+    """Only Type your reply here / messageTextArea. Never search, never the address bar."""
+    del live  # Unmarked edits include search; only the real composer is safe.
+    marked = [
         row
         for row in candidates
-        if is_draft_edit(row) and not is_omnibox(row) and int(row.get("top") or 0) > 200
+        if is_chat_draft_marker(row) and not is_search_or_chrome_edit(row) and int(row.get("top") or 0) >= chrome_bottom
     ]
-    wide = [row for row in edits if int(row.get("width") or 0) >= 180]
-    pool = wide or edits
-    if not pool:
-        return None
-    pool.sort(key=lambda row: (int(row.get("top") or 0), int(row.get("width") or 0)), reverse=True)
-    return pool[0]
+    if marked:
+        marked.sort(key=lambda row: int(row.get("top") or 0), reverse=True)
+        return marked[0]
+    warning = pick_named_control(candidates, "your message is too short") or pick_named_control(
+        candidates, "type your reply here"
+    )
+    if warning is not None:
+        nearby = [
+            row
+            for row in candidates
+            if is_draft_edit(row)
+            and not is_search_or_chrome_edit(row)
+            and int(row.get("top") or 0) >= chrome_bottom
+            and abs(int(row.get("top") or 0) - int(warning.get("top") or 0)) < 120
+            and int(row.get("top") or 0) <= int(warning.get("top") or 0)
+        ]
+        if nearby:
+            nearby.sort(key=lambda row: int(row.get("top") or 0), reverse=True)
+            return nearby[0]
+        # Click just above the 0/75 warning, which sits under the reply box.
+        return {
+            "name": "Type your reply here...",
+            "left": int(warning.get("left") or 0),
+            "top": max(chrome_bottom, int(warning.get("top") or 0) - 48),
+            "width": max(int(warning.get("width") or 240), 240),
+            "height": 40,
+            "ctrl": None,
+        }
+    del allow_fallback
+    return None
+
+
+def latest_client_line_from_infos(infos: list[dict]) -> str:
+    """Lowest on-screen chat bubble, just above the composer. That is the newest client line."""
+    warning_top = 10**9
+    for row in infos:
+        name = str(row.get("name") or "")
+        if "your message is too short" in name.casefold() or "type your reply here" in name.casefold():
+            warning_top = min(warning_top, int(row.get("top") or warning_top))
+    lines: list[tuple[int, str]] = []
+    for row in infos:
+        name = str(row.get("name") or "").strip()
+        if not looks_like_chat_line(name):
+            continue
+        top = int(row.get("top") or 0)
+        if top <= 0:
+            continue
+        if warning_top < 10**9 and top >= warning_top - 8:
+            continue
+        lines.append((top, " ".join(name.split())))
+    if not lines:
+        return ""
+    lines.sort()
+    return lines[-1][1]
 
 
 def looks_like_chat_line(name: str) -> bool:
@@ -541,6 +613,8 @@ HANDLE_SKIP = {
     "toolbar",
     "non-smoker",
     "nonsmoker",
+    "trying",
+    "search",
 }
 
 
@@ -602,20 +676,32 @@ def snapshot_from_uia_names(
     del has_edit, has_send  # Generic address-bar / search edits are not a claimed chat.
     lowered = " ".join(names).casefold()
     title_l = (title or "").casefold()
-    waiting_copy = _has_token(names, *LOADER_TESTIDS) or any(hint in lowered for hint in WAITING_HINTS)
+    waiting_copy = (
+        _has_token(names, *LOADER_TESTIDS)
+        or any(hint in lowered for hint in WAITING_HINTS)
+        or any(hint in title_l for hint in WAITING_HINTS)
+    )
     composer = has_live_composer(names)
-    thread = _has_token(names, "messageslist", "messageitem") or bool(parse_messages_from_names(names))
-    has_claimed_notice = (
-        _has_token(names, "claimednotification")
-        or "chat is claimed" in lowered
-        or "chat is claimed" in title_l
+    noise = any(
+        token in lowered
+        for token in (
+            "personal performance",
+            "message statistics",
+            "wish list",
+            "axioserror",
+            "failed to retrieve",
+            "get insights about your message",
+            "input-135-messages",
+        )
     )
     chat_id = extract_chat_id(names)
-    # Green waiting copy can leave old bubbles in the tree. The composer / 0/75 warning is the lock.
+    # Stats / wish-list overlays are not a claimed thread. The 0/75 composer is the lock.
     if waiting_copy and not composer:
         live = False
+    elif noise and not composer:
+        live = False
     else:
-        live = bool(composer or has_claimed_notice or thread)
+        live = bool(composer)
     waiting = not live
     customer_name = extract_customer_name(names)
     return PageSnapshot(
@@ -730,19 +816,26 @@ def _process_live_chat(
         say("[Copilot] Page is still waiting for a conversation to be claimed. Not typing.")
         return
     say("[Copilot] Claimed chat is live. Scrolling the thread so older messages can load...")
-    _scroll_chat_history(hwnd)
-    time.sleep(0.45)
-    infos, _timed_out = _read_window(hwnd, announce=False)
-    _open_customer_profile(hwnd, infos)
+    _scroll_load_older(hwnd)
+    time.sleep(0.4)
+    infos_hist, _timed_out = _read_window(hwnd, announce=False)
+    history_all = parse_messages_from_names(_uia_tokens(infos_hist))
+    say("[Copilot] Returning to the latest client message...")
+    _scroll_to_latest(hwnd)
     time.sleep(0.35)
     infos, _timed_out = _read_window(hwnd, announce=False)
     tokens = _uia_tokens(infos)
-    history_now = parse_messages_from_names(tokens)
+    history_now = history_all or parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
     if current.waiting:
         say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
         return
     say(f"[Copilot] Parsed {len(history_now)} visible lines from the IX window.")
+    latest = latest_client_line_from_infos(infos)
+    if latest:
+        history_now = [row for row in history_now if row["text"].casefold() != latest.casefold()]
+        history_now.append({"sender": "client", "text": latest})
+        say(f"[Copilot] Latest client line: {latest[:140]}")
     client_id = current.chat_id or snapshot.chat_id or current.customer_name or snapshot.customer_name or "claimed"
     client_name = current.customer_name or snapshot.customer_name
     say(f"[Copilot] Client on screen: {client_name or 'unknown'} ({client_id})")
@@ -757,14 +850,29 @@ def _process_live_chat(
         say(f"Option {idx}: {option}")
     fields = dict(result.logbook_fields or {})
     comment = logbook_comment(fields)
+    _open_customer_profile(hwnd, infos)
+    time.sleep(0.3)
+    infos, _timed_out = _read_window(hwnd, announce=False)
     if comment:
         try:
             if _fill_customer_log(hwnd, infos, fields):
                 say("[Copilot] Customer logbook Other comment typed and saved. Send was not clicked.")
         except Exception as exc:
             say(f"[Copilot] Logbook click skipped: {exc}")
+        _dismiss_overlays()
+        time.sleep(0.25)
+        infos, _timed_out = _read_window(hwnd, announce=False)
+        tokens = _uia_tokens(infos)
+        current = snapshot_from_uia_names(tokens, title=snapshot.title)
+        if current.waiting or not has_live_composer(tokens):
+            say("[Copilot] Reply box is not on screen after the logbook. Not typing.")
+            return
     if result.fill_draft:
         infos, _timed_out = _read_window(hwnd, announce=False)
+        tokens = _uia_tokens(infos)
+        if not has_live_composer(tokens):
+            say("[Copilot] Stats/search page is on screen. Not typing.")
+            return
         filled = _fill_draft(hwnd, infos, result.fill_draft)
         if filled:
             say("[Copilot] Typed the draft (no paste). Operator still sends — Send was not clicked.")
@@ -777,19 +885,49 @@ def _process_live_chat(
 def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
     if not text:
         return False
-    chosen = pick_draft_edit(infos, allow_fallback=False, live=True)
+    tokens = _uia_tokens(infos)
+    if not has_live_composer(tokens):
+        say("[Copilot] No Type-your-reply box on screen. Not typing.")
+        return False
+    left, top, width, height = _window_rect(hwnd)
+    chrome_bottom = top + 180
+    chosen = pick_draft_edit(infos, allow_fallback=False, live=False, chrome_bottom=chrome_bottom)
     if chosen is None:
+        say("[Copilot] Reply box was not found. Not typing in search.")
+        return False
+    if is_search_or_chrome_edit(chosen) or int(chosen.get("top") or 0) < chrome_bottom:
+        say("[Copilot] Refusing to type in the address/search bar.")
         return False
     if is_send_control_name(str(chosen.get("name") or "")):
         return False
+    _dismiss_overlays()
     _focus(hwnd)
     time.sleep(0.15)
-    if not _click_candidate(hwnd, chosen):
+    if not _click_composer(hwnd, chosen):
         return False
-    time.sleep(0.12)
+    time.sleep(0.25)
     _clear_focused_edit()
-    say("[Copilot] Typing the draft into the reply box (Chat Home Base rejects paste)...")
+    say("[Copilot] Typing slowly into the reply box (real keys, no paste, no search bar)...")
     _type_into_focused(text)
+    return True
+
+
+def _click_composer(hwnd: int, chosen: dict) -> bool:
+    """Click the reply box in the lower-center chat column, never the top search/address bar."""
+    left, top, width, height = _window_rect(hwnd)
+    x = int(chosen.get("left") or 0) + max(int(chosen.get("width") or 0), 40) // 2
+    y = int(chosen.get("top") or 0) + max(int(chosen.get("height") or 0), 24) // 2
+    if y < top + 180:
+        say("[Copilot] Refusing to click the address/search bar.")
+        return False
+    safe_x = left + int(width * 0.52)
+    safe_y = top + int(height * 0.86)
+    if x < left + int(width * 0.28):
+        x = safe_x
+    if y < top + int(height * 0.55):
+        y = safe_y
+    _focus(hwnd)
+    _click_screen(x, y)
     return True
 
 
@@ -835,14 +973,19 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
         _click_candidate(hwnd, other)
         time.sleep(0.2)
         after, _timed_out = _read_window(hwnd, announce=False)
-    box = pick_named_control(after, "logbookcomment")
+    box = pick_named_control(after, "logbookcomment", "logbook comment")
     if box is None:
-        edits = [
-            row
-            for row in after
-            if is_draft_edit(row) and not is_chat_draft_marker(row)
-        ]
-        box = edits[0] if edits else None
+        for row in after:
+            blob = _candidate_blob(row).casefold()
+            ctype = str(row.get("control_type") or "").casefold()
+            if (
+                "comment" in blob
+                and "edit" in ctype
+                and not is_search_or_chrome_edit(row)
+                and not is_chat_draft_marker(row)
+            ):
+                box = row
+                break
     if box is None:
         say("[Copilot] Logbook comment box was not found.")
         return False
@@ -854,33 +997,56 @@ def _fill_customer_log(hwnd: int, infos: list[dict], fields: dict[str, str]) -> 
     say("[Copilot] Typing the customer logbook comment...")
     say(f"[Copilot] Logbook: {comment}")
     _type_into_focused(comment)
-    time.sleep(0.35)
+    time.sleep(0.5)
     after, _timed_out = _read_window(hwnd, announce=False)
     save = pick_logbook_save(after)
     if save is None:
-        time.sleep(0.4)
+        time.sleep(0.55)
         after, _timed_out = _read_window(hwnd, announce=False)
         save = pick_logbook_save(after)
     if save is None or is_send_control_name(str(save.get("name") or "")):
         say("[Copilot] Logbook save control was not found (Send was not clicked).")
+        _dismiss_overlays()
         return False
     say("[Copilot] Saving the customer log (Send was not clicked)...")
     return _click_candidate(hwnd, save)
 
 
 def _scroll_chat_history(hwnd: int) -> None:
+    _scroll_load_older(hwnd)
+    _scroll_to_latest(hwnd)
+
+
+def _scroll_load_older(hwnd: int) -> None:
     _focus(hwnd)
     left, top, width, height = _window_rect(hwnd)
-    x = left + int(width * 0.50)
-    y = top + int(height * 0.40)
+    x = left + int(width * 0.52)
+    y = top + int(height * 0.42)
     _click_screen(x, y)
     time.sleep(0.2)
     for _ in range(10):
         _mouse_wheel(120)
         time.sleep(0.28)
-    for _ in range(3):
+
+
+def _scroll_to_latest(hwnd: int) -> None:
+    _focus(hwnd)
+    left, top, width, height = _window_rect(hwnd)
+    x = left + int(width * 0.52)
+    y = top + int(height * 0.42)
+    _click_screen(x, y)
+    time.sleep(0.15)
+    for _ in range(18):
         _mouse_wheel(-120)
-        time.sleep(0.18)
+        time.sleep(0.12)
+    _send_vk(0x23)  # End — newest bubble, not leftover older history.
+    time.sleep(0.25)
+
+
+def _dismiss_overlays() -> None:
+    """Close logbook / wish-list popups. Never Enter. Never Ctrl+V."""
+    _send_vk(0x1B)
+    time.sleep(0.12)
 
 
 def _window_rect(hwnd: int) -> tuple[int, int, int, int]:
@@ -1346,40 +1512,37 @@ def _read_uia(hwnd: int, verbose: bool = True) -> tuple[str, list[Any]]:
 
 
 def _send_vk(vk: int) -> None:
-    import ctypes
-
-    user32 = ctypes.windll.user32
-    user32.keybd_event(vk, 0, 0, 0)
-    user32.keybd_event(vk, 0, 2, 0)
+    _tap_vk(vk, shift=False)
 
 
 def _send_ctrl_a() -> None:
-    import ctypes
-
-    user32 = ctypes.windll.user32
-    user32.keybd_event(0x11, 0, 0, 0)
-    user32.keybd_event(0x41, 0, 0, 0)
-    user32.keybd_event(0x41, 0, 2, 0)
-    user32.keybd_event(0x11, 0, 2, 0)
+    """Unused. Ctrl+A is skipped so we never brush the clipboard path."""
+    return None
 
 
 def _clear_focused_edit() -> None:
-    """Select all, then Backspace. Never paste. Never Enter."""
-    _send_ctrl_a()
-    time.sleep(0.05)
-    _send_vk(0x08)
+    """Backspace the focused field. Never clipboard paste. Never Enter. Never Ctrl+A."""
+    for _ in range(24):
+        _tap_vk(0x08, shift=False)
+        time.sleep(0.012)
 
 
-def _type_into_focused(text: str, delay_s: float = 0.02) -> None:
-    """Key-by-key typing. Chat Home Base flags clipboard paste. Never Enter."""
-    try:
-        from pywinauto.keyboard import send_keys
-
-        send_keys(_escape_keys(text), with_spaces=True, pause=delay_s)
-        return
-    except Exception:
-        logger.debug("pywinauto send_keys failed; using SendInput", exc_info=True)
-    _send_unicode(text, delay_s=delay_s)
+def _type_into_focused(text: str, delay_s: float = 0.05) -> None:
+    """US-keyboard virtual keys. Never Ctrl, never clipboard, never pywinauto send_keys."""
+    pause = max(delay_s, 0.05)
+    for ch in text:
+        if ch in {"\n", "\r", "\t"}:
+            continue
+        pair = us_vk_for_char(ch)
+        if pair is None:
+            _send_unicode_char(ch)
+        else:
+            vk, shift = pair
+            if vk in {0x11, 0x12}:  # Ctrl / Alt — never
+                _send_unicode_char(ch)
+            else:
+                _tap_vk(vk, shift=shift)
+        time.sleep(pause)
 
 
 def _escape_keys(text: str) -> str:
@@ -1398,38 +1561,153 @@ def _escape_keys(text: str) -> str:
     return "".join(out)
 
 
-def _send_unicode(text: str, delay_s: float = 0.02) -> None:
+VK_SHIFT = 0x10
+VK_CONTROL = 0x11
+VK_OEM_1 = 0xBA
+VK_OEM_PLUS = 0xBB
+VK_OEM_COMMA = 0xBC
+VK_OEM_MINUS = 0xBD
+VK_OEM_PERIOD = 0xBE
+VK_OEM_2 = 0xBF
+VK_OEM_3 = 0xC0
+VK_OEM_4 = 0xDB
+VK_OEM_5 = 0xDC
+VK_OEM_6 = 0xDD
+VK_OEM_7 = 0xDE
+
+
+def _us_char_vk_map() -> dict[str, tuple[int, bool]]:
+    mapping: dict[str, tuple[int, bool]] = {" ": (0x20, False)}
+    for idx, letter in enumerate("ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+        mapping[letter] = (0x41 + idx, True)
+        mapping[letter.lower()] = (0x41 + idx, False)
+    for idx, digit in enumerate("123456789"):
+        mapping[digit] = (0x31 + idx, False)
+    mapping["0"] = (0x30, False)
+    for digit, mark in zip("1234567890", "!@#$%^&*()"):
+        mapping[mark] = (mapping[digit][0], True)
+    mapping.update(
+        {
+            ";": (VK_OEM_1, False),
+            ":": (VK_OEM_1, True),
+            "=": (VK_OEM_PLUS, False),
+            "+": (VK_OEM_PLUS, True),
+            ",": (VK_OEM_COMMA, False),
+            "<": (VK_OEM_COMMA, True),
+            "-": (VK_OEM_MINUS, False),
+            "_": (VK_OEM_MINUS, True),
+            ".": (VK_OEM_PERIOD, False),
+            ">": (VK_OEM_PERIOD, True),
+            "/": (VK_OEM_2, False),
+            "?": (VK_OEM_2, True),
+            "`": (VK_OEM_3, False),
+            "~": (VK_OEM_3, True),
+            "[": (VK_OEM_4, False),
+            "{": (VK_OEM_4, True),
+            "\\": (VK_OEM_5, False),
+            "|": (VK_OEM_5, True),
+            "]": (VK_OEM_6, False),
+            "}": (VK_OEM_6, True),
+            "'": (VK_OEM_7, False),
+            '"': (VK_OEM_7, True),
+        }
+    )
+    return mapping
+
+
+_US_CHAR_VK = _us_char_vk_map()
+
+
+def us_vk_for_char(ch: str) -> tuple[int, bool] | None:
+    """US layout virtual key and shift. None means Unicode fallback. Never Ctrl."""
+    if not ch:
+        return None
+    pair = _US_CHAR_VK.get(ch)
+    if pair is None:
+        return None
+    vk, _shift = pair
+    if vk == VK_CONTROL:
+        return None
+    return pair
+
+
+def _tap_vk(vk: int, *, shift: bool) -> None:
     import ctypes
 
+    if vk == VK_CONTROL:
+        return
+    user32 = ctypes.windll.user32
+    if shift:
+        user32.keybd_event(VK_SHIFT, 0, 0, 0)
+    user32.keybd_event(vk, 0, 0, 0)
+    user32.keybd_event(vk, 0, 2, 0)
+    if shift:
+        user32.keybd_event(VK_SHIFT, 0, 2, 0)
+
+
+def _send_unicode_char(ch: str) -> None:
+    """Last-resort WM_CHAR. ASCII drafts should not reach here (apostrophe is VK_OEM_7)."""
+    import ctypes
+    from ctypes import wintypes
+
     extra = ctypes.c_ulong(0)
-    ulong_ptr = ctypes.POINTER(ctypes.c_ulong)
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = (
-            ("wVk", ctypes.c_ushort),
-            ("wScan", ctypes.c_ushort),
-            ("dwFlags", ctypes.c_ulong),
-            ("time", ctypes.c_ulong),
-            ("dwExtraInfo", ulong_ptr),
+            ("wVk", wintypes.WORD),
+            ("wScan", wintypes.WORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
         )
 
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = (
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+        )
+
+    class HARDWAREINPUT(ctypes.Structure):
+        _fields_ = (
+            ("uMsg", wintypes.DWORD),
+            ("wParamL", wintypes.WORD),
+            ("wParamH", wintypes.WORD),
+        )
+
+    class INPUTUNION(ctypes.Union):
+        _fields_ = (("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT))
+
     class INPUT(ctypes.Structure):
-        _fields_ = (("type", ctypes.c_ulong), ("ki", KEYBDINPUT))
+        _anonymous_ = ("u",)
+        _fields_ = (("type", wintypes.DWORD), ("u", INPUTUNION))
 
     KEYEVENTF_UNICODE = 0x0004
     KEYEVENTF_KEYUP = 0x0002
     INPUT_KEYBOARD = 1
     user32 = ctypes.windll.user32
+    code = ord(ch)
+    if code > 0xFFFF:
+        return
+    down = INPUT(type=INPUT_KEYBOARD)
+    down.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, ctypes.pointer(extra))
+    up = INPUT(type=INPUT_KEYBOARD)
+    up.ki = KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, ctypes.pointer(extra))
+    user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT))
+    user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
+
+
+def _send_unicode(text: str, delay_s: float = 0.05) -> None:
     for ch in text:
         if ch in {"\n", "\r"}:
             continue
-        code = ord(ch)
-        down = INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(0, code, KEYEVENTF_UNICODE, 0, ctypes.pointer(extra)))
-        up = INPUT(
-            type=INPUT_KEYBOARD,
-            ki=KEYBDINPUT(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, ctypes.pointer(extra)),
-        )
-        user32.SendInput(1, ctypes.byref(down), ctypes.sizeof(INPUT))
-        user32.SendInput(1, ctypes.byref(up), ctypes.sizeof(INPUT))
-        if delay_s:
-            time.sleep(delay_s)
+        pair = us_vk_for_char(ch)
+        if pair is None:
+            _send_unicode_char(ch)
+        else:
+            vk, shift = pair
+            _tap_vk(vk, shift=shift)
+        time.sleep(max(delay_s, 0.05))

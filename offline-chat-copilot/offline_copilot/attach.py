@@ -191,9 +191,9 @@ def fill_draft(page, text: str) -> bool:
     box = root.locator("textarea")
     target = box.first if box.count() else root.first
     target.click()
-    page.keyboard.press("Control+A")
-    page.keyboard.press("Backspace")
-    target.press_sequentially(text, delay=20)
+    for _ in range(20):
+        page.keyboard.press("Backspace")
+    target.press_sequentially(text, delay=50)
     return True
 
 

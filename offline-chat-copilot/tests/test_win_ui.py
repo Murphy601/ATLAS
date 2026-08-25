@@ -11,6 +11,7 @@ from offline_copilot.win_ui import (
     extract_customer_name,
     has_live_composer,
     keep_enumerated_window,
+    latest_client_line_from_infos,
     parse_messages_from_names,
     pick_draft_edit,
     pick_logbook_save,
@@ -19,6 +20,7 @@ from offline_copilot.win_ui import (
     score_window,
     select_ix_window,
     snapshot_from_uia_names,
+    us_vk_for_char,
     waiting_reason,
     walk_control_tree,
 )
@@ -121,18 +123,20 @@ def test_pick_draft_edit_is_lowest_not_address_bar_or_send() -> None:
         [
             {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
             {"name": "Send", "control_type": "Button", "top": 900, "width": 80},
-            {"name": "", "control_type": "Edit", "top": 880, "width": 420},
             {"name": "Search", "control_type": "Edit", "top": 120, "width": 200},
+            {"name": "Your message is too short", "control_type": "Text", "top": 910, "left": 80, "width": 400, "height": 18},
+            {"name": "", "control_type": "Edit", "top": 870, "width": 420, "left": 80},
         ],
         allow_fallback=True,
     )
     assert chosen is not None
-    assert chosen["top"] == 880
+    assert chosen["top"] == 870
     assert not is_forbidden_click(label=chosen.get("name") or "")
     assert (
         pick_draft_edit(
             [
                 {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
+                {"name": "Search", "control_type": "Edit", "top": 120, "width": 200},
                 {"name": "", "control_type": "Edit", "top": 880, "width": 420},
             ],
             allow_fallback=False,
@@ -146,7 +150,7 @@ def test_pick_draft_edit_is_lowest_not_address_bar_or_send() -> None:
         ],
         allow_fallback=False,
     )
-    assert chosen is not None
+    assert marked is not None
     assert marked.get("automation_id") == "messageTextArea"
 
 
@@ -181,24 +185,42 @@ def test_waiting_room_leftover_bubbles_are_not_live() -> None:
 
 
 def test_live_fallback_edit_skips_address_bar() -> None:
-    chosen = pick_draft_edit(
-        [
-            {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
-            {"name": "", "control_type": "Edit", "top": 880, "width": 420},
-        ],
-        live=True,
-    )
-    assert chosen is not None
-    assert chosen["top"] == 880
     assert (
         pick_draft_edit(
             [
                 {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
+                {"name": "Search", "control_type": "Edit", "top": 120, "width": 200},
+                {"name": "", "control_type": "Edit", "top": 880, "width": 420},
             ],
             live=True,
         )
         is None
     )
+    chosen = pick_draft_edit(
+        [
+            {"name": "Address and search bar", "control_type": "Edit", "top": 40, "width": 800},
+            {"name": "Search", "control_type": "Edit", "top": 120, "width": 200},
+            {"name": "Your message is too short", "control_type": "Text", "top": 910, "left": 80, "width": 400, "height": 18},
+        ],
+        live=True,
+    )
+    assert chosen is not None
+    assert int(chosen["top"]) >= 220
+    assert int(chosen["top"]) < 910
+    assert "address" not in str(chosen.get("name") or "").casefold()
+    assert "search" not in str(chosen.get("name") or "").casefold()
+    bottom_search = pick_draft_edit(
+        [
+            {"name": "Search", "control_type": "Edit", "top": 880, "width": 220, "left": 20},
+            {"name": "input-135-messages", "control_type": "Edit", "top": 860, "width": 300, "automation_id": "input-135-messages"},
+            {"name": "Your message is too short", "control_type": "Text", "top": 910, "left": 80, "width": 400, "height": 18},
+        ],
+        live=True,
+        allow_fallback=True,
+    )
+    assert bottom_search is not None
+    assert "search" not in str(bottom_search.get("name") or "").casefold()
+    assert "input-135" not in str(bottom_search.get("automation_id") or "").casefold()
 
 
 def test_snapshot_waiting_vs_live_from_uia() -> None:
@@ -227,6 +249,28 @@ def test_snapshot_waiting_vs_live_from_uia() -> None:
     )
     assert live.claimed is True
     assert live.chat_id == "USETN4695969"
+
+
+def test_stats_and_wishlist_pages_are_not_live() -> None:
+    stats = snapshot_from_uia_names(
+        [
+            "USETN4695969's Personal Performance",
+            "Message Statistics",
+            "Get insights about your message performance within different time frames.",
+            "input-135-messages",
+        ],
+        title="Chat | Chat Home Base - Chromium",
+    )
+    assert stats.waiting is True
+    wish = snapshot_from_uia_names(
+        [
+            "user Catman19 added you to her/his Wish List",
+            "PROFILE DETAILS",
+            "you are",
+        ],
+        title="Chat | Chat Home Base - Chromium",
+    )
+    assert wish.waiting is True
 
 
 def test_waiting_room_copy_is_not_a_claimed_chat() -> None:
@@ -315,10 +359,36 @@ def test_logbook_save_is_create_the_log_not_send() -> None:
     assert pick_logbook_save([send]) is None
 
 
-def test_escape_keys_does_not_emit_paste() -> None:
+def test_us_keyboard_typing_never_uses_ctrl_or_paste() -> None:
     typed = _escape_keys("I'm about 40 minutes outside of Atlanta. What's up?")
     assert "^v" not in typed.casefold()
     assert "{ENTER}" not in typed.upper()
+    for ch in "I'm about 40 minutes outside of Atlanta. What's up?":
+        pair = us_vk_for_char(ch)
+        assert pair is not None, ch
+        vk, _shift = pair
+        assert vk != 0x11
+
+
+def test_latest_client_line_is_the_lowest_bubble_not_old_history() -> None:
+    line = latest_client_line_from_infos(
+        [
+            {
+                "name": "I am here is because of sex, but we can build a friendship",
+                "top": 220,
+                "control_type": "Text",
+            },
+            {
+                "name": "My fave place is Florence, Italy. Really old and its a great walking city.",
+                "top": 700,
+                "control_type": "Text",
+            },
+            {"name": "Your message is too short", "top": 910, "control_type": "Text"},
+            {"name": "Address and search bar", "top": 40, "control_type": "Edit"},
+        ]
+    )
+    assert "Florence" in line
+    assert "i am here is because" not in line.casefold()
 
 
 def test_parse_skips_reply_placeholder() -> None:

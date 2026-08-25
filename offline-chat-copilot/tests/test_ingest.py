@@ -182,6 +182,20 @@ def test_ingest_captures_likes_places_and_important_details() -> None:
     assert "solo travel" in extract_likes("solo travel had a lot to do with that.")
 
 
+def test_last_client_message_is_the_newest_not_old_history() -> None:
+    ingest = ingest_history(
+        [
+            {"sender": "client", "text": "I am here is because of sex, but we can build a friendship"},
+            {
+                "sender": "client",
+                "text": "My fave place is Florence, Italy. Really old and its a great walking city.",
+            },
+        ]
+    )
+    assert "Florence" in ingest.last_client_message
+    assert "i am here is because" not in ingest.last_client_message.casefold()
+
+
 def test_apply_ingest_does_not_overwrite_existing_city(tmp_path: Path) -> None:
     book = Logbook(tmp_path / "logbook.json")
     book.get("c1", name="Alex", city="Dallas")
