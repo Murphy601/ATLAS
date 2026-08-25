@@ -1,5 +1,6 @@
 from datetime import date
 
+from offline_copilot.assembler import MEETUP_DEFLECTS
 from offline_copilot.cta import CTA_BANK
 from offline_copilot.engine import draft_replies
 from offline_copilot.logbook import Logbook
@@ -82,6 +83,17 @@ def test_illegal_incoming_returns_no_options(tmp_path) -> None:
     assert result.options == []
 
 
+def _assert_tricky_chat_deflect(option: str) -> None:
+    lowered = option.casefold()
+    assert any(line.casefold() in lowered for line in MEETUP_DEFLECTS)
+    assert "come over" not in lowered
+    assert "meet up" not in lowered
+    assert "let's meet" not in lowered
+    assert "first-date" not in lowered
+    assert "go on a date" not in lowered
+    assert option.count("?") == 1
+
+
 def test_meetup_ask_is_deflected_not_accepted(tmp_path) -> None:
     result = draft_replies(
         "Alex",
@@ -92,10 +104,30 @@ def test_meetup_ask_is_deflected_not_accepted(tmp_path) -> None:
         remember=False,
     )
     assert not result.blocked, result.reason
+    assert len(result.options) == 3
+    used_openers = set()
     for option in result.options:
-        assert "keeping this in chat" in option.casefold()
-        assert "come over" not in option.casefold()
-        assert option.count("?") == 1
+        _assert_tricky_chat_deflect(option)
+        for line in MEETUP_DEFLECTS:
+            if line.casefold() in option.casefold():
+                used_openers.add(line)
+    assert len(used_openers) >= 2
+
+
+def test_when_can_we_meet_uses_tricky_chat_redirects(tmp_path) -> None:
+    parsed = parse_message("When can we meet?")
+    assert parsed.meetup_request
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "When can we meet?",
+        client_id="US-3b",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    for option in result.options:
+        _assert_tricky_chat_deflect(option)
 
 
 def test_bad_city_blocks_when_location_is_asked(tmp_path) -> None:

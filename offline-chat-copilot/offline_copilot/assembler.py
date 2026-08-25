@@ -25,9 +25,21 @@ ACTIVITY_LINES = (
     "I'm keeping the evening low-key and staying in.",
 )
 
-MEETUP_DEFLECT = (
-    "I like keeping this in chat for now rather than making plans in person."
+MEETUP_DEFLECTS = (
+    # Acknowledge & redirect — no later-week promise, no extra question (Slot C is the CTA).
+    "I won't be able to fit that into my schedule. By the way, I was meaning to ask you something else.",
+    # Cool the intensity without talking about dates or meeting up.
+    "That's sweet of you to ask, but right now isn't the best time for me. That reminds me of something I wanted to ask.",
+    # Humor, then shift. No bar/spot invite that sounds like a meetup.
+    "Wow, that's a lot to process. I need to think about it. I deserve a drink or two after that.",
+    # Gratitude and a clean topic change.
+    "I'm flattered by your offer, thank you. On a different note, I wanted to get your thoughts on something.",
 )
+MEETUP_DEFLECT = MEETUP_DEFLECTS[0]
+
+
+def meetup_deflect_line(option_index: int) -> str:
+    return MEETUP_DEFLECTS[option_index % len(MEETUP_DEFLECTS)]
 
 FACT_BRIDGES = (
     "That reminds me of what you said about {fact}.",
@@ -71,7 +83,7 @@ def slot_a(
     first = (name or "").strip().split()[0] if name.strip() else ""
     parts: list[str] = []
     if parsed.meetup_request or parsed.dating_request:
-        parts.append(MEETUP_DEFLECT)
+        parts.append(meetup_deflect_line(ack_index))
     if parsed.asked_location:
         ok, _reason = validate_city(city)
         if not ok:

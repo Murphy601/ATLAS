@@ -94,8 +94,15 @@ def test_handle_claimed_chat_deflects_meetup_history(tmp_path: Path) -> None:
     assert result.never_send is True
     assert result.options
     for option in result.options:
-        assert "keeping this in chat" in option.casefold()
         assert "come over" not in option.casefold()
+        assert "meet up" not in option.casefold()
+        lowered = option.casefold()
+        assert (
+            "won't be able to fit that into my schedule" in lowered
+            or "sweet of you to ask" in lowered
+            or "a lot to process" in lowered
+            or "flattered by your offer" in lowered
+        )
 
 
 def test_illegal_anywhere_in_history_hard_blocks(tmp_path: Path) -> None:

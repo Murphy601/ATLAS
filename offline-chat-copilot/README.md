@@ -61,6 +61,19 @@ The Tampermonkey file `userscript/chat-copilot.user.js` is a fallback (`@match` 
 2. **Slot B** — optional sports/small-talk from the calendar.
 3. **Slot C** — exactly one open-ended CTA.
 
+## Tricky chats (when can we meet)
+
+Never accept a meetup. Never propose a time or place. Never ask a dating follow-up like “first-date no-nos” — that still sounds like a date is on the table and it would add a second `?`.
+
+Slot A uses one of four redirects, then Slot C is the only question:
+
+1. **Acknowledge & redirect** — schedule does not work, then shift.
+2. **Cool it down** — that’s sweet, not the right time, then shift.
+3. **Humor** — a lot to process, deserve a drink, then shift (no “new spot” invite).
+4. **Gratitude & shift** — flattered, thanks, different note.
+
+The three draft options rotate those openers so they do not all sound like the same excuse.
+
 ## Operator still owns the send
 
 The tool fills a draft and shows three options. Edit if needed, then send yourself.
