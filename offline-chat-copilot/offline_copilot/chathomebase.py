@@ -94,13 +94,34 @@ def snapshot_from_flags(
     )
 
 
+def claim_identity(snapshot: PageSnapshot) -> str:
+    """Stable id for the client currently on screen. Claims rotate; do not pin one handle."""
+    chat_id = (snapshot.chat_id or "").strip()
+    if chat_id:
+        return f"id:{chat_id}"
+    name = (snapshot.customer_name or "").strip()
+    if name:
+        return f"name:{name.casefold()}"
+    return ""
+
+
 def claim_became_live(previous: PageSnapshot, current: PageSnapshot) -> bool:
-    """Rising edge: waiting/empty -> live claimed chat, or a new chat-id."""
+    """Rising edge: waiting/empty -> live, or a different client (chat-id / name)."""
     if not current.claimed:
         return False
     if not previous.claimed:
         return True
+    current_key = claim_identity(current)
+    previous_key = claim_identity(previous)
+    if current_key and previous_key and current_key != previous_key:
+        return True
     if current.chat_id and current.chat_id != previous.chat_id:
+        return True
+    if (
+        current.customer_name
+        and previous.customer_name
+        and current.customer_name.casefold() != previous.customer_name.casefold()
+    ):
         return True
     return False
 

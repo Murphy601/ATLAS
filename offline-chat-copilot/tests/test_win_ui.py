@@ -5,6 +5,7 @@ import pytest
 from offline_copilot.chathomebase import is_forbidden_click
 from offline_copilot.win_ui import (
     _escape_keys,
+    extract_customer_name,
     keep_enumerated_window,
     parse_messages_from_names,
     pick_draft_edit,
@@ -238,3 +239,21 @@ def test_parse_skips_reply_placeholder() -> None:
     )
     assert len(rows) == 1
     assert "worry about other men" in rows[0]["text"]
+
+
+def test_customer_name_is_the_claimed_client_not_the_persona() -> None:
+    names = [
+        "logbookCustomerName",
+        "Dawg1953",
+        "you are",
+        "Lacey",
+        "Type your reply here...",
+        "USCA1234567",
+    ]
+    assert extract_customer_name(names) == "Dawg1953"
+    rotated = snapshot_from_uia_names(
+        ["logbookCustomerName", "Nthabiseng", "you are", "Lacey", "messageTextArea", "USZZ9999911"],
+        title="chathomebase.com - Chromium",
+    )
+    assert rotated.customer_name == "Nthabiseng"
+    assert rotated.chat_id == "USZZ9999911"

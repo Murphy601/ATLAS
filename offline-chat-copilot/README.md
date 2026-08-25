@@ -37,7 +37,7 @@ python3 -m playwright install chromium
 python3 -m offline_copilot attach
 ```
 
-The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room is not a claim; it waits until `messageTextArea` / messages are actually on screen. You should see the mouse scroll the thread, click the customer logbook, then characters appearing in the reply box. Paste is never used.
+The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room is not a claim; it waits until `messageTextArea` / messages are actually on screen. Clients rotate: each new chat-id / customer handle is a new claim (left column, not the persona under “you are”). You should see the mouse scroll the thread, click the customer logbook, then characters appearing in the reply box. Paste is never used.
 
 Optional, for full DOM (scroll history + customer logbook): in the IX profile extra launch args add `--remote-debugging-port=9222`, click Open, then run again.
 

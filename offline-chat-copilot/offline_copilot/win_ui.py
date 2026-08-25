@@ -16,6 +16,8 @@ from typing import Any
 from .chathomebase import (
     CLAIMED_URL,
     PageSnapshot,
+    claim_became_live,
+    claim_identity,
     is_forbidden_click,
     logbook_comment,
 )
@@ -356,6 +358,41 @@ def extract_chat_id(names: list[str]) -> str:
     return ""
 
 
+def _looks_like_handle(text: str) -> bool:
+    value = (text or "").strip()
+    if not value or len(value) > 32:
+        return False
+    if value.casefold() in CHAT_CHROME_EXACT:
+        return False
+    if is_send_control_name(value):
+        return False
+    if len(value.split()) > 3:
+        return False
+    return True
+
+
+def extract_customer_name(names: list[str]) -> str:
+    """Left-column client handle. Never the persona under 'you are'."""
+    blocked: set[str] = set()
+    for idx, name in enumerate(names):
+        if name.strip().casefold() in {"you are", "youare"}:
+            if idx + 1 < len(names):
+                blocked.add(names[idx + 1].strip().casefold())
+    for idx, name in enumerate(names):
+        token = _norm_token(name)
+        if token in {"logbookcustomername", "logbookcustomer"}:
+            if idx + 1 < len(names):
+                nxt = names[idx + 1].strip()
+                if _looks_like_handle(nxt) and nxt.casefold() not in blocked:
+                    return nxt
+    for idx, name in enumerate(names):
+        if "customer" in name.casefold() and idx + 1 < len(names):
+            nxt = names[idx + 1].strip()
+            if _looks_like_handle(nxt) and nxt.casefold() not in blocked:
+                return nxt
+    return ""
+
+
 def snapshot_from_uia_names(
     names: list[str],
     *,
@@ -380,13 +417,7 @@ def snapshot_from_uia_names(
     if has_loader and not has_draft and not has_messages:
         live = False
     waiting = not live
-    customer_name = ""
-    for idx, name in enumerate(names):
-        if "customer" in name.casefold() and idx + 1 < len(names):
-            nxt = names[idx + 1].strip()
-            if nxt and len(nxt.split()) <= 3 and nxt[0].isalpha() and nxt.casefold() not in CHAT_CHROME_EXACT:
-                customer_name = nxt
-                break
+    customer_name = extract_customer_name(names)
     return PageSnapshot(
         url=CLAIMED_URL,
         waiting=waiting,
@@ -445,11 +476,16 @@ def run_uia_attach(
                 previous = current
                 time.sleep(poll_s)
                 continue
-            key = current.chat_id or "|".join(row["text"] for row in history[-3:])
-            if key == drafted_key:
+            key = claim_identity(current) or "|".join(row["text"] for row in history[-3:])
+            if not claim_became_live(previous, current) and key == drafted_key:
                 previous = current
                 time.sleep(poll_s)
                 continue
+            if previous.claimed and drafted_key and key != drafted_key:
+                say("[Copilot] Next claim is on screen. Clients rotate; starting this one.")
+            label = current.customer_name or "this client"
+            cid = current.chat_id or "no chat-id yet"
+            say(f"[Copilot] Working claim {cid} / {label}")
             _process_live_chat(hwnd, current, logbook)
             drafted_key = key
             if once:
@@ -485,10 +521,13 @@ def _process_live_chat(
     history_now = parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
     say(f"[Copilot] Parsed {len(history_now)} visible lines from the IX window.")
+    client_id = current.chat_id or snapshot.chat_id or current.customer_name or snapshot.customer_name or "claimed"
+    client_name = current.customer_name or snapshot.customer_name
+    say(f"[Copilot] Client on screen: {client_name or 'unknown'} ({client_id})")
     result = handle_claimed_chat(
         history_now,
-        client_id=current.chat_id or snapshot.chat_id or snapshot.customer_name or "claimed",
-        client_name=current.customer_name or snapshot.customer_name,
+        client_id=client_id,
+        client_name=client_name,
         persona_city=snapshot.profile_location,
         logbook=logbook,
     )

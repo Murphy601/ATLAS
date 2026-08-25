@@ -238,6 +238,7 @@ def show_panel(page, payload: dict[str, Any]) -> None:
 
 
 def process_live_chat(page, snapshot: PageSnapshot, logbook: Logbook) -> None:
+    _say(f"[Copilot] Working claim {snapshot.chat_id or 'no chat-id'} / {snapshot.customer_name or 'this client'}")
     _say("[Copilot] Scrolling history so older messages can load...")
     scroll_history(page)
     history = extract_history(page)
