@@ -1,6 +1,6 @@
 # Offline Chat Copilot
 
-Local, **non-AI** operator copilot for [Chat Home Base claimed chat](https://chathomebase.com/chat/claimed). No LLM API. It attaches to the **IX Browser profile you already opened**, waits until a conversation is actually claimed, scrolls history, updates the logbook, and fills a draft. The operator still sends.
+Local, **non-AI** operator copilot for [Chat Home Base claimed chat](https://chathomebase.com/chat/claimed). No LLM API. It attaches to the **IX Browser profile you already opened**, waits until a conversation is actually claimed, reads the last customer bubble, and fills a draft. The operator still sends and still adds logbook entries.
 
 Same attach model as the EGO / Clip Export bot: the engine never launches Chrome and does not use IX Local API.
 
@@ -37,19 +37,21 @@ python3 -m playwright install chromium
 python3 -m offline_copilot attach
 ```
 
-The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room shows **Waiting for conversation to be claimed...** That is not a claim. Performance / wish-list overlays are not a claim either. The copilot must not type into the Chromium address bar or the page search box. Clients rotate: each new chat-id / customer handle is a new claim (left column, not the persona under “you are”). On a real claim you should see the mouse scroll the thread, scroll both profile columns, click the customer logbook, then **slow** characters appearing in **Type your reply here...**. Paste is never used. Typing stays around 200ms+ per key so Chat Home Base does not fire the auto-typing warning.
+The engine ignores Google Chrome. It drives the IX process (`...\IXBrowser\...\chrome.exe` or `...\ixBrowser-Resources\...\chrome.exe`). If DevTools is off, it focuses that same window and fills the reply box from the desktop. It never starts a second browser and never closes yours. The `/chat/claimed` waiting room shows **Waiting for conversation to be claimed...** That is not a claim. Performance / wish-list overlays are not a claim either. The copilot must not type into the Chromium address bar or the page search box. Clients rotate: each new chat-id / customer handle is a new claim (left column, not the persona under “you are”). On a real claim you should see the mouse scroll the thread, then **slow** characters appearing in **Type your reply here...**. Paste is never used. The operator adds logbook entries by hand.
 
-Optional, for full DOM (scroll history + customer logbook): in the IX profile extra launch args add `--remote-debugging-port=9222`, click Open, then run again.
+The claim timer is about 3 minutes. The copilot should pick the last customer bubble and type a draft in **under 2 minutes**. It does not click PROFILE DETAILS or ADD NEW LOG.
 
 When a chat is claimed it:
 
-1. Scrolls the thread so older messages can load, then returns to the **latest** client message (never a profile label like Rental home)
-2. Scrolls the **customer** and **persona** sidebars, opens PROFILE DETAILS, and writes Other logs on both ADD NEW LOG buttons
-3. Types a customer/persona logbook comment if facts are high-confidence — never paste
-4. Types option 1 into `messageTextArea` with slow real keypresses (Chat Home Base rejects copy/paste and flags fast auto-typing)
-5. Prints three compliant options that stay on the latest client topic (75+ characters; the site shows “too short” under 75)
+1. Scrolls the thread briefly so the newest customer bubble is visible
+2. Picks that **customer bubble** (never a timestamp like `Tue, Aug 25, 2026 — a few seconds ago`, never Rental home)
+3. Builds a first-person reply that answers **that** line
+4. Types option 1 into `messageTextArea` with real keypresses (no paste, no Unicode dump)
+5. Prints three compliant options (75+ characters)
 
-The reply answers the **most recent client message**, in US English. Older history is only used for the logbook. It does not click Send, Send & End Shift, or report-submit. It does not press Enter after typing.
+The engine is a local rule matcher, not a cloud LLM. After it locks the last customer line, it matches that text (trust, location, intimate, and so on) and writes a reply to it. Older history is not the thing being answered.
+
+The reply answers the **most recent client message**, in US English. Older bubbles are not the line being answered. It does not click Send, Send & End Shift, or report-submit. It does not press Enter after typing.
 
 ## CLI without the browser
 

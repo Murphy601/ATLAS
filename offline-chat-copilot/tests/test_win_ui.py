@@ -11,6 +11,7 @@ from offline_copilot.win_ui import (
     extract_customer_name,
     has_live_composer,
     human_key_delay_s,
+    is_timestamp_line,
     keep_enumerated_window,
     latest_client_line_from_infos,
     looks_like_chat_line,
@@ -419,12 +420,43 @@ def test_profile_fields_are_not_chat_or_latest_line() -> None:
 
 def test_view_1_is_not_the_customer_handle() -> None:
     assert extract_customer_name(["view_1", "you are", "Annie", "Type your reply here..."]) == ""
+    assert extract_customer_name(["U USETN4695969", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["Bruce8111", "you are", "Annie", "Type your reply here..."]) == "Bruce8111"
 
 
 def test_human_typing_delay_is_slow_enough_to_avoid_auto_typing() -> None:
-    assert human_key_delay_s("a", 0) >= 0.22
-    assert human_key_delay_s(".", 3) >= 0.70
+    assert human_key_delay_s("a", 0) >= 0.13
+    assert human_key_delay_s(".", 3) >= 0.40
+
+
+def test_timestamp_is_not_the_latest_client_line() -> None:
+    assert is_timestamp_line("Tue, Aug 25, 2026 — a few seconds ago") is True
+    assert is_timestamp_line("Tue, Aug 25, 2026 - a few seconds ago") is True
+    assert looks_like_chat_line("Tue, Aug 25, 2026 — a few seconds ago") is False
+    assert looks_like_chat_line("I felt that way a few seconds ago when you wrote back to me") is True
+    line = latest_client_line_from_infos(
+        [
+            {"name": "PROFILE DETAILS", "top": 120, "left": 40, "width": 160, "control_type": "Button"},
+            {
+                "name": "I really felt the need to tell you that the way you use words makes me feel that you are guy whom I can trust. You make me feel secure and feel a sense of clarity. Am I making sense by saying this?",
+                "top": 620,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {
+                "name": "Tue, Aug 25, 2026 — a few seconds ago",
+                "top": 700,
+                "left": 420,
+                "width": 280,
+                "control_type": "Text",
+            },
+            {"name": "Your message is too short", "top": 910, "left": 400, "width": 400, "control_type": "Text"},
+            {"name": "Blond hair", "top": 500, "left": 1500, "width": 180, "control_type": "Text"},
+        ]
+    )
+    assert "making sense" in line.casefold()
+    assert "a few seconds ago" not in line.casefold()
 
 
 def test_parse_skips_reply_placeholder() -> None:

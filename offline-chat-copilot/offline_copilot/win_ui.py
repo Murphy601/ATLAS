@@ -23,11 +23,11 @@ from .chathomebase import (
     claim_identity,
     is_forbidden_click,
     logbook_comment,
-    persona_logbook_comment,
 )
 from .engine import handle_claimed_chat
 from .ix_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from .logbook import Logbook
+from .parser import describe_intent, is_timestamp_line, parse_message
 
 logger = logging.getLogger("copilot.win_ui")
 
@@ -589,9 +589,34 @@ def latest_client_line_from_infos(infos: list[dict]) -> str:
             continue
         lines.append((top, " ".join(name.split())))
     if not lines:
+        for row in infos:
+            name = str(row.get("name") or "").strip()
+            if not looks_like_chat_line(name):
+                continue
+            top = int(row.get("top") or 0)
+            if top <= 0:
+                continue
+            if warning_top < 10**9 and top >= warning_top - 8:
+                continue
+            lines.append((top, " ".join(name.split())))
+    if not lines:
         return ""
     lines.sort()
     return lines[-1][1]
+
+
+def choose_latest_client_line(infos: list[dict], history: list[dict[str, str]]) -> str:
+    """Last customer bubble that needs a reply. Never a timestamp, profile field, or persona line."""
+    latest = latest_client_line_from_infos(infos)
+    if latest:
+        return latest
+    for row in reversed(history or []):
+        if (row.get("sender") or "client").casefold() != "client":
+            continue
+        text = " ".join(str(row.get("text") or "").split())
+        if looks_like_chat_line(text):
+            return text
+    return ""
 
 
 def is_profile_field_text(name: str) -> bool:
@@ -617,6 +642,8 @@ def looks_like_chat_line(name: str) -> bool:
         return False
     lowered = text.casefold()
     if is_profile_field_text(text):
+        return False
+    if is_timestamp_line(text):
         return False
     if is_chrome_ui_name(text):
         return False
@@ -756,7 +783,7 @@ def _looks_like_handle(text: str) -> bool:
         return False
     if is_send_control_name(value) or is_chrome_ui_name(value):
         return False
-    if CHAT_ID_RE.fullmatch(value.replace(" ", "")):
+    if CHAT_ID_RE.search(value) or CHAT_ID_RE.fullmatch(value.replace(" ", "")):
         return False
     if value.isdigit():
         return False
@@ -1013,98 +1040,44 @@ def _process_live_chat(
         return
     say("[Copilot] Claimed chat is live. Scrolling the thread so older messages can load...")
     _scroll_load_older(hwnd)
-    time.sleep(0.4)
-    infos_hist, _timed_out = _read_window(hwnd, announce=False)
-    history_all = parse_messages_from_infos(infos_hist) or parse_messages_from_names(_uia_tokens(infos_hist))
-    say("[Copilot] Returning to the latest client message...")
     _scroll_to_latest(hwnd)
-    time.sleep(0.35)
+    time.sleep(0.25)
     infos, _timed_out = _read_window(hwnd, announce=False)
     tokens = _uia_tokens(infos)
-    history_now = history_all or parse_messages_from_infos(infos) or parse_messages_from_names(tokens)
+    history_now = parse_messages_from_infos(infos) or parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
     if current.waiting:
         say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
         return
     say(f"[Copilot] Parsed {len(history_now)} visible lines from the IX window.")
-    latest = latest_client_line_from_infos(infos)
+    latest = choose_latest_client_line(infos, history_now)
     if latest:
         history_now = [row for row in history_now if row["text"].casefold() != latest.casefold()]
         history_now.append({"sender": "client", "text": latest})
-        say(f"[Copilot] Latest client line: {latest[:140]}")
-    client_id = current.chat_id or snapshot.chat_id or current.customer_name or snapshot.customer_name or "claimed"
+        say(f"[Copilot] Latest client line: {latest[:180]}")
+        parsed_latest = parse_message(latest)
+        say(f"[Copilot] Rule match: {describe_intent(parsed_latest)}")
+        say("[Copilot] Older bubbles are context only. The draft answers that last customer line.")
+    else:
+        say("[Copilot] No real customer bubble found yet. Not typing.")
+        return
+    client_id = current.chat_id or snapshot.chat_id or "claimed"
     client_name = current.customer_name or snapshot.customer_name
-    say(f"[Copilot] Client on screen: {client_name or 'unknown'} ({client_id})")
-    say("[Copilot] Scrolling customer and persona profiles for extra details...")
-    _scroll_profile_column(hwnd, 0.16)
-    _open_named(hwnd, infos, "profile details", leftmost=True)
-    time.sleep(0.3)
-    _open_named(hwnd, infos, "sexual preferences", leftmost=True)
-    _scroll_profile_column(hwnd, 0.16)
-    _scroll_profile_column(hwnd, 0.86)
-    infos, _timed_out = _read_window(hwnd, announce=False)
-    side = extract_sidebar_facts(infos)
-    if side.get("clientName") and (not client_name or client_name.casefold().startswith("view")):
-        client_name = side["clientName"]
-        say(f"[Copilot] Customer profile handle: {client_name}")
-    if side.get("clientNotes"):
-        say(f"[Copilot] Customer profile notes: {side['clientNotes'][:160]}")
-    if side.get("personaNotes"):
-        say(f"[Copilot] Persona profile notes: {side['personaNotes'][:160]}")
+    if client_name and (CHAT_ID_RE.search(client_name) or CHAT_ID_RE.fullmatch(client_name.replace(" ", ""))):
+        client_name = ""
+    say(f"[Copilot] Client on screen: {client_name or 'this client'} ({client_id})")
     result = handle_claimed_chat(
         history_now,
         client_id=client_id,
         client_name=client_name,
         header_name=client_name,
-        header_city=side.get("clientCity") or "",
-        persona_city=snapshot.profile_location or side.get("personaCity") or "",
+        persona_city=snapshot.profile_location,
         logbook=logbook,
+        remember=False,
     )
     for idx, option in enumerate(result.options, 1):
         say(f"Option {idx}: {option}")
-    fields = dict(result.logbook_fields or {})
-    if side.get("clientName") and not fields.get("clientName"):
-        fields["clientName"] = side["clientName"]
-    if side.get("clientCity") and not fields.get("clientCity"):
-        fields["clientCity"] = side["clientCity"]
-    if side.get("clientNotes"):
-        fields["clientNotes"] = "; ".join(
-            part for part in (fields.get("clientNotes"), side["clientNotes"]) if part
-        )
-    fields["personaName"] = side.get("personaName") or fields.get("personaName") or ""
-    fields["personaCity"] = side.get("personaCity") or ""
-    fields["personaNotes"] = side.get("personaNotes") or ""
-    customer_comment = logbook_comment(fields)
-    persona_comment = persona_logbook_comment(fields)
-    if customer_comment:
-        try:
-            if _fill_sided_log(hwnd, infos, customer_comment, leftmost=True):
-                say("[Copilot] Customer logbook Other comment typed and saved. Send was not clicked.")
-        except Exception as exc:
-            say(f"[Copilot] Customer logbook skipped: {exc}")
-        _dismiss_overlays()
-        time.sleep(0.25)
-        infos, _timed_out = _read_window(hwnd, announce=False)
-    if persona_comment:
-        try:
-            if _fill_sided_log(hwnd, infos, persona_comment, leftmost=False):
-                say("[Copilot] Persona logbook Other comment typed and saved. Send was not clicked.")
-        except Exception as exc:
-            say(f"[Copilot] Persona logbook skipped: {exc}")
-        _dismiss_overlays()
-        time.sleep(0.25)
-        infos, _timed_out = _read_window(hwnd, announce=False)
-        tokens = _uia_tokens(infos)
-        current = snapshot_from_uia_names(tokens, title=snapshot.title)
-        if current.waiting or not has_live_composer(tokens):
-            say("[Copilot] Reply box is not on screen after the logbook. Not typing.")
-            return
     if result.fill_draft:
-        infos, _timed_out = _read_window(hwnd, announce=False)
-        tokens = _uia_tokens(infos)
-        if not has_live_composer(tokens):
-            say("[Copilot] Stats/search page is on screen. Not typing.")
-            return
         filled = _fill_draft(hwnd, infos, result.fill_draft)
         if filled:
             say("[Copilot] Typed the draft (no paste). Operator still sends — Send was not clicked.")
@@ -1132,20 +1105,16 @@ def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
         return False
     if is_send_control_name(str(chosen.get("name") or "")):
         return False
-    _dismiss_overlays()
+    chosen = dict(chosen)
+    chosen["ctrl"] = None  # Coordinate click only. UIA click can look like paste.
     _focus(hwnd)
-    time.sleep(0.15)
+    time.sleep(0.12)
     if not _click_composer(hwnd, chosen):
         return False
-    time.sleep(0.25)
+    time.sleep(0.2)
     _clear_focused_edit()
-    blob = " ".join(_uia_tokens(infos)).casefold()
-    extra_slow = "auto-typing" in blob or "message was removed" in blob
-    if extra_slow:
-        say("[Copilot] Typing extra slowly after an auto-typing warning (no paste)...")
-    else:
-        say("[Copilot] Typing slowly into the reply box (real keys, no paste, no search bar)...")
-    _type_into_focused(text, extra_slow=extra_slow)
+    say("[Copilot] Typing into the reply box with real keys (no paste, no search bar)...")
+    _type_into_focused(text)
     return True
 
 
@@ -1273,9 +1242,9 @@ def _scroll_load_older(hwnd: int) -> None:
     y = top + int(height * 0.42)
     _click_screen(x, y)
     time.sleep(0.2)
-    for _ in range(10):
+    for _ in range(4):
         _mouse_wheel(120)
-        time.sleep(0.28)
+        time.sleep(0.16)
 
 
 def _scroll_to_latest(hwnd: int) -> None:
@@ -1285,9 +1254,9 @@ def _scroll_to_latest(hwnd: int) -> None:
     y = top + int(height * 0.42)
     _click_screen(x, y)
     time.sleep(0.15)
-    for _ in range(18):
+    for _ in range(8):
         _mouse_wheel(-120)
-        time.sleep(0.12)
+        time.sleep(0.10)
     _send_vk(0x23)  # End — newest bubble, not leftover older history.
     time.sleep(0.25)
 
@@ -1777,36 +1746,49 @@ def _clear_focused_edit() -> None:
 
 
 def human_key_delay_s(ch: str, index: int) -> float:
-    """Human-like pause. Chat Home Base flags sub-100ms auto-typing."""
-    base = 0.22 + (index % 5) * 0.02
+    """Human-like pause. Fast enough for a 2-minute claim, slow enough to avoid auto-typing."""
+    base = 0.13 + (index % 5) * 0.012
     if ch in ".!?":
-        return base + 0.55
+        return base + 0.32
     if ch in ",;:":
-        return base + 0.28
+        return base + 0.16
     if ch == " ":
-        return base + 0.08
+        return base + 0.04
     return base
 
 
-def _type_into_focused(text: str, delay_s: float = 0.22, extra_slow: bool = False) -> None:
-    """US-keyboard virtual keys. Never Ctrl, never clipboard, never pywinauto send_keys."""
+def keyboard_safe_text(text: str) -> str:
+    """US-keyboard characters only. Curly quotes become ASCII. Skip anything else later."""
+    out = text or ""
+    for src, dst in (
+        ("\u2018", "'"),
+        ("\u2019", "'"),
+        ("\u201c", '"'),
+        ("\u201d", '"'),
+        ("\u2013", "-"),
+        ("\u2014", "-"),
+        ("\u00a0", " "),
+    ):
+        out = out.replace(src, dst)
+    return out
+
+
+def _type_into_focused(text: str, delay_s: float = 0.13, extra_slow: bool = False) -> None:
+    """US-keyboard virtual keys only. Never Ctrl, never clipboard, never Unicode SendInput."""
     del delay_s
-    for index, ch in enumerate(text):
+    for index, ch in enumerate(keyboard_safe_text(text)):
         if ch in {"\n", "\r", "\t"}:
             continue
         pair = us_vk_for_char(ch)
-        hold = random.uniform(0.04, 0.10)
         if pair is None:
-            _send_unicode_char(ch)
-        else:
-            vk, shift = pair
-            if vk in {0x11, 0x12}:  # Ctrl / Alt — never
-                _send_unicode_char(ch)
-            else:
-                _tap_vk(vk, shift=shift, hold_s=hold)
-        pause = human_key_delay_s(ch, index) + random.uniform(0.06, 0.18)
+            continue
+        vk, shift = pair
+        if vk in {0x11, 0x12}:
+            continue
+        _tap_vk(vk, shift=shift, hold_s=random.uniform(0.03, 0.07))
+        pause = human_key_delay_s(ch, index) + random.uniform(0.03, 0.09)
         if extra_slow:
-            pause += 0.12
+            pause += 0.08
         time.sleep(pause)
 
 

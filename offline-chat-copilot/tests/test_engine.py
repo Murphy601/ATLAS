@@ -143,6 +143,55 @@ def test_drafts_answer_intimate_latest_not_small_talk(tmp_path) -> None:
         assert len(option) >= 75
 
 
+def test_drafts_answer_trust_message_not_small_talk(tmp_path) -> None:
+    result = handle_claimed_chat(
+        [
+            {
+                "sender": "client",
+                "text": (
+                    "I really felt the need to tell you that the way you use words makes me feel "
+                    "that you are guy whom I can trust. You make me feel secure and feel a sense of "
+                    "clarity. Am I making sense by saying this?"
+                ),
+            },
+        ],
+        client_id="trust-latest",
+        logbook_dir=tmp_path,
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "making sense" in blob or "trust" in blob or "secure" in blob
+    assert "recharge after a long day" not in blob
+    assert "playlist" not in blob
+    for option in result.options:
+        assert option.count("?") == 1
+        assert len(option) >= 75
+
+
+def test_timestamp_after_trust_message_is_not_answered(tmp_path) -> None:
+    result = handle_claimed_chat(
+        [
+            {
+                "sender": "client",
+                "text": (
+                    "I really felt the need to tell you that the way you use words makes me feel "
+                    "that you are guy whom I can trust. You make me feel secure and feel a sense of "
+                    "clarity. Am I making sense by saying this?"
+                ),
+            },
+            {"sender": "client", "text": "Tue, Aug 25, 2026 — a few seconds ago"},
+        ],
+        client_id="trust-stamp",
+        logbook_dir=tmp_path,
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "making sense" in blob or "trust" in blob or "secure" in blob
+    assert "recharge after a long day" not in blob
+
+
 def test_illegal_incoming_returns_no_options(tmp_path) -> None:
     result = draft_replies(
         "Alex",

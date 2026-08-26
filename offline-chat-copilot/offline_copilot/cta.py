@@ -244,9 +244,18 @@ INTIMATE_CTAS = _unique(
         "Want me to stay right there until you tell me you can't wait?",
     ]
 )
+VALIDATION_CTAS = _unique(
+    [
+        "What made you feel like you could tell me that?",
+        "Does it help if I tell you I feel that same pull with you?",
+        "Want me to keep talking to you like this?",
+        "How long have you been holding that in?",
+    ]
+)
 CTA_BY_CATEGORY = {
     "general": tuple(q for q in CTA_BANK if not any(w in q.casefold() for w in ("ufc", "mlb", "nfl", "game", "baseball", "football", "fight"))),
     "sports": tuple(q for q in CTA_BANK if any(w in q.casefold() for w in ("ufc", "mlb", "nfl", "game", "baseball", "football", "fight", "team", "sports"))),
     "weekend": tuple(q for q in CTA_BANK if any(w in q.casefold() for w in ("weekend", "sunday", "saturday"))),
     "intimate": INTIMATE_CTAS,
+    "validation": VALIDATION_CTAS,
 }

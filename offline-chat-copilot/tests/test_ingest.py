@@ -83,6 +83,24 @@ def test_handle_claimed_chat_fills_logbook_and_never_sends(tmp_path: Path) -> No
     assert all("minutes outside of Atlanta" in opt for opt in result.options)
 
 
+def test_ingest_skips_timestamp_when_picking_last_client_line() -> None:
+    result = ingest_history(
+        [
+            {
+                "sender": "client",
+                "text": (
+                    "I really felt the need to tell you that the way you use words makes me feel "
+                    "that you are guy whom I can trust. You make me feel secure and feel a sense of "
+                    "clarity. Am I making sense by saying this?"
+                ),
+            },
+            {"sender": "client", "text": "Tue, Aug 25, 2026 — a few seconds ago"},
+        ]
+    )
+    assert "making sense" in result.last_client_message.casefold()
+    assert "a few seconds ago" not in result.last_client_message.casefold()
+
+
 def test_handle_claimed_chat_deflects_meetup_history(tmp_path: Path) -> None:
     result = handle_claimed_chat(
         [

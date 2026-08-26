@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from .cta import CTA_BANK, CTA_BY_CATEGORY, INTIMATE_CTAS
+from .cta import CTA_BANK, CTA_BY_CATEGORY, INTIMATE_CTAS, VALIDATION_CTAS
 from .location import WINDOW_MINUTES, location_sentence, validate_city
 from .logbook import fingerprint
 from .parser import ParsedMessage
@@ -88,6 +88,8 @@ FACT_BRIDGES = (
 def _cta_pool(parsed: ParsedMessage, used: set[str]) -> list[str]:
     if parsed.asked_intimate:
         ordered = list(INTIMATE_CTAS) + list(CTA_BANK)
+    elif parsed.asked_validation:
+        ordered = list(VALIDATION_CTAS) + list(CTA_BANK)
     elif parsed.asked_sports:
         ordered = list(CTA_BY_CATEGORY.get("sports") or ()) + list(CTA_BANK)
     elif parsed.asked_activity:
@@ -127,6 +129,16 @@ def us_english(text: str) -> str:
         return american
 
     out = text or ""
+    for src, dst in (
+        ("\u2018", "'"),
+        ("\u2019", "'"),
+        ("\u201c", '"'),
+        ("\u201d", '"'),
+        ("\u2013", "-"),
+        ("\u2014", "-"),
+        ("\u00a0", " "),
+    ):
+        out = out.replace(src, dst)
     for uk, american in UK_TO_US:
         out = re.sub(rf"\b{uk}\b", lambda match, am=american: swap(match, am), out, flags=re.I)
     return out
@@ -203,6 +215,13 @@ def react_to_latest(text: str, ack_index: int) -> str:
             "You are kind to say that. I want you to feel just as sure around me.",
         )
         return lines[ack_index % 3]
+    if re.search(r"\b(?:making sense|can trust|feel secure|clarity)\b", lowered):
+        lines = (
+            "Yes, you are making complete sense. I like that you trusted me with that, and it makes me feel closer to you.",
+            "You are making sense, and I feel that too. The way you said it made me feel safe with you.",
+            "Thank you for telling me that. I want you to feel secure with me, and I like the clarity between us.",
+        )
+        return lines[ack_index % 3]
     if re.search(r"\b(?:on top of me|kissing me|in your mouth|sucking my balls|put my cock)\b", lowered):
         lines = (
             "I like how clearly you pictured that. I'd climb on top of you, kiss you slow, and work my way down when I feel you getting impatient.",
@@ -233,6 +252,13 @@ def react_to_latest(text: str, ack_index: int) -> str:
         return lines[ack_index % 3]
     if _looks_broken_grammar(raw):
         return ACKS[ack_index % len(ACKS)]
+    if "?" in raw:
+        lines = (
+            "I heard your question, and I like that you asked me that so openly.",
+            "Yes. I am with you on that, and I want you to feel sure when you talk to me.",
+            "Thank you for asking me that. I like that you checked in with me instead of holding it in.",
+        )
+        return lines[ack_index % 3]
     return ACKS[ack_index % len(ACKS)]
 
 
@@ -263,7 +289,7 @@ def slot_a(
         parts.append(banter[ack_index % len(banter)])
     if not parts:
         parts.append(react_to_latest(parsed.text, ack_index))
-        if first and ack_index == 1 and not parsed.asked_intimate:
+        if first and ack_index == 1 and not parsed.asked_intimate and not parsed.asked_validation:
             parts.append(f"{first}, I like how present you are with me.")
     # Deduplicate while keeping order.
     seen: set[str] = set()

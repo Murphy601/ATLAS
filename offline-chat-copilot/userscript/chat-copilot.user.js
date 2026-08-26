@@ -293,9 +293,6 @@
       };
       const result = await engineRequest("/claim", payload);
       showPanel(result);
-      if (result.logbook_fields) {
-        await fillLogbook(result.logbook_fields, !!result.save_logbook);
-      }
       const draft = result.fill_draft || (result.options && result.options[0]);
       if (draft) fillDraft(draft);
     } catch (err) {

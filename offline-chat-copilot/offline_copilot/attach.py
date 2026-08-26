@@ -193,7 +193,7 @@ def fill_draft(page, text: str) -> bool:
     target.click()
     for _ in range(20):
         page.keyboard.press("Backspace")
-    target.press_sequentially(text, delay=50)
+    target.press_sequentially(text, delay=130)
     return True
 
 
@@ -249,25 +249,18 @@ def process_live_chat(page, snapshot: PageSnapshot, logbook: Logbook) -> None:
         client_name=snapshot.customer_name,
         persona_city=snapshot.profile_location,
         logbook=logbook,
+        remember=False,
     )
     payload = {
         "blocked": result.blocked,
         "reason": result.reason,
         "options": list(result.options),
         "never_send": True,
-        "save_logbook": result.save_logbook,
+        "save_logbook": False,
         "logbook_fields": dict(result.logbook_fields),
         "fill_draft": result.fill_draft,
     }
     show_panel(page, payload)
-    if result.save_logbook:
-        try:
-            fill_customer_log(page, result.logbook_fields)
-            _say("[Copilot] Logbook comment saved (customer Other).")
-        except SendGuardError:
-            raise
-        except Exception as exc:
-            _say(f"[Copilot] Logbook DOM fill skipped: {exc}")
     if result.fill_draft:
         fill_draft(page, result.fill_draft)
         _say("[Copilot] Typed the draft. Operator still sends — Send was not clicked.")

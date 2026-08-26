@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from .cities import CITY_STOPWORDS, US_CITIES, US_STATES
 from .location import validate_city
-from .parser import parse_message
+from .parser import is_timestamp_line, parse_message
 
 LIVE_IN_RE = re.compile(
     r"\b(?:i(?:'m| am)?\s+(?:from|in)|i live(?:\s+in)?|i stay(?:\s+in)?)\s+"
@@ -313,6 +313,8 @@ def extract_interests(source: str | list) -> list[str]:
 
 
 def is_junk_client_text(text: str) -> bool:
+    if is_timestamp_line(text):
+        return True
     lowered = (text or "").casefold()
     return any(snippet in lowered for snippet in JUNK_FACT_SNIPPETS)
 
@@ -444,13 +446,15 @@ def _pick_last_client_message(messages: list[str]) -> str:
     if not messages:
         return ""
     for text in reversed(messages):
+        if is_timestamp_line(text):
+            continue
         lowered = (text or "").casefold()
         if len((text or "").strip()) < 8:
             continue
         if any(token in lowered for token in noise):
             continue
         return text
-    return messages[-1]
+    return ""
 
 
 def ingest_history(
