@@ -16,7 +16,7 @@ def test_parse_clock() -> None:
 def test_video_id_and_makeup_scene() -> None:
     blob = "luna_organize_makeup_v7_trio_2026-08-25_07-13-34 Hierarchical Egocentric"
     assert "makeup" in parse_video_id(blob).casefold()
-    scene = pick_scene(blob)
+    scene = pick_scene(blob, duration_s=73.5, frame_count=2208)
     assert scene.key == "makeup"
     assert scene.environment == "Home"
 

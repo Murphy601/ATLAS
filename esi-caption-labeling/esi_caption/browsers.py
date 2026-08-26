@@ -52,6 +52,10 @@ REJECT_TITLE_TOKENS = (
     "google gemini",
     "microsoft edge",
     "gmail",
+    "handshake ai",
+    "cursor",
+    "file explorer",
+    "ultimate auto typer",
 )
 
 
@@ -132,6 +136,8 @@ def score_task_window(
     *,
     family: str,
     command_line: str = "",
+    width: int = 0,
+    height: int = 0,
 ) -> int:
     lowered = (title or "").lower()
     if any(token in lowered for token in REJECT_TITLE_TOKENS):
@@ -151,6 +157,11 @@ def score_task_window(
     for hint in TASK_HINTS:
         if hint in lowered:
             score += 15
-    if "chromium" in lowered:
+    if "chromium" in lowered or "क्रोमियम" in (title or ""):
         score += 10
+    area = max(0, int(width)) * max(0, int(height))
+    if 0 < area < 400 * 250:
+        score -= 250
+    elif area >= 700 * 450:
+        score += 50
     return score

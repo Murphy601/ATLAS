@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from .captions import l1_caption, l2_caption, l3_caption, lint_caption
@@ -73,7 +74,6 @@ class EpisodePlan:
 
 def parse_clock_blob(text: str) -> tuple[float, float, int, int] | None:
     """Parse '0:28.7 / 1:13.5 | Frame 864 / 2208'."""
-    import re
 
     blob = text or ""
     time_match = re.search(
@@ -95,6 +95,14 @@ def seconds_to_timestamp(value: float) -> str:
     minutes = int(value // 60)
     seconds = value - minutes * 60
     return f"{minutes}:{seconds:04.1f}"
+
+
+def timestamp_to_seconds(text: str) -> float:
+    blob = (text or "").strip()
+    match = re.match(r"(\d+):(\d+(?:\.\d+)?)", blob)
+    if not match:
+        return 0.0
+    return int(match.group(1)) * 60 + float(match.group(2))
 
 
 def frames_for(span: L3Span, fps: float) -> int:

@@ -36,7 +36,7 @@ def run_labeling(family: str, *, submit: bool = True, cdp_url: str | None = None
                 frames = clock[3] if clock else 0
                 plan = plan_episode(duration_s=duration, frame_count=frames, video_blob=blob)
                 plan.video_id = parse_video_id(blob)
-                scene = pick_scene(blob)
+                scene = pick_scene(blob, duration_s=duration, frame_count=frames)
                 plan.environment = scene.environment
                 say(f"Scene pack: {scene.key}; video id: {plan.video_id or 'unknown'}")
                 return drive_page(page, plan, submit=submit)

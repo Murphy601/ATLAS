@@ -53,4 +53,6 @@ Captions stay unique. Pick and place are two L3s. Reaching is part of pick; retr
 3. Run **one** of the two commands above in a second PowerShell window.
 4. Leave that Chromium window on the labeling page.
 
+The bot ignores the tiny 158×26 title stub and Handshake AI. It maximizes the large Chromium window, pauses the video, then clicks each empty **A1 / action (empty)** card on the right and fills it. It does not press `3` on a playing timeline.
+
 Python 3.12 on PATH. First run creates `venv` and installs packages.

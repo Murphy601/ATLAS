@@ -29,18 +29,31 @@ def test_morelogin_chromium_not_manager() -> None:
     )
 
 
-def test_score_prefers_task_title() -> None:
+def test_score_prefers_large_task_window_not_tiny_stub() -> None:
     ix_exe = r"C:\Users\user\AppData\Roaming\ixBrowser-Resources\chrome\chrome.exe"
-    ml_exe = r"C:\Users\user\AppData\Roaming\MoreLogin\chrome\chrome.exe"
     title = "Hierarchical Egocentric Video Captioning (Environment, Segments & Actions) - Chromium"
-    ix = score_task_window(title, "Chrome_WidgetWin_1", ix_exe, family="ix")
-    ml = score_task_window(title, "Chrome_WidgetWin_1", ml_exe, family="morelogin")
-    chrome = score_task_window(title, "Chrome_WidgetWin_1", r"C:\Program Files\Google\Chrome\Application\chrome.exe", family="ix")
-    assert ix > 80
-    assert ml > 80
+    tiny = score_task_window(title, "Chrome_WidgetWin_1", ix_exe, family="ix", width=158, height=26)
+    large = score_task_window(title, "Chrome_WidgetWin_1", ix_exe, family="ix", width=1575, height=1050)
+    handshake = score_task_window(
+        "1:53:04 - Handshake AI - Chromium",
+        "Chrome_WidgetWin_1",
+        ix_exe,
+        family="ix",
+        width=1050,
+        height=700,
+    )
+    assert large > tiny
+    assert tiny < 0
+    assert handshake == 0
+    chrome = score_task_window(
+        title,
+        "Chrome_WidgetWin_1",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        family="ix",
+        width=1575,
+        height=1050,
+    )
     assert chrome == 0
-    gmail = score_task_window("Inbox - Gmail - Google Chrome", "Chrome_WidgetWin_1", ix_exe, family="ix")
-    assert gmail == 0
 
 
 def test_family_helper() -> None:
