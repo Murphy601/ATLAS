@@ -95,35 +95,27 @@ def snapshot_from_flags(
 
 
 def claim_identity(snapshot: PageSnapshot) -> str:
-    """Stable id for the client currently on screen. Same chat-id can rotate to a new handle."""
+    """Stable id for the claimed thread. USETN ids are the operator desk, reused across clients."""
     chat_id = (snapshot.chat_id or "").strip()
-    name = (snapshot.customer_name or "").strip()
-    if chat_id and name:
-        return f"id:{chat_id}|name:{name.casefold()}"
     if chat_id:
         return f"id:{chat_id}"
+    name = (snapshot.customer_name or "").strip()
     if name:
         return f"name:{name.casefold()}"
     return ""
 
 
 def claim_became_live(previous: PageSnapshot, current: PageSnapshot) -> bool:
-    """Rising edge: waiting/empty -> live, or a different client (chat-id / name)."""
+    """Rising edge: waiting/empty -> live, or a different desk id. A profile field appearing is not a new claim."""
     if not current.claimed:
         return False
     if not previous.claimed:
         return True
+    if current.chat_id and previous.chat_id:
+        return current.chat_id != previous.chat_id
     current_key = claim_identity(current)
     previous_key = claim_identity(previous)
     if current_key and previous_key and current_key != previous_key:
-        return True
-    if current.chat_id and current.chat_id != previous.chat_id:
-        return True
-    if (
-        current.customer_name
-        and previous.customer_name
-        and current.customer_name.casefold() != previous.customer_name.casefold()
-    ):
         return True
     return False
 

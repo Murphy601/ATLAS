@@ -19,7 +19,6 @@ from typing import Any, Callable, Iterable
 from .chathomebase import (
     CLAIMED_URL,
     PageSnapshot,
-    claim_became_live,
     claim_identity,
     is_forbidden_click,
     logbook_comment,
@@ -216,6 +215,7 @@ PROFILE_FIELD_EXACT = {
     "view_1",
     "view_2",
     "view 1",
+    "age: 75",
 }
 INTIMATE_LINE_RE = re.compile(
     r"\b(?:cock|dick|clit|pussy|g-?spot|nipples?|balls?|suck|kiss|taste|on top|mouth|wet|tease|horny)\b",
@@ -638,6 +638,10 @@ def is_profile_field_text(name: str) -> bool:
         return True
     if re.fullmatch(r"view[_\s-]?\d+", lowered):
         return True
+    if re.fullmatch(r"age\s*:\s*\d+", lowered):
+        return True
+    if re.match(r"^(?:age|height|weight|hair|eyes|body type)\s*:", lowered):
+        return True
     if re.fullmatch(r"\d+\s*credits?", lowered):
         return True
     if re.search(r"\b\d+ft\b", lowered) or re.search(r"\b\d{3}\s*-\s*\d{3}\s*cm\b", lowered):
@@ -711,7 +715,7 @@ def _chat_sender(left: int, min_x: int, max_x: int) -> str:
 
 def parse_messages_from_infos(infos: list[dict]) -> list[dict[str, str]]:
     min_x, max_x = _x_bounds(infos)
-    out: list[dict[str, str]] = []
+    out: list[tuple[int, dict[str, str]]] = []
     seen: set[str] = set()
     for row in infos:
         text = clean_client_line(str(row.get("name") or "")) or " ".join(str(row.get("name") or "").split())
@@ -724,8 +728,9 @@ def parse_messages_from_infos(infos: list[dict]) -> list[dict[str, str]]:
         if key in seen:
             continue
         seen.add(key)
-        out.append({"sender": _chat_sender(left, min_x, max_x), "text": text})
-    return out
+        out.append((int(row.get("top") or 0), {"sender": _chat_sender(left, min_x, max_x), "text": text}))
+    out.sort(key=lambda item: item[0])
+    return [row for _top, row in out]
 
 
 def parse_messages_from_names(names: list[str]) -> list[dict[str, str]]:
@@ -809,6 +814,10 @@ def _looks_like_handle(text: str) -> bool:
     if CHAT_ID_RE.search(value) or CHAT_ID_RE.fullmatch(value.replace(" ", "")):
         return False
     if _looks_like_firebase_id(value):
+        return False
+    if ":" in value:
+        return False
+    if re.match(r"^age\b", lowered):
         return False
     if value.isdigit():
         return False
@@ -1025,7 +1034,7 @@ def run_uia_attach(
                 previous = current
                 time.sleep(poll_s)
                 continue
-            history = parse_messages_from_names(tokens)
+            history = parse_messages_from_infos(infos) or parse_messages_from_names(tokens)
             if not history:
                 if previous.waiting:
                     say("[Copilot] Claimed chat is live. Waiting for customer messages...")
@@ -1034,14 +1043,17 @@ def run_uia_attach(
                 continue
             latest_preview = choose_latest_client_line(infos, history)
             key = f"{claim_identity(current)}|{latest_preview.casefold()[:160]}"
-            if not claim_became_live(previous, current) and key == drafted_key:
+            if key == drafted_key:
                 previous = current
                 time.sleep(poll_s)
                 continue
-            if previous.claimed and drafted_key and key != drafted_key:
-                say("[Copilot] Next claim is on screen. Clients rotate; starting this one.")
+            if previous.claimed and drafted_key:
+                if previous.chat_id and current.chat_id and previous.chat_id != current.chat_id:
+                    say("[Copilot] Next claim is on screen. Clients rotate; starting this one.")
+                else:
+                    say("[Copilot] Last customer line changed. Drafting for that bubble only.")
             say(f"[Copilot] Working claim {current.chat_id or 'no chat-id yet'} / {current.customer_name or 'this client'}")
-            _process_live_chat(hwnd, current, logbook, infos=infos)
+            _process_live_chat(hwnd, current, logbook, history=history, infos=infos)
             drafted_key = key
             if once:
                 return 0
@@ -1063,22 +1075,15 @@ def _process_live_chat(
     history: list[dict[str, str]] | None = None,
     infos: list[dict] | None = None,
 ) -> None:
-    del history, infos
     if snapshot.waiting:
         say("[Copilot] Page is still waiting for a conversation to be claimed. Not typing.")
         return
-    say("[Copilot] Claimed chat is live. Scrolling the thread so older messages can load...")
-    _scroll_load_older(hwnd)
-    _scroll_to_latest(hwnd)
-    time.sleep(0.35)
-    infos, _timed_out = _read_window(hwnd, announce=False)
+    say("[Copilot] Claimed chat is live. Reading the thread from top to bottom (no scroll)...")
+    if not infos:
+        infos, _timed_out = _read_window(hwnd, announce=False)
     tokens = _uia_tokens(infos)
     lowered_blob = " ".join(tokens).casefold()
-    if "auto-typing" in lowered_blob or "message was removed" in lowered_blob:
-        global _EXTRA_SLOW_TYPING
-        _EXTRA_SLOW_TYPING = True
-        say("[Copilot] Site warned about auto-typing. Slowing the keys more. Send was not clicked.")
-    history_now = parse_messages_from_infos(infos) or parse_messages_from_names(tokens)
+    history_now = parse_messages_from_infos(infos) or history or parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
     if current.waiting:
         still_live = snapshot.claimed and (
@@ -1086,7 +1091,7 @@ def _process_live_chat(
             or any(hint in lowered_blob for hint in PROFILE_LIVE_HINTS)
         )
         if still_live:
-            say("[Copilot] Still on the claimed thread after scroll. Not treating this as the waiting room.")
+            say("[Copilot] Still on the claimed thread. Not treating this as the waiting room.")
             current = snapshot
         else:
             say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
@@ -1099,13 +1104,15 @@ def _process_live_chat(
         say(f"[Copilot] Latest client line: {latest[:180]}")
         parsed_latest = parse_message(latest)
         say(f"[Copilot] Rule match: {describe_intent(parsed_latest)}")
-        say("[Copilot] Older bubbles are context only. The draft answers that last customer line.")
+        say("[Copilot] Whole thread is context. The draft answers that last customer line.")
     else:
         say("[Copilot] No real customer bubble found yet. Not typing.")
         return
     client_id = current.chat_id or snapshot.chat_id or "claimed"
     client_name = current.customer_name or snapshot.customer_name
     if client_name and (CHAT_ID_RE.search(client_name) or CHAT_ID_RE.fullmatch(client_name.replace(" ", ""))):
+        client_name = ""
+    if client_name and is_profile_field_text(client_name):
         client_name = ""
     say(f"[Copilot] Client on screen: {client_name or 'this client'} ({client_id})")
     result = handle_claimed_chat(

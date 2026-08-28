@@ -26,7 +26,7 @@ MEETUP_RE = re.compile(
     r"see\s+you\s+(?:tonight|tomorrow)|want\s+to\s+see\s+you|"
     r"are\s+you\s+home|give\s+me\s+your\s+address|send\s+(?:me\s+)?your\s+address|"
     r"what(?:'s| is)\s+your\s+address|your\s+address|"
-    r"i\s+want\s+to\s+see\s+you|come\s+see\s+me)\b",
+    r"i\s+want\s+to\s+see\s+you|come\s+see\s+me|when\s+do\s+you\s+want\s+us\s+to)\b",
     flags=re.I,
 )
 DATING_RE = re.compile(

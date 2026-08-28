@@ -395,6 +395,32 @@ def test_latest_client_line_is_the_lowest_bubble_not_old_history() -> None:
     assert "i am here is because" not in line.casefold()
 
 
+def test_older_mid_thread_line_is_not_the_latest() -> None:
+    line = latest_client_line_from_infos(
+        [
+            {
+                "name": "It could have been tonite but it’s on the agenda for tomorrow now",
+                "top": 380,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {
+                "name": "I want this to be a union of love, not checking boxes off.",
+                "top": 640,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {"name": "Age: 75", "top": 200, "left": 40, "width": 80, "control_type": "Text"},
+            {"name": "Your message is too short", "top": 910, "left": 400, "width": 400, "control_type": "Text"},
+        ]
+    )
+    assert "union of love" in line.casefold()
+    assert "tonite" not in line.casefold()
+    assert "agenda" not in line.casefold()
+
+
 def test_profile_fields_are_not_chat_or_latest_line() -> None:
     assert looks_like_chat_line("Rental home") is False
     assert looks_like_chat_line("Ground floor") is False
@@ -423,6 +449,7 @@ def test_view_1_is_not_the_customer_handle() -> None:
     assert extract_customer_name(["view_1", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["U USETN4695969", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["Bruce8111", "you are", "Annie", "Type your reply here..."]) == "Bruce8111"
+    assert extract_customer_name(["Age: 75", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["fmsRjh9xNik3lfpt5DPC", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["kAt7CR5e7daLYaHMCId4", "USETN4695969", "you are"]) == ""
 

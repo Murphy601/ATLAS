@@ -408,3 +408,20 @@ def test_leaked_cta_on_history_still_answers_intimate(tmp_path) -> None:
     blob = " ".join(result.options).casefold()
     assert "taste" in blob or "mouth" in blob or "greedy" in blob
     assert "that actually made me smile" not in blob
+
+
+def test_tonight_agenda_is_not_a_generic_smile(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "It could have been tonite but it’s on the agenda for tomorrow now",
+        client_id="US-agenda",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "tomorrow" in blob or "agenda" in blob or "tonight" in blob
+    assert "that actually made me smile" not in blob
+    assert "come over" not in blob
+    assert "see you tonight" not in blob

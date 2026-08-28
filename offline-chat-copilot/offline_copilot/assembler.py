@@ -220,6 +220,13 @@ def react_to_latest(text: str, ack_index: int) -> str:
             "A night of waiting tables is no small thing. Thank you for telling me — I can picture you still making time to talk to me after that.",
         )
         return lines[ack_index % 3]
+    if re.search(r"\b(?:tonite|tonight|tomorrow|agenda)\b", lowered):
+        lines = (
+            "Tomorrow still being on the agenda made me smile. I like that you told me instead of leaving me hanging.",
+            "I heard you. Tonight slipped, and tomorrow is still on the table, and I like that you kept me in the loop.",
+            "Thank you for saying that plainly. I can sit with tomorrow, and I like that you were honest about the timing.",
+        )
+        return lines[ack_index % 3]
     if "florence" in lowered or "italy" in lowered:
         lines = (
             "Florence sounds lovely when you describe it. I can almost picture you walking those old streets, and I like that a lot.",
