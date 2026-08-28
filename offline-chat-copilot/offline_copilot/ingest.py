@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from .cities import CITY_STOPWORDS, US_CITIES, US_STATES
 from .location import validate_city
-from .parser import is_timestamp_line, parse_message
+from .parser import clean_client_line, is_timestamp_line, parse_message
 
 LIVE_IN_RE = re.compile(
     r"\b(?:i(?:'m| am)?\s+(?:from|in)|i live(?:\s+in)?|i stay(?:\s+in)?)\s+"
@@ -446,14 +446,15 @@ def _pick_last_client_message(messages: list[str]) -> str:
     if not messages:
         return ""
     for text in reversed(messages):
-        if is_timestamp_line(text):
+        cleaned = clean_client_line(text)
+        if not cleaned or is_timestamp_line(cleaned):
             continue
-        lowered = (text or "").casefold()
-        if len((text or "").strip()) < 8:
+        lowered = cleaned.casefold()
+        if len(cleaned.strip()) < 8:
             continue
         if any(token in lowered for token in noise):
             continue
-        return text
+        return cleaned
     return ""
 
 

@@ -41,6 +41,13 @@ def test_claimed_url_is_not_enough_to_treat_as_live() -> None:
     )
     assert claim_became_live(other_client, later_client) is True
     assert claim_became_live(later_client, later_client) is False
+    same_id_first = snapshot_from_flags(
+        url=CLAIMED_URL, has_draft=True, chat_id="USETN4695969", customer_name="Dawg1953"
+    )
+    same_id_next = snapshot_from_flags(
+        url=CLAIMED_URL, has_draft=True, chat_id="USETN4695969", customer_name="Nthabiseng"
+    )
+    assert claim_became_live(same_id_first, same_id_next) is True
 
 
 def test_parse_fixture_splits_customer_and_operator() -> None:

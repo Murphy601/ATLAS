@@ -95,11 +95,13 @@ def snapshot_from_flags(
 
 
 def claim_identity(snapshot: PageSnapshot) -> str:
-    """Stable id for the client currently on screen. Claims rotate; do not pin one handle."""
+    """Stable id for the client currently on screen. Same chat-id can rotate to a new handle."""
     chat_id = (snapshot.chat_id or "").strip()
+    name = (snapshot.customer_name or "").strip()
+    if chat_id and name:
+        return f"id:{chat_id}|name:{name.casefold()}"
     if chat_id:
         return f"id:{chat_id}"
-    name = (snapshot.customer_name or "").strip()
     if name:
         return f"name:{name.casefold()}"
     return ""

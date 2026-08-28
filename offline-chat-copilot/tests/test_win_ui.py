@@ -5,6 +5,7 @@ import time
 import pytest
 
 from offline_copilot.chathomebase import PageSnapshot, is_forbidden_click
+from offline_copilot.parser import clean_client_line, is_timestamp_line as parser_is_timestamp
 from offline_copilot.win_ui import (
     _escape_keys,
     describe_copilot_state,
@@ -422,11 +423,109 @@ def test_view_1_is_not_the_customer_handle() -> None:
     assert extract_customer_name(["view_1", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["U USETN4695969", "you are", "Annie", "Type your reply here..."]) == ""
     assert extract_customer_name(["Bruce8111", "you are", "Annie", "Type your reply here..."]) == "Bruce8111"
+    assert extract_customer_name(["fmsRjh9xNik3lfpt5DPC", "you are", "Annie", "Type your reply here..."]) == ""
+    assert extract_customer_name(["kAt7CR5e7daLYaHMCId4", "USETN4695969", "you are"]) == ""
 
 
 def test_human_typing_delay_is_slow_enough_to_avoid_auto_typing() -> None:
-    assert human_key_delay_s("a", 0) >= 0.13
-    assert human_key_delay_s(".", 3) >= 0.40
+    assert human_key_delay_s("a", 0) >= 0.18
+    assert human_key_delay_s(".", 3) >= 0.50
+
+
+def test_day_month_and_short_month_stamps_are_not_latest() -> None:
+    day_month = "07\u2011Aug\u20112026 \u2014 20 days ago"
+    short_month = "Aug 28 (a few seconds ago)"
+    assert parser_is_timestamp(day_month) is True
+    assert is_timestamp_line(short_month) is True
+    assert looks_like_chat_line(day_month) is False
+    assert looks_like_chat_line(short_month) is False
+    line = latest_client_line_from_infos(
+        [
+            {
+                "name": "Waiting tables for a friend tonight.",
+                "top": 520,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {
+                "name": day_month,
+                "top": 700,
+                "left": 420,
+                "width": 280,
+                "control_type": "Text",
+            },
+            {
+                "name": short_month,
+                "top": 740,
+                "left": 420,
+                "width": 280,
+                "control_type": "Text",
+            },
+            {"name": "Your message is too short", "top": 910, "left": 400, "width": 400, "control_type": "Text"},
+        ]
+    )
+    assert "waiting tables" in line.casefold()
+    assert "20 days ago" not in line.casefold()
+    assert "a few seconds ago" not in line.casefold()
+
+
+def test_leaked_cta_is_stripped_from_latest_client_line() -> None:
+    glued = (
+        "That's a very sweet dick you got there. I really would love to have a taste of it"
+        "g after a long day?"
+    )
+    cleaned = clean_client_line(glued)
+    assert "taste of it" in cleaned.casefold()
+    assert "after a long day" not in cleaned.casefold()
+    wind_up = (
+        "That's a very sweet dick you got there. I really would love to have a taste of it. "
+        "Do you think that's possible? How do you usually wind up after a long day?"
+    )
+    stripped = clean_client_line(wind_up)
+    assert "taste of it" in stripped.casefold()
+    assert "do you think that's possible" in stripped.casefold()
+    assert "wind up" not in stripped.casefold()
+    assert "after a long day" not in stripped.casefold()
+    real_day = clean_client_line("Work ran long after a long day and I still wanted to talk.")
+    assert "after a long day" in real_day.casefold()
+    line = latest_client_line_from_infos(
+        [
+            {
+                "name": glued,
+                "top": 640,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {
+                "name": "How do you usually keep things interesting after a long day?",
+                "top": 680,
+                "left": 420,
+                "width": 360,
+                "control_type": "Text",
+            },
+            {"name": "Your message is too short", "top": 910, "left": 400, "width": 400, "control_type": "Text"},
+        ]
+    )
+    assert "taste of it" in line.casefold()
+    assert "keep things interesting" not in line.casefold()
+
+
+def test_profile_details_without_too_short_is_still_live() -> None:
+    snap = snapshot_from_uia_names(
+        [
+            "chathomebase.com/chat/claimed",
+            "PROFILE DETAILS",
+            "ADD NEW LOG",
+            "Waiting tables for a friend tonight.",
+            "USETN4695969",
+            "Yes. Are you home. If you are give me your address. I want to see you tonight.",
+        ],
+        title="Chat | Chat Home Base - Chromium",
+    )
+    assert snap.waiting is False
+    assert snap.claimed is True
 
 
 def test_timestamp_is_not_the_latest_client_line() -> None:

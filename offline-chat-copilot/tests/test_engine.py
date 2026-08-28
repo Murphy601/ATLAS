@@ -277,3 +277,134 @@ def test_story_is_referenced(tmp_path) -> None:
     assert not result.blocked, result.reason
     blob = " ".join(result.options).casefold()
     assert "chevy" in blob or "restoring" in blob
+
+
+def test_address_meetup_is_deflected_not_accepted(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "Yes. Are you home. If you are give me your address. I want to see you tonight. I want a hug and a kiss from you. Anything else is up to you",
+        client_id="US-addr",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert any(line.casefold() in blob for line in MEETUP_DEFLECTS)
+    assert "give me your address" not in blob
+    assert "see you tonight" not in blob
+    assert not re.search(r"\b\d{1,6}\s+\w+\s+(?:st|street|ave|road)\b", blob)
+    for option in result.options:
+        assert option.count("?") == 1
+        assert "recharge after a long day" not in option.casefold()
+        assert "i heard your question" not in option.casefold()
+
+
+def test_intimate_dick_taste_is_not_generic_ack(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "That's a very sweet dick you got there. I really would love to have a taste of it. Do you think that's possible?",
+        client_id="US-taste",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "taste" in blob or "mouth" in blob or "greedy" in blob
+    assert "i heard your question" not in blob
+    assert "keep things interesting after a long day" not in blob
+    assert "that actually made me smile" not in blob
+    for option in result.options:
+        assert "my dick" not in option.casefold()
+        assert option.count("?") == 1
+        assert len(option) >= 75
+
+
+def test_married_attachment_is_not_generic_question_ack(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "Yeah, sure, I think we will see how it goes along the way. What will we do if we get attached, and yet you are married?",
+        client_id="US-married",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "attached" in blob or "honest" in blob or "worry" in blob
+    assert "i heard your question" not in blob
+    assert "that actually made me smile" not in blob
+
+
+def test_help_offer_is_not_generic_because_of_really(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "Really? That sounds bad, but am sure we can figure something out. I can help you",
+        client_id="US-help",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "help" in blob or "figure" in blob or "offering" in blob
+    assert "i heard your question" not in blob
+
+
+def test_romantic_dinners_are_answered(tmp_path) -> None:
+    result = draft_replies(
+        "Alex",
+        "Dallas",
+        "I am a fan of romantic dinners. Do you also like being romantic with your lady? I will be waiting on it.",
+        client_id="US-romance",
+        logbook=Logbook(tmp_path / "lb.json"),
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "romantic" in blob
+    assert "i heard your question" not in blob
+
+
+def test_different_last_bubbles_do_not_share_one_template(tmp_path) -> None:
+    taste = draft_replies(
+        "Alex",
+        "Dallas",
+        "That's a very sweet dick you got there. I really would love to have a taste of it.",
+        client_id="US-a",
+        logbook=Logbook(tmp_path / "a.json"),
+        remember=False,
+    )
+    tables = draft_replies(
+        "Alex",
+        "Dallas",
+        "Waiting tables for a friend tonight.",
+        client_id="US-b",
+        logbook=Logbook(tmp_path / "b.json"),
+        remember=False,
+    )
+    assert not taste.blocked and not tables.blocked
+    assert taste.options[0] != tables.options[0]
+    taste_blob = taste.options[0].casefold()
+    assert "taste" in taste_blob or "greedy" in taste_blob or "mouth" in taste_blob or "teasing" in taste_blob
+    assert "waiting tables" in tables.options[0].casefold() or "shift" in tables.options[0].casefold()
+
+
+def test_leaked_cta_on_history_still_answers_intimate(tmp_path) -> None:
+    result = handle_claimed_chat(
+        [
+            {
+                "sender": "client",
+                "text": "That's a very sweet dick you got there. I really would love to have a taste of itg after a long day?",
+            },
+            {"sender": "client", "text": "07\u2011Aug\u20112026 \u2014 20 days ago"},
+        ],
+        client_id="leak-stamp",
+        logbook_dir=tmp_path,
+        remember=False,
+    )
+    assert not result.blocked, result.reason
+    blob = " ".join(result.options).casefold()
+    assert "taste" in blob or "mouth" in blob or "greedy" in blob
+    assert "that actually made me smile" not in blob

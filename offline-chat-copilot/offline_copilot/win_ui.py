@@ -27,7 +27,7 @@ from .chathomebase import (
 from .engine import handle_claimed_chat
 from .ix_cdp import is_ix_chromium_exe, is_ix_launcher, is_stock_chrome_path
 from .logbook import Logbook
-from .parser import describe_intent, is_timestamp_line, parse_message
+from .parser import clean_client_line, describe_intent, is_timestamp_line, parse_message
 
 logger = logging.getLogger("copilot.win_ui")
 
@@ -49,7 +49,7 @@ PICK_WAIT_S = 45.0
 PICK_INTERVAL_S = 2.5
 UIA_READ_TIMEOUT_S = 8.0
 UIA_MAX_NODES = 1800
-UIA_MAX_DEPTH = 14
+UIA_MAX_DEPTH = 18
 HEARTBEAT_S = 8.0
 _UIA_WORKER: threading.Thread | None = None
 # Chat Home Base ids look like USETN4695969 (country + code + digits), not UUSETN... leftovers.
@@ -218,9 +218,14 @@ PROFILE_FIELD_EXACT = {
     "view 1",
 }
 INTIMATE_LINE_RE = re.compile(
-    r"\b(?:cock|clit|pussy|g-?spot|nipples?|balls?|suck|kiss|on top|mouth|wet|tease|horny)\b",
+    r"\b(?:cock|dick|clit|pussy|g-?spot|nipples?|balls?|suck|kiss|taste|on top|mouth|wet|tease|horny)\b",
     re.I,
 )
+PROFILE_LIVE_HINTS = (
+    "profile details",
+    "add new log",
+)
+_EXTRA_SLOW_TYPING = False
 
 
 def say(msg: str) -> None:
@@ -587,7 +592,10 @@ def latest_client_line_from_infos(infos: list[dict]) -> str:
             continue
         if warning_top < 10**9 and top >= warning_top - 8:
             continue
-        lines.append((top, " ".join(name.split())))
+        cleaned = clean_client_line(name)
+        if len(cleaned) < 8:
+            continue
+        lines.append((top, cleaned))
     if not lines:
         for row in infos:
             name = str(row.get("name") or "").strip()
@@ -598,7 +606,10 @@ def latest_client_line_from_infos(infos: list[dict]) -> str:
                 continue
             if warning_top < 10**9 and top >= warning_top - 8:
                 continue
-            lines.append((top, " ".join(name.split())))
+            cleaned = clean_client_line(name)
+            if len(cleaned) < 8:
+                continue
+            lines.append((top, cleaned))
     if not lines:
         return ""
     lines.sort()
@@ -613,7 +624,7 @@ def choose_latest_client_line(infos: list[dict], history: list[dict[str, str]]) 
     for row in reversed(history or []):
         if (row.get("sender") or "client").casefold() != "client":
             continue
-        text = " ".join(str(row.get("text") or "").split())
+        text = clean_client_line(str(row.get("text") or ""))
         if looks_like_chat_line(text):
             return text
     return ""
@@ -637,8 +648,9 @@ def is_profile_field_text(name: str) -> bool:
 
 
 def looks_like_chat_line(name: str) -> bool:
-    text = " ".join((name or "").split())
-    if len(text) < 8:
+    cleaned = clean_client_line(name)
+    text = cleaned or " ".join((name or "").split())
+    if len(cleaned) < 8:
         return False
     lowered = text.casefold()
     if is_profile_field_text(text):
@@ -702,8 +714,8 @@ def parse_messages_from_infos(infos: list[dict]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     seen: set[str] = set()
     for row in infos:
-        text = " ".join(str(row.get("name") or "").split())
-        if not looks_like_chat_line(text):
+        text = clean_client_line(str(row.get("name") or "")) or " ".join(str(row.get("name") or "").split())
+        if not looks_like_chat_line(str(row.get("name") or "")):
             continue
         left = int(row.get("left") or 0)
         if _column_for_left(left, min_x, max_x) != "chat":
@@ -720,9 +732,9 @@ def parse_messages_from_names(names: list[str]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     seen: set[str] = set()
     for name in names:
+        text = clean_client_line(name) or " ".join(name.split())
         if not looks_like_chat_line(name):
             continue
-        text = " ".join(name.split())
         key = text.casefold()
         if key in seen:
             continue
@@ -774,6 +786,17 @@ HANDLE_SKIP = {
 }
 
 
+def _looks_like_firebase_id(text: str) -> bool:
+    """Reject Chat Home Base / Firebase random ids like fmsRjh9xNik3lfpt5DPC."""
+    value = (text or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9]{16,28}", value):
+        return False
+    uppers = sum(1 for ch in value if ch.isupper())
+    lowers = sum(1 for ch in value if ch.islower())
+    digits = sum(1 for ch in value if ch.isdigit())
+    return uppers >= 3 and lowers >= 3 and digits >= 1
+
+
 def _looks_like_handle(text: str) -> bool:
     value = (text or "").strip()
     if not value or len(value) > 32:
@@ -784,6 +807,8 @@ def _looks_like_handle(text: str) -> bool:
     if is_send_control_name(value) or is_chrome_ui_name(value):
         return False
     if CHAT_ID_RE.search(value) or CHAT_ID_RE.fullmatch(value.replace(" ", "")):
+        return False
+    if _looks_like_firebase_id(value):
         return False
     if value.isdigit():
         return False
@@ -905,6 +930,8 @@ def snapshot_from_uia_names(
         or any(hint in title_l for hint in WAITING_HINTS)
     )
     composer = has_live_composer(names)
+    has_profile = any(hint in lowered for hint in PROFILE_LIVE_HINTS)
+    live_bubbles = any(looks_like_chat_line(name) for name in names)
     noise = any(
         token in lowered
         for token in (
@@ -918,13 +945,14 @@ def snapshot_from_uia_names(
         )
     )
     chat_id = extract_chat_id(names)
-    # Stats / wish-list overlays are not a claimed thread. The 0/75 composer is the lock.
-    if waiting_copy and not composer:
+    loader_only = waiting_copy and not composer and not has_profile
+    # Wish-list / stats overlays mention PROFILE DETAILS. Those are not a claimed thread.
+    if noise and not composer:
         live = False
-    elif noise and not composer:
+    elif loader_only:
         live = False
     else:
-        live = bool(composer)
+        live = bool(composer or has_profile or (chat_id and live_bubbles))
     waiting = not live
     customer_name = extract_customer_name(names)
     return PageSnapshot(
@@ -1004,7 +1032,8 @@ def run_uia_attach(
                 previous = current
                 time.sleep(poll_s)
                 continue
-            key = claim_identity(current) or "|".join(row["text"] for row in history[-3:])
+            latest_preview = choose_latest_client_line(infos, history)
+            key = f"{claim_identity(current)}|{latest_preview.casefold()[:160]}"
             if not claim_became_live(previous, current) and key == drafted_key:
                 previous = current
                 time.sleep(poll_s)
@@ -1041,14 +1070,27 @@ def _process_live_chat(
     say("[Copilot] Claimed chat is live. Scrolling the thread so older messages can load...")
     _scroll_load_older(hwnd)
     _scroll_to_latest(hwnd)
-    time.sleep(0.25)
+    time.sleep(0.35)
     infos, _timed_out = _read_window(hwnd, announce=False)
     tokens = _uia_tokens(infos)
+    lowered_blob = " ".join(tokens).casefold()
+    if "auto-typing" in lowered_blob or "message was removed" in lowered_blob:
+        global _EXTRA_SLOW_TYPING
+        _EXTRA_SLOW_TYPING = True
+        say("[Copilot] Site warned about auto-typing. Slowing the keys more. Send was not clicked.")
     history_now = parse_messages_from_infos(infos) or parse_messages_from_names(tokens)
     current = snapshot_from_uia_names(tokens, title=snapshot.title)
     if current.waiting:
-        say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
-        return
+        still_live = snapshot.claimed and (
+            any(looks_like_chat_line(name) for name in tokens)
+            or any(hint in lowered_blob for hint in PROFILE_LIVE_HINTS)
+        )
+        if still_live:
+            say("[Copilot] Still on the claimed thread after scroll. Not treating this as the waiting room.")
+            current = snapshot
+        else:
+            say("[Copilot] Still waiting for a conversation to be claimed. Not typing.")
+            return
     say(f"[Copilot] Parsed {len(history_now)} visible lines from the IX window.")
     latest = choose_latest_client_line(infos, history_now)
     if latest:
@@ -1091,15 +1133,32 @@ def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
     if not text:
         return False
     tokens = _uia_tokens(infos)
-    if not has_live_composer(tokens):
+    lowered_blob = " ".join(tokens).casefold()
+    live_thread = has_live_composer(tokens) or any(hint in lowered_blob for hint in PROFILE_LIVE_HINTS)
+    if not live_thread:
+        infos, _timed_out = _read_window(hwnd, announce=False)
+        tokens = _uia_tokens(infos)
+        lowered_blob = " ".join(tokens).casefold()
+        live_thread = has_live_composer(tokens) or any(hint in lowered_blob for hint in PROFILE_LIVE_HINTS)
+    if not live_thread:
         say("[Copilot] No Type-your-reply box on screen. Not typing.")
         return False
     left, top, width, height = _window_rect(hwnd)
     chrome_bottom = top + 180
     chosen = pick_draft_edit(infos, allow_fallback=False, live=False, chrome_bottom=chrome_bottom)
     if chosen is None:
-        say("[Copilot] Reply box was not found. Not typing in search.")
-        return False
+        infos, _timed_out = _read_window(hwnd, announce=False)
+        chosen = pick_draft_edit(infos, allow_fallback=False, live=False, chrome_bottom=chrome_bottom)
+    if chosen is None:
+        say("[Copilot] Composer not in the UIA tree. Clicking the reply area by position, not search.")
+        chosen = {
+            "name": "Type your reply here...",
+            "left": left + int(width * 0.52) - 120,
+            "top": top + int(height * 0.86) - 20,
+            "width": 240,
+            "height": 40,
+            "ctrl": None,
+        }
     if is_search_or_chrome_edit(chosen) or int(chosen.get("top") or 0) < chrome_bottom:
         say("[Copilot] Refusing to type in the address/search bar.")
         return False
@@ -1114,7 +1173,7 @@ def _fill_draft(hwnd: int, infos: list[dict], text: str) -> bool:
     time.sleep(0.2)
     _clear_focused_edit()
     say("[Copilot] Typing into the reply box with real keys (no paste, no search bar)...")
-    _type_into_focused(text)
+    _type_into_focused(text, extra_slow=_EXTRA_SLOW_TYPING)
     return True
 
 
@@ -1747,13 +1806,15 @@ def _clear_focused_edit() -> None:
 
 def human_key_delay_s(ch: str, index: int) -> float:
     """Human-like pause. Fast enough for a 2-minute claim, slow enough to avoid auto-typing."""
-    base = 0.13 + (index % 5) * 0.012
+    base = 0.18 + (index % 5) * 0.018
+    if _EXTRA_SLOW_TYPING:
+        base += 0.08
     if ch in ".!?":
-        return base + 0.32
+        return base + 0.38
     if ch in ",;:":
-        return base + 0.16
+        return base + 0.18
     if ch == " ":
-        return base + 0.04
+        return base + 0.05
     return base
 
 
@@ -1785,10 +1846,12 @@ def _type_into_focused(text: str, delay_s: float = 0.13, extra_slow: bool = Fals
         vk, shift = pair
         if vk in {0x11, 0x12}:
             continue
-        _tap_vk(vk, shift=shift, hold_s=random.uniform(0.03, 0.07))
-        pause = human_key_delay_s(ch, index) + random.uniform(0.03, 0.09)
+        _tap_vk(vk, shift=shift, hold_s=random.uniform(0.04, 0.09))
+        pause = human_key_delay_s(ch, index) + random.uniform(0.04, 0.12)
         if extra_slow:
-            pause += 0.08
+            pause += 0.10
+        if index and index % 11 == 0:
+            pause += random.uniform(0.12, 0.28)
         time.sleep(pause)
 
 

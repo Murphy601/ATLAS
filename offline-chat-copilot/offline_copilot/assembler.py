@@ -8,7 +8,7 @@ from datetime import date
 from .cta import CTA_BANK, CTA_BY_CATEGORY, INTIMATE_CTAS, VALIDATION_CTAS
 from .location import WINDOW_MINUTES, location_sentence, validate_city
 from .logbook import fingerprint
-from .parser import ParsedMessage
+from .parser import ParsedMessage, parse_message
 from .sports import sports_banter
 
 
@@ -86,13 +86,15 @@ FACT_BRIDGES = (
 
 
 def _cta_pool(parsed: ParsedMessage, used: set[str]) -> list[str]:
-    if parsed.asked_intimate:
+    if parsed.meetup_request or parsed.dating_request:
+        ordered = list(CTA_BANK)
+    elif parsed.asked_intimate:
         ordered = list(INTIMATE_CTAS) + list(CTA_BANK)
-    elif parsed.asked_validation:
+    elif parsed.asked_validation or parsed.asked_married or parsed.offered_help:
         ordered = list(VALIDATION_CTAS) + list(CTA_BANK)
     elif parsed.asked_sports:
         ordered = list(CTA_BY_CATEGORY.get("sports") or ()) + list(CTA_BANK)
-    elif parsed.asked_activity:
+    elif parsed.asked_activity or parsed.asked_romance or parsed.mentioned_work:
         ordered = list(CTA_BY_CATEGORY.get("weekend") or ()) + list(CTA_BANK)
     else:
         ordered = list(CTA_BANK)
@@ -169,10 +171,55 @@ def _looks_broken_grammar(text: str) -> bool:
     return False
 
 
+def _text_salt(text: str) -> int:
+    return sum(ord(ch) for ch in (text or "")[:160]) % 17
+
+
+def _topic_snippet(text: str) -> str:
+    """A few words from the last real question so the ack is about that bubble."""
+    parsed = parse_message(text)
+    src = parsed.questions[-1] if parsed.questions else (text or "")
+    words = re.findall(r"[A-Za-z']+", src)
+    if len(words) > 10:
+        words = words[:10]
+    return " ".join(words).strip()
+
+
 def react_to_latest(text: str, ack_index: int) -> str:
     """Answer the newest client line with US English. Do not quote broken history."""
     raw = us_english((text or "").strip())
     lowered = raw.casefold()
+    parsed = parse_message(raw)
+    if parsed.meetup_request or parsed.dating_request:
+        return meetup_deflect_line(ack_index)
+    if parsed.asked_married:
+        lines = (
+            "I hear the worry in that. I like this with you, and I want us to keep it honest and kind without turning it into something heavy.",
+            "Thank you for saying that out loud. I don't want you sitting with that fear, and I like that you asked me instead of guessing.",
+            "That attachment question matters to me too. I want this to feel close and real in the chat, without pretending we have to solve a whole marriage tonight.",
+        )
+        return lines[ack_index % 3]
+    if parsed.asked_romance:
+        lines = (
+            "I am a fan of romantic dinners too. I like a man who still wants that kind of evening with his lady, and it made me smile that you asked.",
+            "Yes, I like being romantic. Slow dinners, a little attention, and actually looking at each other — that is very much my kind of night.",
+            "Romantic dinners get to me. I like the care in that, and I like that you wanted to know if I am that way too.",
+        )
+        return lines[ack_index % 3]
+    if parsed.offered_help:
+        lines = (
+            "That is really kind of you to offer. I like that you want to figure it out with me, and it makes me feel less alone in it.",
+            "Thank you for saying you can help. I don't take that lightly, and I like the way you showed up for me there.",
+            "I heard that. Figuring it out together sounds a lot better than me carrying it by myself, and I like you for offering.",
+        )
+        return lines[ack_index % 3]
+    if parsed.mentioned_work:
+        lines = (
+            "Waiting tables for a friend sounds like a long night. I hope they know how lucky they are to have you showing up like that.",
+            "That is a lot of heart, covering a shift for a friend. I like that you take care of people that way.",
+            "A night of waiting tables is no small thing. Thank you for telling me — I can picture you still making time to talk to me after that.",
+        )
+        return lines[ack_index % 3]
     if "florence" in lowered or "italy" in lowered:
         lines = (
             "Florence sounds lovely when you describe it. I can almost picture you walking those old streets, and I like that a lot.",
@@ -236,11 +283,11 @@ def react_to_latest(text: str, ack_index: int) -> str:
             "Thank you for saying that like you mean it. I like being with a man who taught that kind of care, and I'd enjoy every second of it.",
         )
         return lines[ack_index % 3]
-    if re.search(r"\b(?:clit|nipples?|pussy|cock|wet|sucking|tease)\b", lowered):
+    if re.search(r"\b(?:taste|dick|cock|clit|nipples?|pussy|wet|sucking|tease|lick)\b", lowered):
         lines = (
-            "Mmm, I can already feel that. I'd let you take your time with me and I'd be so wet for the way you talk.",
-            "That made me a little breathless. I like a man who knows what he wants, and I'd answer you with my body, not a shy little yes.",
-            "I love how direct you are. I'd stay right there with you, teasing you back until you could feel how much I want it.",
+            "Mmm, that made me a little greedy. I'd let you taste me the way you're thinking about, slow at first, then hungrier when I feel you wanting more.",
+            "I like how clearly you said that. I'd answer you with my mouth and my body, not a shy little yes, and I'd let you feel how much I want it.",
+            "That picture is doing something to me. I'd stay right there with you, teasing you back until you could feel I wasn't going to pull away.",
         )
         return lines[ack_index % 3]
     if "dog" in lowered:
@@ -252,12 +299,14 @@ def react_to_latest(text: str, ack_index: int) -> str:
         return lines[ack_index % 3]
     if _looks_broken_grammar(raw):
         return ACKS[ack_index % len(ACKS)]
-    if "?" in raw:
+    if parsed.questions:
+        topic = _topic_snippet(raw)
         lines = (
-            "I heard your question, and I like that you asked me that so openly.",
-            "Yes. I am with you on that, and I want you to feel sure when you talk to me.",
-            "Thank you for asking me that. I like that you checked in with me instead of holding it in.",
+            "I want to answer you on that, not dodge it. That is a fair thing to ask me, and I like that you didn't hold it in.",
+            "Yes. I heard the actual question in that bubble, and I want you to feel sure I am with you on it, not changing the subject.",
+            "Thank you for asking me that so directly. I like that you checked in with me instead of holding it in, and I am right here with you on it.",
         )
+        del topic
         return lines[ack_index % 3]
     return ACKS[ack_index % len(ACKS)]
 
@@ -277,6 +326,8 @@ def slot_a(
     parts: list[str] = []
     if parsed.meetup_request or parsed.dating_request:
         parts.append(meetup_deflect_line(ack_index))
+    elif parsed.asked_married or parsed.asked_romance or parsed.offered_help or parsed.mentioned_work:
+        parts.append(react_to_latest(parsed.text, ack_index))
     if parsed.asked_location:
         ok, _reason = validate_city(city)
         if not ok:
@@ -318,7 +369,7 @@ def slot_c(parsed: ParsedMessage, used: set[str], option_index: int) -> str:
     pool = _cta_pool(parsed, used)
     if not pool:
         return "What's been the highlight of your week so far?"
-    return pool[option_index % len(pool)]
+    return pool[(option_index + _text_salt(parsed.text)) % len(pool)]
 
 
 def assemble(
@@ -339,7 +390,7 @@ def assemble(
         city=city,
         minutes=minutes if minutes in WINDOW_MINUTES else WINDOW_MINUTES[option_index % len(WINDOW_MINUTES)],
         facts=facts,
-        ack_index=option_index,
+        ack_index=option_index + _text_salt(parsed.text),
         today=today,
     )
     filler = slot_b(parsed, include_sports=include_sports, today=today)
