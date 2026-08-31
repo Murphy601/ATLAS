@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
-"""NyotaClear till-journal rebuild. Stdlib only. Reads /app/data, writes /app/output."""
+"""NyotaClear till-journal rebuild. Stdlib only."""
 
 from __future__ import annotations
 
+import base64
 import csv
+import gzip
+import hashlib
+import hmac
 import json
 import os
+import sqlite3
 import struct
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_EVEN
@@ -31,19 +41,22 @@ REASON_TIMEOUT = "timeout"
 REASON_STK_FAILED = "stk_failed"
 REASON_BAD_RECORD = "bad_record"
 REASON_UNKNOWN_INTENT = "unknown_intent"
+REASON_UNKNOWN_TRANS = "unknown_trans_id"
+REASON_ALREADY_REVERSED = "already_reversed"
+REASON_BAD_MAC = "bad_mac"
 
 
 def bankers(d: Decimal) -> int:
     return int(d.to_integral_value(rounding=ROUND_HALF_EVEN))
 
 
-def fee_cents(amount_cents: int) -> int:
-    raw = Decimal(amount_cents) * Decimal(FEE_BPS) / Decimal(10000)
-    return max(bankers(raw), FEE_MIN_CENTS)
+def fee_cents(amount_cents: int, bps: int = FEE_BPS, minimum: int = FEE_MIN_CENTS) -> int:
+    raw = Decimal(amount_cents) * Decimal(bps) / Decimal(10000)
+    return max(bankers(raw), minimum)
 
 
-def vat_cents(fee: int) -> int:
-    return bankers(Decimal(fee) * VAT)
+def vat_cents(fee: int, rate: Decimal = VAT) -> int:
+    return bankers(Decimal(fee) * rate)
 
 
 def parse_iso_utc(s: str) -> datetime:
@@ -57,12 +70,39 @@ def parse_iso_utc(s: str) -> datetime:
 
 
 def parse_nairobi(s: str) -> datetime:
-    s = s.strip()
-    # "2026-03-11 14:22:01" or "2026-03-11 14:22:01.441"
-    dt = datetime.fromisoformat(s)
+    dt = datetime.fromisoformat(s.strip())
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=NAIROBI)
     return dt.astimezone(UTC)
+
+
+def iso_z(dt: datetime) -> str:
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def load_nclog_key() -> bytes:
+    return (DATA / "nclog.key").read_bytes()
+
+
+def load_tills() -> dict[str, dict[str, Any]]:
+    path = DATA / "tills.json"
+    if not path.is_file():
+        return {"441122": {"timezone": "Africa/Nairobi", "fee_bps": FEE_BPS, "fee_min_cents": FEE_MIN_CENTS, "vat_rate": "0.16"}}
+    return json.loads(path.read_text())
+
+
+def till_spec(tills: dict[str, dict[str, Any]], till: str) -> dict[str, Any]:
+    if till in tills:
+        return tills[till]
+    if "441122" in tills:
+        return tills["441122"]
+    return next(iter(tills.values()))
+
+
+def decode_nclog_payload(blob: bytes) -> bytes:
+    if blob.startswith(b"NCZG"):
+        return gzip.decompress(blob[4:])
+    return blob
 
 
 @dataclass
@@ -98,11 +138,7 @@ class Reject:
     detail: str = ""
 
     def as_dict(self) -> dict[str, Any]:
-        d = {
-            "intent_id": self.intent_id,
-            "reason": self.reason,
-            "source": self.source,
-        }
+        d = {"intent_id": self.intent_id, "reason": self.reason, "source": self.source}
         if self.trans_id:
             d["trans_id"] = self.trans_id
         if self.detail:
@@ -137,6 +173,7 @@ class InboxRec:
 class State:
     fence: int
     as_of: datetime
+    tills: dict[str, dict[str, Any]] = field(default_factory=dict)
     accounts: dict[str, int] = field(
         default_factory=lambda: {
             "cash": 0,
@@ -152,33 +189,60 @@ class State:
     seen_intent: set[str] = field(default_factory=set)
     pending: dict[str, Intent] = field(default_factory=dict)
     wal_replayed: int = 0
-    entry_seq: int = 0
+    sqlite_replayed: int = 0
+    feed_frames: int = 0
     pending_expired: int = 0
+    reversed: set[str] = field(default_factory=set)
+    legs_by_trans: dict[str, list[list[Line]]] = field(default_factory=dict)
+    audit: list[dict[str, Any]] = field(default_factory=list)
 
     def bump_fence(self, f: int) -> None:
         if f > self.fence:
             self.fence = f
 
-    def add_entry(self, intent_id: str, trans_id: str, occurred_at: datetime, lines: list[Line]) -> None:
-        self.entry_seq += 1
-        eid = f"e_{self.entry_seq:06d}"
-        iso = occurred_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        ent = Entry(eid, intent_id, trans_id, iso, lines)
+    def add_entry(
+        self,
+        intent_id: str,
+        trans_id: str,
+        occurred_at: datetime,
+        lines: list[Line],
+        *,
+        mark_seen: bool = True,
+    ) -> None:
+        occurred_iso = iso_z(occurred_at)
+        payload = json.dumps(
+            {
+                "i": intent_id,
+                "t": trans_id,
+                "o": occurred_iso,
+                "l": [[ln.account, ln.cents] for ln in lines],
+            },
+            separators=(",", ":"),
+        )
+        eid = hashlib.sha256(payload.encode()).hexdigest()[:16]
         if sum(ln.cents for ln in lines) != 0:
             raise RuntimeError(f"imbalanced entry {eid}")
+        self.entries.append(Entry(eid, intent_id, trans_id, occurred_iso, lines))
         for ln in lines:
             self.accounts[ln.account] = self.accounts.get(ln.account, 0) + ln.cents
-        self.entries.append(ent)
-        self.seen_trans.add(trans_id)
-        self.seen_intent.add(intent_id)
+        if mark_seen:
+            self.seen_trans.add(trans_id)
+            self.seen_intent.add(intent_id)
+            self.legs_by_trans.setdefault(trans_id, []).append(lines)
 
     def reject(self, intent_id: str, reason: str, source: str, trans_id: str = "", detail: str = "") -> None:
         self.rejects.append(Reject(intent_id, reason, source, trans_id, detail))
+        self.audit.append(
+            {"source": source, "decision": "reject", "reason": reason, "intent_id": intent_id, "trans_id": trans_id}
+        )
+
+    def note_book(self, source: str, intent_id: str, trans_id: str) -> None:
+        self.audit.append(
+            {"source": source, "decision": "booked", "reason": "", "intent_id": intent_id, "trans_id": trans_id}
+        )
 
 
-def read_length_prefixed(path: Path) -> tuple[list[bytes], bool]:
-    """Return payloads and whether the file ended on a torn record."""
-    data = path.read_bytes()
+def read_length_prefixed(data: bytes) -> tuple[list[bytes], bool]:
     out: list[bytes] = []
     i = 0
     torn = False
@@ -194,6 +258,28 @@ def read_length_prefixed(path: Path) -> tuple[list[bytes], bool]:
         out.append(data[i : i + n])
         i += n
     return out, torn
+
+
+def read_hmac_frames(data: bytes, key: bytes) -> tuple[list[bytes], str | None]:
+    """Return payloads and a stop reason: None, torn, or bad_mac."""
+    out: list[bytes] = []
+    i = 0
+    while i < len(data):
+        if i + 4 + 32 > len(data):
+            return out, "torn"
+        (n,) = struct.unpack(">I", data[i : i + 4])
+        i += 4
+        mac = data[i : i + 32]
+        i += 32
+        if i + n > len(data):
+            return out, "torn"
+        payload = data[i : i + n]
+        i += n
+        expect = hmac.new(key, payload, hashlib.sha256).digest()
+        if not hmac.compare_digest(mac, expect):
+            return out, "bad_mac"
+        out.append(payload)
+    return out, None
 
 
 def load_fence(path: Path) -> int:
@@ -218,9 +304,26 @@ def load_pending(path: Path) -> dict[str, Intent]:
     return out
 
 
+def replay_sqlite(state: State, path: Path) -> None:
+    con = sqlite3.connect(str(path))
+    try:
+        rows = con.execute(
+            "SELECT intent_id, trans_id, occurred_at, fence, lines_json FROM posted ORDER BY rowid"
+        ).fetchall()
+    except sqlite3.Error:
+        return
+    finally:
+        con.close()
+    for intent_id, trans_id, occurred_at, fence, lines_json in rows:
+        lines = [Line(x["account"], int(x["cents"])) for x in json.loads(lines_json)]
+        state.add_entry(intent_id, trans_id, parse_iso_utc(occurred_at), lines)
+        state.sqlite_replayed += 1
+        if fence is not None:
+            state.bump_fence(int(fence))
+
+
 def replay_wal(state: State, path: Path) -> None:
-    payloads, _torn = read_length_prefixed(path)
-    # torn tail is ignored; complete records replay
+    payloads, _torn = read_length_prefixed(path.read_bytes())
     for blob in payloads:
         try:
             rec = json.loads(blob.decode("utf-8"))
@@ -228,10 +331,11 @@ def replay_wal(state: State, path: Path) -> None:
             continue
         if rec.get("type") != "entry":
             continue
-        lines = [Line(x["account"], int(x["cents"])) for x in rec["lines"]]
-        occurred = parse_iso_utc(rec["occurred_at"])
-        state.add_entry(rec["intent_id"], rec["trans_id"], occurred, lines)
         state.wal_replayed += 1
+        if rec["trans_id"] in state.seen_trans:
+            continue
+        lines = [Line(x["account"], int(x["cents"])) for x in rec["lines"]]
+        state.add_entry(rec["intent_id"], rec["trans_id"], parse_iso_utc(rec["occurred_at"]), lines)
         if "fence" in rec:
             state.bump_fence(int(rec["fence"]))
 
@@ -280,14 +384,16 @@ def parse_csv(path: Path) -> list[InboxRec]:
     recs: list[InboxRec] = []
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
-        for i, row in enumerate(reader, start=2):  # header is line 1
+        for i, row in enumerate(reader, start=2):
             src = f"{path.name}:{i}"
             try:
-                kes = Decimal(str(row["AmountKES"]).strip())
+                typ = row["Type"].strip().upper()
+                kes = Decimal(str(row["AmountKES"]).strip().replace(",", "") or "0")
                 cents = bankers(kes * 100)
+                kind = {"C2B": "c2b", "REVERSAL": "reversal"}.get(typ, typ.lower())
                 recs.append(
                     InboxRec(
-                        kind="c2b" if row["Type"].strip().upper() == "C2B" else row["Type"].strip().lower(),
+                        kind=kind,
                         intent_id=str(row["Intent"]).strip(),
                         trans_id=str(row["TransID"]).strip(),
                         fence=int(row["Fence"]),
@@ -317,13 +423,13 @@ def parse_csv(path: Path) -> list[InboxRec]:
     return recs
 
 
-def parse_nclog(path: Path) -> list[InboxRec]:
-    payloads, torn = read_length_prefixed(path)
+def recs_from_hmac_bytes(data: bytes, key: bytes, source_base: str) -> list[InboxRec]:
+    payloads, stop = read_hmac_frames(data, key)
     recs: list[InboxRec] = []
     for i, blob in enumerate(payloads, start=1):
-        src = f"{path.name}#{i}"
+        src = f"{source_base}#{i}"
         try:
-            obj = json.loads(blob.decode("utf-8"))
+            obj = json.loads(decode_nclog_payload(blob).decode("utf-8"))
             recs.append(
                 InboxRec(
                     kind=str(obj["kind"]),
@@ -338,7 +444,7 @@ def parse_nclog(path: Path) -> list[InboxRec]:
                     source_seq=i,
                 )
             )
-        except (KeyError, ValueError, json.JSONDecodeError, UnicodeDecodeError, TypeError):
+        except (KeyError, ValueError, json.JSONDecodeError, UnicodeDecodeError, TypeError, OSError):
             recs.append(
                 InboxRec(
                     kind="bad",
@@ -353,36 +459,111 @@ def parse_nclog(path: Path) -> list[InboxRec]:
                     source_seq=i,
                 )
             )
-    if torn:
+    if stop == "bad_mac":
         recs.append(
             InboxRec(
-                kind="torn_marker",
-                intent_id="",
+                kind="bad_mac_stop",
+                intent_id="?",
                 trans_id="",
                 fence=-1,
                 occurred_at=datetime(1970, 1, 1, tzinfo=UTC),
                 amount_cents=0,
                 till="",
                 result_code=-1,
-                source=f"{path.name}:torn",
-                source_seq=10_000_000,
+                source=f"{source_base}:mac",
+                source_seq=9_000_000,
             )
         )
     return recs
 
 
-def book_payment_and_settle(state: State, intent_id: str, trans_id: str, occurred_at: datetime, amount: int) -> None:
-    fee = fee_cents(amount)
-    vat = vat_cents(fee)
-    net = amount - fee - vat
-    # Dr cash / Cr escrow
-    state.add_entry(
-        intent_id,
-        trans_id,
-        occurred_at,
-        [Line("cash", amount), Line("escrow", -amount)],
+def _ensure_local_feed() -> None:
+    serve = Path("/opt/nyota-feed/serve.py")
+    if not serve.is_file():
+        return
+    try:
+        urllib.request.urlopen("http://127.0.0.1:9377/v1/frames", timeout=0.4)
+        return
+    except urllib.error.HTTPError:
+        return
+    except Exception:
+        pass
+    subprocess.Popen(
+        [sys.executable, str(serve)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
     )
-    # Dr escrow / Cr vendor, fee, vat
+
+
+def fetch_paginated(origin: str, token: str, timeout: float = 3.0) -> bytes:
+    path = "/v1/frames"
+    buf = bytearray()
+    seen: set[str] = set()
+    while path:
+        if path in seen:
+            break
+        seen.add(path)
+        url = origin.rstrip("/") + path
+        req = urllib.request.Request(url, headers={"X-Nyota-Token": token})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            doc = json.loads(resp.read().decode("utf-8"))
+        buf.extend(base64.b64decode(doc.get("payload_b64") or ""))
+        nxt = doc.get("next")
+        path = str(nxt) if nxt else ""
+    return bytes(buf)
+
+
+def load_feed_bytes() -> bytes:
+    extra = os.environ.get("NYOTA_FEED_FILE")
+    if extra and Path(extra).exists():
+        return Path(extra).read_bytes()
+    token = ""
+    token_path = DATA / "feed.token"
+    if token_path.is_file():
+        token = token_path.read_text().strip()
+    _ensure_local_feed()
+    origins: list[str] = []
+    env_url = os.environ.get("NYOTA_FEED_URL", "").strip()
+    if env_url:
+        # Full frame URL or origin.
+        if env_url.rstrip("/").endswith("/v1/frames"):
+            origins.append(env_url[: env_url.rstrip("/").rfind("/v1/frames")])
+        else:
+            origins.append(env_url)
+    origins.extend(["http://127.0.0.1:9377", "http://feed:9377"])
+    seen_o: set[str] = set()
+    uniq = []
+    for o in origins:
+        if o not in seen_o:
+            uniq.append(o)
+            seen_o.add(o)
+    last = b""
+    for wait in (0.0, 0.15, 0.4, 0.8, 1.5):
+        if wait:
+            time.sleep(wait)
+        for origin in uniq:
+            try:
+                data = fetch_paginated(origin, token)
+                if data:
+                    return data
+                last = data
+            except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError):
+                continue
+    return last
+
+
+def book_payment_and_settle(
+    state: State, intent_id: str, trans_id: str, occurred_at: datetime, amount: int, till: str
+) -> None:
+    spec = till_spec(state.tills, till)
+    bps = int(spec.get("fee_bps", FEE_BPS))
+    minimum = int(spec.get("fee_min_cents", FEE_MIN_CENTS))
+    rate = Decimal(str(spec.get("vat_rate", "0.16")))
+    fee = fee_cents(amount, bps, minimum)
+    vat = vat_cents(fee, rate)
+    net = amount - fee - vat
+    state.add_entry(intent_id, trans_id, occurred_at, [Line("cash", amount), Line("escrow", -amount)])
     state.add_entry(
         intent_id,
         trans_id,
@@ -394,13 +575,34 @@ def book_payment_and_settle(state: State, intent_id: str, trans_id: str, occurre
             Line("vat_payable", -vat),
         ],
     )
-    # add_entry marks seen_intent/trans twice — that's fine (set)
 
 
 def apply_inbox(state: State, rec: InboxRec) -> None:
+    if rec.kind == "bad_mac_stop":
+        state.reject("?", REASON_BAD_MAC, rec.source)
+        return
     if rec.kind in ("bad", "torn_marker"):
         if rec.kind == "bad":
             state.reject(rec.intent_id or "?", REASON_BAD_RECORD, rec.source, rec.trans_id)
+        return
+
+    if rec.kind == "reversal":
+        if rec.fence < state.fence:
+            state.reject(rec.intent_id, REASON_STALE_FENCE, rec.source, rec.trans_id)
+            return
+        state.bump_fence(rec.fence)
+        if rec.trans_id in state.reversed:
+            state.reject(rec.intent_id, REASON_ALREADY_REVERSED, rec.source, rec.trans_id)
+            return
+        legs = state.legs_by_trans.get(rec.trans_id)
+        if not legs:
+            state.reject(rec.intent_id or rec.trans_id, REASON_UNKNOWN_TRANS, rec.source, rec.trans_id)
+            return
+        for lines in legs:
+            neg = [Line(ln.account, -ln.cents) for ln in lines]
+            state.add_entry(rec.intent_id or rec.trans_id, rec.trans_id, rec.occurred_at, neg, mark_seen=False)
+        state.reversed.add(rec.trans_id)
+        state.note_book(rec.source, rec.intent_id, rec.trans_id)
         return
 
     if rec.fence < state.fence:
@@ -423,14 +625,15 @@ def apply_inbox(state: State, rec: InboxRec) -> None:
             state.reject(rec.intent_id, REASON_STK_FAILED, rec.source, rec.trans_id)
             state.pending.pop(rec.intent_id, None)
             return
-        delta = rec.occurred_at - intent.opened_at
-        if delta > TIMEOUT:
+        if rec.occurred_at - intent.opened_at > TIMEOUT:
             state.reject(rec.intent_id, REASON_TIMEOUT, rec.source, rec.trans_id)
             state.pending.pop(rec.intent_id, None)
             return
-        # amount on the callback is ignored; the intent amount is authoritative
-        book_payment_and_settle(state, rec.intent_id, rec.trans_id, rec.occurred_at, intent.amount_cents)
+        book_payment_and_settle(
+            state, rec.intent_id, rec.trans_id, rec.occurred_at, intent.amount_cents, intent.till
+        )
         state.pending.pop(rec.intent_id, None)
+        state.note_book(rec.source, rec.intent_id, rec.trans_id)
         return
 
     if rec.kind == "c2b":
@@ -440,8 +643,9 @@ def apply_inbox(state: State, rec: InboxRec) -> None:
         if rec.trans_id in state.seen_trans:
             state.reject(rec.intent_id, REASON_DUPLICATE_TRANS, rec.source, rec.trans_id)
             return
-        book_payment_and_settle(state, rec.intent_id, rec.trans_id, rec.occurred_at, rec.amount_cents)
+        book_payment_and_settle(state, rec.intent_id, rec.trans_id, rec.occurred_at, rec.amount_cents, rec.till)
         state.pending.pop(rec.intent_id, None)
+        state.note_book(rec.source, rec.intent_id, rec.trans_id)
         return
 
     state.reject(rec.intent_id or "?", REASON_BAD_RECORD, rec.source, rec.trans_id)
@@ -461,17 +665,21 @@ def expire_pending(state: State) -> None:
             state.pending.pop(iid, None)
 
 
-def collect_inbox(inbox_dir: Path) -> list[InboxRec]:
+def collect_inbox(inbox_dir: Path, key: bytes, state: State) -> list[InboxRec]:
     recs: list[InboxRec] = []
-    if not inbox_dir.is_dir():
-        return recs
-    for path in sorted(inbox_dir.iterdir(), key=lambda p: p.name):
-        if path.suffix == ".jsonl":
-            recs.extend(parse_jsonl(path))
-        elif path.suffix == ".csv":
-            recs.extend(parse_csv(path))
-        elif path.suffix == ".nclog":
-            recs.extend(parse_nclog(path))
+    if inbox_dir.is_dir():
+        for path in sorted(inbox_dir.iterdir(), key=lambda p: p.name):
+            if path.suffix == ".jsonl":
+                recs.extend(parse_jsonl(path))
+            elif path.suffix == ".csv":
+                recs.extend(parse_csv(path))
+            elif path.suffix == ".nclog":
+                recs.extend(recs_from_hmac_bytes(path.read_bytes(), key, path.name))
+    feed = load_feed_bytes()
+    if feed:
+        feed_recs = recs_from_hmac_bytes(feed, key, "feed")
+        state.feed_frames = sum(1 for r in feed_recs if r.kind not in ("bad_mac_stop", "torn_marker"))
+        recs.extend(feed_recs)
     recs.sort(key=lambda r: (r.occurred_at, r.source, r.source_seq))
     return recs
 
@@ -479,7 +687,10 @@ def collect_inbox(inbox_dir: Path) -> list[InboxRec]:
 def rebuild() -> State:
     as_of = load_as_of(DATA / "as_of")
     fence = load_fence(DATA / "writer_fence")
-    state = State(fence=fence, as_of=as_of)
+    state = State(fence=fence, as_of=as_of, tills=load_tills())
+    db = DATA / "posted.db"
+    if db.exists():
+        replay_sqlite(state, db)
     wal = DATA / "crash_wal" / "writer.wal"
     if wal.exists():
         replay_wal(state, wal)
@@ -488,7 +699,8 @@ def rebuild() -> State:
         for iid, intent in load_pending(pending_path).items():
             if iid not in state.seen_intent:
                 state.pending[iid] = intent
-    recs = collect_inbox(DATA / "inbox")
+    key = load_nclog_key()
+    recs = collect_inbox(DATA / "inbox", key, state)
     for rec in recs:
         apply_inbox(state, rec)
     expire_pending(state)
@@ -498,7 +710,7 @@ def rebuild() -> State:
 def write_outputs(state: State) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     ledger = {
-        "as_of": state.as_of.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+        "as_of": iso_z(state.as_of),
         "fence": state.fence,
         "accounts": dict(state.accounts),
         "entries": [e.as_dict() for e in state.entries],
@@ -516,17 +728,19 @@ def write_outputs(state: State) -> None:
         "vat_cents": -state.accounts["vat_payable"],
         "pending_expired": state.pending_expired,
         "wal_replayed": state.wal_replayed,
+        "sqlite_replayed": state.sqlite_replayed,
+        "feed_frames": state.feed_frames,
         "final_fence": state.fence,
         "entry_count": len(state.entries),
     }
-    (OUT / "ledger.json").write_text(json.dumps(ledger, indent=2, sort_keys=False) + "\n")
+    (OUT / "ledger.json").write_text(json.dumps(ledger, indent=2) + "\n")
     (OUT / "rejects.json").write_text(json.dumps(rejects, indent=2) + "\n")
     (OUT / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (OUT / "audit.ndjson").write_text("".join(json.dumps(a) + "\n" for a in state.audit))
 
 
 def main() -> None:
-    state = rebuild()
-    write_outputs(state)
+    write_outputs(rebuild())
 
 
 if __name__ == "__main__":

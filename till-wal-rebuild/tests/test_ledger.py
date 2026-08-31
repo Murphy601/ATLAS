@@ -78,6 +78,7 @@ def test_output_files_exist():
     assert (ART / "ledger.json").is_file()
     assert (ART / "rejects.json").is_file()
     assert (ART / "summary.json").is_file()
+    assert (ART / "audit.ndjson").is_file()
 
 
 def test_accounts_sum_to_zero(art):
@@ -147,6 +148,9 @@ def test_summary_counts_match_gold(art, gold):
         "fee_cents",
         "vat_cents",
         "entry_count",
+        "sqlite_replayed",
+        "feed_frames",
+        "wal_replayed",
     ):
         assert summary[k] == g_sum[k], k
 
@@ -286,13 +290,76 @@ def test_no_torn_wal_payload_leaks_into_ledger(art):
         assert "int_torn" not in e.get("intent_id", "")
 
 
-def test_two_entries_per_accepted_intent(art, gold):
+def test_two_legs_then_optional_reversal(art, gold):
     ledger, _, summary = art
     _, _, g = gold
-    # WAL has 2 entries for 1 intent; every accepted intent has 2 entries
     by = Counter(e["intent_id"] for e in ledger["entries"])
-    assert all(v == 2 for v in by.values())
-    assert summary["entry_count"] == 2 * summary["accepted_intents"] == g["entry_count"]
+    assert by["int_0001"] == 2
+    assert by["int_0008"] == 2
+    assert by["int_0014"] == 4  # booked then reversed
+    assert summary["entry_count"] == g["entry_count"]
+
+
+def test_c2b_reversal_and_ghost(art):
+    _, rejects, _ = art
+    assert any(r["reason"] == "already_reversed" and r.get("trans_id") == "NC4M68AB7H8091" for r in rejects["rejects"])
+    assert any(r["reason"] == "unknown_trans_id" and r.get("trans_id") == "NOSUCHTRANS9" for r in rejects["rejects"])
+
+
+def test_feed_frames_were_applied(art, gold):
+    _, rejects, summary = art
+    _, _, g = gold
+    assert summary["feed_frames"] == g["feed_frames"]
+    assert summary["feed_frames"] > 20
+    assert any(r["source"].startswith("feed#") for r in rejects["rejects"])
+
+
+def test_sqlite_checkpoint_skips_duplicate_wal(art):
+    ledger, _, summary = art
+    assert summary["sqlite_replayed"] == 2
+    assert summary["wal_replayed"] == 2
+    n = sum(1 for e in ledger["entries"] if e["intent_id"] == "int_0008")
+    assert n == 2
+
+
+def test_entry_ids_are_sha256_prefix(art):
+    ledger, _, _ = art
+    for e in ledger["entries"]:
+        assert len(e["entry_id"]) == 16
+        int(e["entry_id"], 16)
+
+
+def test_audit_log_has_decisions(art):
+    lines = (ART / "audit.ndjson").read_text().splitlines()
+    assert len(lines) >= 50
+    row = json.loads(lines[0])
+    assert "decision" in row and "source" in row
+
+
+def test_till_b_uses_110bps_floor_200(art):
+    ledger, _, _ = art
+    c = Counter(intent_books(ledger)["int_0011"])
+    assert c[("cash", 10000)] == 1
+    assert c[("fee_income", -200)] == 1
+    assert c[("vat_payable", -32)] == 1
+    assert c[("vendor_payable", -9768)] == 1
+
+
+def test_csv_thousands_comma_amount(art):
+    ledger, _, _ = art
+    c = Counter(intent_books(ledger)["int_0012"])
+    assert c[("cash", 125000)] == 1
+    fee = fee_cents(125000)
+    vat = vat_on_fee(fee)
+    assert c[("fee_income", -fee)] == 1
+    assert c[("vat_payable", -vat)] == 1
+
+
+def test_gzip_nclog_frame_books_intent_amount(art):
+    ledger, _, _ = art
+    c = Counter(intent_books(ledger)["int_0013"])
+    assert c[("cash", 20000)] == 1
+    assert c[("cash", 888888)] == 0
 
 
 def test_fee_bankers_rounding_on_15000(art):

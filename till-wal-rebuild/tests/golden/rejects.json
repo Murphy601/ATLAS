@@ -7,76 +7,88 @@
       "detail": "expired_at_rebuild"
     },
     {
-      "intent_id": "int_0011",
+      "intent_id": "int_0059",
+      "reason": "timeout",
+      "source": "feed#12",
+      "trans_id": "NC3S5PBDKN0059"
+    },
+    {
+      "intent_id": "int_0073",
+      "reason": "timeout",
+      "source": "feed#19",
+      "trans_id": "NCREB42MNU0073"
+    },
+    {
+      "intent_id": "int_0075",
+      "reason": "timeout",
+      "source": "feed#20",
+      "trans_id": "NCLQK7JX970075"
+    },
+    {
+      "intent_id": "int_0083",
       "reason": "stk_failed",
-      "source": "handoff.nclog#1",
-      "trans_id": "NCPQKWR92Y0011"
+      "source": "feed#24",
+      "trans_id": "NC7UZ9ELYY0083"
     },
     {
-      "intent_id": "int_0037",
+      "intent_id": "int_0041",
       "reason": "timeout",
-      "source": "handoff.nclog#14",
-      "trans_id": "NCD5XCF5KP0037"
+      "source": "feed#3",
+      "trans_id": "NCD5XCF5KP0041"
     },
     {
-      "intent_id": "int_0043",
+      "intent_id": "int_0047",
       "reason": "timeout",
-      "source": "handoff.nclog#17",
-      "trans_id": "NCQMSYHJFL0043"
+      "source": "feed#6",
+      "trans_id": "NCQMSYHJFL0047"
     },
     {
-      "intent_id": "int_0045",
+      "intent_id": "int_0049",
       "reason": "stk_failed",
-      "source": "handoff.nclog#18",
-      "trans_id": "NC4EA4AMGY0045"
-    },
-    {
-      "intent_id": "int_0013",
-      "reason": "timeout",
-      "source": "handoff.nclog#2",
-      "trans_id": "NC5N3Q6QTE0013"
-    },
-    {
-      "intent_id": "int_0055",
-      "reason": "timeout",
-      "source": "handoff.nclog#23",
-      "trans_id": "NC3S5PBDKN0055"
+      "source": "feed#7",
+      "trans_id": "NC4EA4AMGY0049"
     },
     {
       "intent_id": "int_0015",
+      "reason": "stk_failed",
+      "source": "handoff.nclog#2",
+      "trans_id": "NCPQKWR92Y0015"
+    },
+    {
+      "intent_id": "int_0017",
       "reason": "timeout",
       "source": "handoff.nclog#3",
-      "trans_id": "NCX6L4SM2M0015"
+      "trans_id": "NC5N3Q6QTE0017"
     },
     {
-      "intent_id": "int_0069",
+      "intent_id": "int_0019",
       "reason": "timeout",
-      "source": "handoff.nclog#30",
-      "trans_id": "NCREB42MNU0069"
+      "source": "handoff.nclog#4",
+      "trans_id": "NCX6L4SM2M0019"
     },
     {
-      "intent_id": "int_0071",
-      "reason": "timeout",
-      "source": "handoff.nclog#31",
-      "trans_id": "NCLQK7JX970071"
-    },
-    {
-      "intent_id": "int_0079",
-      "reason": "stk_failed",
-      "source": "handoff.nclog#35",
-      "trans_id": "NC7UZ9ELYY0079"
-    },
-    {
-      "intent_id": "int_0104",
+      "intent_id": "int_0108",
       "reason": "stale_fence",
-      "source": "mpesa_c2b.csv:16",
-      "trans_id": "NCEFCUWCUZ8104"
+      "source": "mpesa_c2b.csv:19",
+      "trans_id": "NCEFCUWCUZ8108"
     },
     {
-      "intent_id": "int_0022",
+      "intent_id": "int_0014",
+      "reason": "already_reversed",
+      "source": "mpesa_c2b.csv:47",
+      "trans_id": "NC4M68AB7H8091"
+    },
+    {
+      "intent_id": "int_rev_ghost",
+      "reason": "unknown_trans_id",
+      "source": "mpesa_c2b.csv:48",
+      "trans_id": "NOSUCHTRANS9"
+    },
+    {
+      "intent_id": "int_0026",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:12",
-      "trans_id": "NCJBFRRU8X0022"
+      "trans_id": "NCJBFRRU8X0026"
     },
     {
       "intent_id": "int_0006",
@@ -85,16 +97,16 @@
       "trans_id": "DUPTRANS001"
     },
     {
-      "intent_id": "int_0028",
+      "intent_id": "int_0032",
       "reason": "stk_failed",
       "source": "stk-2026-03-11.jsonl:16",
-      "trans_id": "NC3T25VH5N0028"
+      "trans_id": "NC3T25VH5N0032"
     },
     {
-      "intent_id": "int_0020",
+      "intent_id": "int_0024",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:17",
-      "trans_id": "NCUXLQHWP30020"
+      "trans_id": "NCUXLQHWP30024"
     },
     {
       "intent_id": "?",
@@ -102,19 +114,19 @@
       "source": "stk-2026-03-11.jsonl:18"
     },
     {
-      "intent_id": "int_0072",
+      "intent_id": "int_0076",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:2",
-      "trans_id": "NCZJUE5QAU0072"
+      "trans_id": "NCZJUE5QAU0076"
     },
     {
-      "intent_id": "int_0074",
+      "intent_id": "int_0078",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:26",
-      "trans_id": "NCY3H96FSU0074"
+      "trans_id": "NCY3H96FSU0078"
     },
     {
-      "intent_id": "int_0132",
+      "intent_id": "int_0136",
       "reason": "duplicate_intent",
       "source": "stk-2026-03-11.jsonl:27",
       "trans_id": "TWOSHOTS002"
@@ -138,40 +150,40 @@
       "trans_id": "TO47001LATE"
     },
     {
-      "intent_id": "int_0062",
+      "intent_id": "int_0066",
       "reason": "stk_failed",
       "source": "stk-2026-03-11.jsonl:31",
-      "trans_id": "NC952WHUGP0062"
+      "trans_id": "NC952WHUGP0066"
+    },
+    {
+      "intent_id": "int_0034",
+      "reason": "timeout",
+      "source": "stk-2026-03-11.jsonl:34",
+      "trans_id": "NCRLXZKPS60034"
+    },
+    {
+      "intent_id": "int_0052",
+      "reason": "timeout",
+      "source": "stk-2026-03-11.jsonl:37",
+      "trans_id": "NC4MEA78TY0052"
     },
     {
       "intent_id": "int_0030",
       "reason": "timeout",
-      "source": "stk-2026-03-11.jsonl:34",
-      "trans_id": "NCRLXZKPS60030"
-    },
-    {
-      "intent_id": "int_0048",
-      "reason": "timeout",
-      "source": "stk-2026-03-11.jsonl:37",
-      "trans_id": "NC4MEA78TY0048"
-    },
-    {
-      "intent_id": "int_0026",
-      "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:38",
-      "trans_id": "NC46AWYNN30026"
+      "trans_id": "NC46AWYNN30030"
     },
     {
-      "intent_id": "int_0064",
+      "intent_id": "int_0068",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:4",
-      "trans_id": "NCDJ5FSWUU0064"
+      "trans_id": "NCDJ5FSWUU0068"
     },
     {
-      "intent_id": "int_0036",
+      "intent_id": "int_0040",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:42",
-      "trans_id": "NCEA3ULYHA0036"
+      "trans_id": "NCEA3ULYHA0040"
     },
     {
       "intent_id": "int_0007",
@@ -180,22 +192,22 @@
       "trans_id": "FAIL1032AAA"
     },
     {
-      "intent_id": "int_0038",
+      "intent_id": "int_0042",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:44",
-      "trans_id": "NCGSQHQSMH0038"
+      "trans_id": "NCGSQHQSMH0042"
     },
     {
-      "intent_id": "int_0014",
+      "intent_id": "int_0018",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:50",
-      "trans_id": "NCBTLXZX650014"
+      "trans_id": "NCBTLXZX650018"
     },
     {
-      "intent_id": "int_0046",
+      "intent_id": "int_0050",
       "reason": "timeout",
       "source": "stk-2026-03-11.jsonl:7",
-      "trans_id": "NCALZNA4NB0046"
+      "trans_id": "NCALZNA4NB0050"
     }
   ]
 }

@@ -1,0 +1,18 @@
+services:
+  feed:
+    build:
+      context: ./feed
+    expose:
+      - "9377"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; r=urllib.request.Request('http://127.0.0.1:9377/v1/frames'); r.add_header('X-Nyota-Token', open('/feed.token').read().strip()); urllib.request.urlopen(r, timeout=2)",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 3s

@@ -36,6 +36,8 @@ out.mkdir(parents=True, exist_ok=True)
             "vat_cents": 0,
             "pending_expired": 0,
             "wal_replayed": 2,
+            "sqlite_replayed": 0,
+            "feed_frames": 0,
             "final_fence": 8,
             "entry_count": 0,
         },

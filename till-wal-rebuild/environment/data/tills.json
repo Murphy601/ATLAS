@@ -1,0 +1,14 @@
+{
+  "441122": {
+    "timezone": "Africa/Nairobi",
+    "fee_bps": 85,
+    "fee_min_cents": 120,
+    "vat_rate": "0.16"
+  },
+  "882211": {
+    "timezone": "Africa/Nairobi",
+    "fee_bps": 110,
+    "fee_min_cents": 200,
+    "vat_rate": "0.16"
+  }
+}
