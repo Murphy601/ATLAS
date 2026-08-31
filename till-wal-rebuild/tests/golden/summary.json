@@ -1,15 +1,15 @@
 {
-  "accepted_intents": 106,
-  "rejected": 35,
-  "cash_cents": 5133259,
+  "accepted_intents": 123,
+  "rejected": 41,
+  "cash_cents": 6137102,
   "escrow_cents": 0,
-  "vendor_cents": 5079858,
-  "fee_cents": 46044,
-  "vat_cents": 7357,
+  "vendor_cents": 6073352,
+  "fee_cents": 54967,
+  "vat_cents": 8783,
   "pending_expired": 1,
-  "wal_replayed": 2,
+  "wal_replayed": 4,
   "sqlite_replayed": 2,
-  "feed_frames": 29,
+  "feed_frames": 39,
   "final_fence": 8,
-  "entry_count": 214
+  "entry_count": 248
 }

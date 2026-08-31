@@ -280,6 +280,7 @@ def main() -> None:
             "result_code": 0,
         }
     )
+    wal_0008 = list(wal_entries)
 
     n += 1
     c2b_time = T0 + timedelta(hours=2, minutes=17)
@@ -369,7 +370,51 @@ def main() -> None:
         }
     )
 
-    for i in range(80):
+    # int_0015: second WAL file only (not sqlite)
+    n += 1
+    opened15 = T0 + timedelta(minutes=3)
+    iid15 = add_intent(n, 12000, 7, opened15)
+    fee15 = fee_cents(12000, 85, 120)
+    vat15 = vat_cents(fee15)
+    net15 = 12000 - fee15 - vat15
+    occurred15 = opened15 + timedelta(seconds=8)
+    wal_extra = [
+        {
+            "type": "entry",
+            "intent_id": iid15,
+            "trans_id": "WALREPLAY02",
+            "occurred_at": iso(occurred15),
+            "fence": 7,
+            "lines": [{"account": "cash", "cents": 12000}, {"account": "escrow", "cents": -12000}],
+        },
+        {
+            "type": "entry",
+            "intent_id": iid15,
+            "trans_id": "WALREPLAY02",
+            "occurred_at": iso(occurred15),
+            "fence": 7,
+            "lines": [
+                {"account": "escrow", "cents": 12000},
+                {"account": "vendor_payable", "cents": -net15},
+                {"account": "fee_income", "cents": -fee15},
+                {"account": "vat_payable", "cents": -vat15},
+            ],
+        },
+    ]
+    jsonl_rows.append(
+        {
+            "kind": "stk_callback",
+            "intent_id": iid15,
+            "trans_id": "WALREPLAY02",
+            "fence": 7,
+            "occurred_at": iso(occurred15),
+            "amount_cents": 12000,
+            "till": TILL_A,
+            "result_code": 0,
+        }
+    )
+
+    for i in range(100):
         n += 1
         amount = amounts[i % len(amounts)]
         fence = 7
@@ -486,7 +531,10 @@ def main() -> None:
     )
 
     torn = struct.pack(">I", 80) + b'{"type":"entry","intent_id":"int_torn"'
-    (wal_dir / "writer.wal").write_bytes(lp_pack(wal_entries, torn_tail=torn))
+    for leftover in wal_dir.glob("*"):
+        leftover.unlink()
+    (wal_dir / "0001.wal").write_bytes(lp_pack(wal_0008))
+    (wal_dir / "0002.wal").write_bytes(lp_pack(wal_extra, torn_tail=torn))
 
     db_path = DATA / "posted.db"
     if db_path.exists():
@@ -561,14 +609,38 @@ def main() -> None:
         w.writeheader()
         w.writerows(csv_rows)
 
+    # int_skip: happy STK on the feed AFTER a bad MAC — must not book
+    n += 1
+    opened_skip = T0 + timedelta(hours=1, minutes=40)
+    iid_skip = add_intent(n, 88000, 7, opened_skip)
+    skip_obj = {
+        "kind": "stk_callback",
+        "intent_id": iid_skip,
+        "trans_id": "SKIPAFTERMAC",
+        "fence": 7,
+        "occurred_at": iso(opened_skip + timedelta(seconds=6)),
+        "amount_cents": 88000,
+        "till": TILL_A,
+        "result_code": 0,
+    }
+
     disk_part = nclog_objs[:12]
-    feed_part = nclog_objs[12:]
+    feed_before = nclog_objs[12:]
+    feed_after = [skip_obj]
     (inbox / "handoff.nclog").write_bytes(hmac_pack(disk_part))
     feed_dir = ROOT / "environment" / "feed"
     feed_dir.mkdir(parents=True, exist_ok=True)
-    (feed_dir / "payload.nclog").write_bytes(
-        hmac_pack(feed_part, torn_tail=struct.pack(">I", 40) + b'{"kind":"stk')
-    )
+    poison = json.dumps(
+        {"kind": "stk_callback", "intent_id": "int_poison", "trans_id": "BADMACFRAME", "fence": 7},
+        separators=(",", ":"),
+    ).encode()
+    feed_blob = bytearray(hmac_pack(feed_before))
+    feed_blob.extend(struct.pack(">I", len(poison)))
+    feed_blob.extend(b"\x00" * 32)
+    feed_blob.extend(poison)
+    feed_blob.extend(hmac_pack(feed_after))
+    feed_blob.extend(struct.pack(">I", 40) + b'{"kind":"stk')
+    (feed_dir / "payload.nclog").write_bytes(bytes(feed_blob))
     (feed_dir / "feed.token").write_text(FEED_TOKEN + "\n")
 
     (DATA / "SHIFT_NOTES.txt").write_text(
@@ -578,7 +650,7 @@ def main() -> None:
 
     print(
         f"intents={len(intents)} jsonl={len(jsonl_rows)} csv={len(csv_rows)} "
-        f"nclog_disk={len(disk_part)} nclog_feed={len(feed_part)} wal={len(wal_entries)}"
+        f"nclog_disk={len(disk_part)} nclog_feed_before_mac={len(feed_before)} wal8={len(wal_0008)} wal_extra={len(wal_extra)}"
     )
     print(
         "pinned fees A:",

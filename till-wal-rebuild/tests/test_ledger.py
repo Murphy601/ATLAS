@@ -127,7 +127,7 @@ def test_as_of_and_fence_match_gold(art, gold):
     g_ledger, _, g_sum = gold
     assert ledger["as_of"] == g_ledger["as_of"]
     assert ledger["fence"] == g_ledger["fence"] == 8
-    assert summary["wal_replayed"] == g_sum["wal_replayed"] == 2
+    assert summary["wal_replayed"] == g_sum["wal_replayed"] == 4
     assert summary["pending_expired"] == g_sum["pending_expired"] == 1
 
 
@@ -317,9 +317,24 @@ def test_feed_frames_were_applied(art, gold):
 def test_sqlite_checkpoint_skips_duplicate_wal(art):
     ledger, _, summary = art
     assert summary["sqlite_replayed"] == 2
-    assert summary["wal_replayed"] == 2
+    assert summary["wal_replayed"] == 4
     n = sum(1 for e in ledger["entries"] if e["intent_id"] == "int_0008")
     assert n == 2
+
+
+def test_second_wal_file_is_replayed(art):
+    ledger, rejects, summary = art
+    assert "int_0015" in intent_books(ledger)
+    c = Counter(intent_books(ledger)["int_0015"])
+    assert c[("cash", 12000)] == 1
+    hits = [r for r in rejects["rejects"] if r["intent_id"] == "int_0015"]
+    assert any(r["reason"] == "duplicate_intent" for r in hits)
+
+
+def test_feed_bad_mac_stops_the_stream(art):
+    ledger, rejects, _ = art
+    assert "SKIPAFTERMAC" not in {e["trans_id"] for e in ledger["entries"]}
+    assert any(r["reason"] == "bad_mac" and r["source"] == "feed:mac" for r in rejects["rejects"])
 
 
 def test_entry_ids_are_sha256_prefix(art):

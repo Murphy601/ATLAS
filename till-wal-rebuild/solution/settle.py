@@ -322,7 +322,15 @@ def replay_sqlite(state: State, path: Path) -> None:
             state.bump_fence(int(fence))
 
 
-def replay_wal(state: State, path: Path) -> None:
+def replay_wal_dir(state: State, wal_dir: Path) -> None:
+    if not wal_dir.is_dir():
+        return
+    already = set(state.seen_trans)
+    for path in sorted(p for p in wal_dir.iterdir() if p.is_file()):
+        replay_wal(state, path, already)
+
+
+def replay_wal(state: State, path: Path, skip_trans: set[str]) -> None:
     payloads, _torn = read_length_prefixed(path.read_bytes())
     for blob in payloads:
         try:
@@ -332,7 +340,7 @@ def replay_wal(state: State, path: Path) -> None:
         if rec.get("type") != "entry":
             continue
         state.wal_replayed += 1
-        if rec["trans_id"] in state.seen_trans:
+        if rec["trans_id"] in skip_trans:
             continue
         lines = [Line(x["account"], int(x["cents"])) for x in rec["lines"]]
         state.add_entry(rec["intent_id"], rec["trans_id"], parse_iso_utc(rec["occurred_at"]), lines)
@@ -691,9 +699,7 @@ def rebuild() -> State:
     db = DATA / "posted.db"
     if db.exists():
         replay_sqlite(state, db)
-    wal = DATA / "crash_wal" / "writer.wal"
-    if wal.exists():
-        replay_wal(state, wal)
+    replay_wal_dir(state, DATA / "crash_wal")
     pending_path = DATA / "pending_intents.json"
     if pending_path.exists():
         for iid, intent in load_pending(pending_path).items():
