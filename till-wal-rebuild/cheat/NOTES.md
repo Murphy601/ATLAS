@@ -1,3 +1,3 @@
-A plausible cheat is to emit a balanced zero ledger, or to replay only the two WAL records and skip the inbox.
+A plausible cheat is empty books that still sum to zero, or replaying the two WAL records and ignoring the inbox.
 
-Pinned intents, cash totals, till-B fees, gzip nclog, comma CSV amounts, and reject sources will not match if the inbox or feed is skipped. Empty-but-balanced books fail the posted-entry checks. A single unauthenticated GET to the feed is not enough.
+Pinned intents, cash totals, till B fees, gzip nclog, comma amounts, and reject sources will not match if you skip the inbox or the feed. Balanced zeros fail the posted-entry checks. Hitting /v1/frames once without the token, or without following next, is not the tail.
