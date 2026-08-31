@@ -1,0 +1,1 @@
+clear-prod-3 died around 18:00 EAT. Fence file was 7 when I last looked; handoff.nclog was still writing. Do not trust Amount on STK callbacks — the intent is source of truth. CSV times are till-local (Nairobi).

@@ -1,0 +1,13 @@
+{
+  "accepted_intents": 102,
+  "rejected": 33,
+  "cash_cents": 4978259,
+  "escrow_cents": 0,
+  "vendor_cents": 4927961,
+  "fee_cents": 43369,
+  "vat_cents": 6929,
+  "pending_expired": 1,
+  "wal_replayed": 2,
+  "final_fence": 8,
+  "entry_count": 204
+}
