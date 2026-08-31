@@ -1,0 +1,17 @@
+NyotaClear's till writer on clear-prod-3 died mid-shift. I need a correct journal for that crash. "Now" is `/app/data/as_of`. Do not use the machine clock.
+
+The copy of the writer that was on the box is under `/app/writer`. The crash dump is under `/app/data`. The nclog tail never flushed; pull it from the live feed on port 9377 (`http://127.0.0.1:9377`, and `http://feed:9377` if that is up). Token is `/app/data/feed.token`. If nothing is listening, start `/opt/nyota-feed/serve.py`. When you are done I need `/app/output/ledger.json`, `/app/output/rejects.json`, `/app/output/summary.json`, and `/app/output/audit.ndjson`. `SHIFT_NOTES.txt` is gossip.
+
+Replay sqlite `posted` first, then every file in `crash_wal` in name order, then the merged inbox (disk plus feed), then expire leftover pending. A WAL `trans_id` that sqlite already posted: skip booking it, still count `wal_replayed`. Two legs in the WAL for a trans_id sqlite does not have both go on the books. `sqlite_replayed` is how many posted rows you applied.
+
+WAL is the old length-prefixed JSON. nclog is not. nclog is authenticated with the raw bytes in `nclog.key` — open a complete disk frame if you need the layout. Some payloads are compressed. A bad MAC ends that stream (`bad_mac`, source `handoff.nclog:mac` or `feed:mac`). Do not skip ahead. Torn length/payload stops that stream with no extra reject. Disk sources `handoff.nclog#n`. Feed sources `feed#n` over the concatenated pages. The feed pages; one GET is not the tail.
+
+Inbox is one list after parse, ordered by `occurred_at`, then `source`, then sequence. jsonl is one object per line; a broken line is `bad_record` / `"?"` / `filename:line` (1-based; csv header is line 1). CSV `Time` is the till timezone in `tills.json`. Amounts are KES, commas happen, half-even to a cent. `C2B` books the CSV amount on that till's fee book. `REVERSAL` looks up `TransID`: `unknown_trans_id`, `already_reversed`, or negate the legs you already booked (do not recompute fee).
+
+STK books the pending intent amount and that intent's till, not the callback amount. `result_code` != 0 is `stk_failed`. Unknown intent is `unknown_intent`. More than 47.000s after `opened_at` is `timeout`; equal to 47.000s still counts. Fence file is one integer. Smaller is `stale_fence`. Larger becomes current. Duplicates are `duplicate_intent` / `duplicate_trans_id` (sqlite and WAL count). Leftover pending open more than 47.000s vs `as_of`, and not already rejected, is `timeout` / `as_of`.
+
+Fees and VAT are per till in `tills.json`. Two legs, debits positive, lines sum to 0. `entry_id` is sha256 of compact `{"i":intent_id,"t":trans_id,"o":occurred_at,"l":[[account,cents],...]}` hex[:16]. `audit.ndjson` is one object per decision: `source`, `decision`, `reason`, `intent_id`, `trans_id`.
+
+`ledger.json`: `as_of` (UTC, ms, Z), `fence`, `accounts`, `entries`. `rejects.json`: `{"rejects":[...]}` with `intent_id`, `reason`, `source`, `trans_id` when you have one. `summary.json`: `accepted_intents`, `rejected`, `cash_cents`, `escrow_cents`, `vendor_cents` (positive), `fee_cents`, `vat_cents`, `pending_expired`, `wal_replayed`, `sqlite_replayed`, `feed_frames`, `final_fence`, `entry_count`. Vendor/fee/vat in the summary are magnitudes. `feed_frames` is complete authenticated feed payloads, not a torn stub.
+
+You have 10800 seconds to complete this task. Do not cheat by using online solutions or hints specific to this task.

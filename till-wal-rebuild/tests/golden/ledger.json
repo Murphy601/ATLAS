@@ -1,0 +1,4973 @@
+{
+  "as_of": "2026-03-11T15:00:00.000Z",
+  "fence": 8,
+  "accounts": {
+    "cash": 6137102,
+    "escrow": 0,
+    "vendor_payable": -6073352,
+    "fee_income": -54967,
+    "vat_payable": -8783
+  },
+  "entries": [
+    {
+      "entry_id": "21c93c3736a195ef",
+      "intent_id": "int_0008",
+      "trans_id": "WALREPLAY01",
+      "occurred_at": "2026-03-11T07:02:11.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "3203d0dbd77fa793",
+      "intent_id": "int_0008",
+      "trans_id": "WALREPLAY01",
+      "occurred_at": "2026-03-11T07:02:11.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "d19ca68c834a59c4",
+      "intent_id": "int_0015",
+      "trans_id": "WALREPLAY02",
+      "occurred_at": "2026-03-11T07:03:08.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "9f3ca4b0046c17da",
+      "intent_id": "int_0015",
+      "trans_id": "WALREPLAY02",
+      "occurred_at": "2026-03-11T07:03:08.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "5bdaaecb6c92784b",
+      "intent_id": "int_0001",
+      "trans_id": "NLJ7RT61SV",
+      "occurred_at": "2026-03-11T07:05:20.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "57775ab3ad5117f0",
+      "intent_id": "int_0001",
+      "trans_id": "NLJ7RT61SV",
+      "occurred_at": "2026-03-11T07:05:20.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "72005effff642ec2",
+      "intent_id": "int_0002",
+      "trans_id": "EQ47EXACT01",
+      "occurred_at": "2026-03-11T07:06:47.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "2a163e4e7376caaf",
+      "intent_id": "int_0002",
+      "trans_id": "EQ47EXACT01",
+      "occurred_at": "2026-03-11T07:06:47.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "101ff651680f4016",
+      "intent_id": "int_0005",
+      "trans_id": "DUPTRANS001",
+      "occurred_at": "2026-03-11T07:09:02.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "be4af72752e64852",
+      "intent_id": "int_0005",
+      "trans_id": "DUPTRANS001",
+      "occurred_at": "2026-03-11T07:09:02.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "4ed96a4335228246",
+      "intent_id": "int_0017",
+      "trans_id": "NC4HCRHLFR0017",
+      "occurred_at": "2026-03-11T07:13:33.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "109bd08a81e1329d",
+      "intent_id": "int_0017",
+      "trans_id": "NC4HCRHLFR0017",
+      "occurred_at": "2026-03-11T07:13:33.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "9d0995bcb679f270",
+      "intent_id": "int_0021",
+      "trans_id": "NCDKNPET4J0021",
+      "occurred_at": "2026-03-11T07:17:18.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "2f89d0264bbb6a60",
+      "intent_id": "int_0021",
+      "trans_id": "NCDKNPET4J0021",
+      "occurred_at": "2026-03-11T07:17:18.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "67da5287c36f33d5",
+      "intent_id": "int_0022",
+      "trans_id": "NCR9QVAEDW0022",
+      "occurred_at": "2026-03-11T07:18:51.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "b0b2ffa69c427efa",
+      "intent_id": "int_0022",
+      "trans_id": "NCR9QVAEDW0022",
+      "occurred_at": "2026-03-11T07:18:51.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "71071bd8003fd725",
+      "intent_id": "int_0023",
+      "trans_id": "NC5CRQEFS30023",
+      "occurred_at": "2026-03-11T07:20:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "d397311e1cd4a413",
+      "intent_id": "int_0023",
+      "trans_id": "NC5CRQEFS30023",
+      "occurred_at": "2026-03-11T07:20:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "4ad5cf44af6aedba",
+      "intent_id": "int_0024",
+      "trans_id": "NC63VMGHRM0024",
+      "occurred_at": "2026-03-11T07:20:09.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "240f2c5181232c21",
+      "intent_id": "int_0024",
+      "trans_id": "NC63VMGHRM0024",
+      "occurred_at": "2026-03-11T07:20:09.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "742b2769770439c8",
+      "intent_id": "int_0026",
+      "trans_id": "NCUL9RU6XZ0026",
+      "occurred_at": "2026-03-11T07:22:59.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "a1ff50a918b96a03",
+      "intent_id": "int_0026",
+      "trans_id": "NCUL9RU6XZ0026",
+      "occurred_at": "2026-03-11T07:22:59.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "0a8b61ccd994367c",
+      "intent_id": "int_0028",
+      "trans_id": "NC59Q2ZHQ20028",
+      "occurred_at": "2026-03-11T07:24:32.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "930ce90982e80e13",
+      "intent_id": "int_0028",
+      "trans_id": "NC59Q2ZHQ20028",
+      "occurred_at": "2026-03-11T07:24:32.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "4eb8313446f22c7d",
+      "intent_id": "int_0029",
+      "trans_id": "NCXHJCSY2S0029",
+      "occurred_at": "2026-03-11T07:26:18.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "aba65f42f99462fd",
+      "intent_id": "int_0029",
+      "trans_id": "NCXHJCSY2S0029",
+      "occurred_at": "2026-03-11T07:26:18.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "158067adcec8302a",
+      "intent_id": "int_0030",
+      "trans_id": "NC2RZY6CJR0030",
+      "occurred_at": "2026-03-11T07:26:47.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "778d7bbc77e14aaf",
+      "intent_id": "int_0030",
+      "trans_id": "NC2RZY6CJR0030",
+      "occurred_at": "2026-03-11T07:26:47.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "103ba291b96967a1",
+      "intent_id": "int_0032",
+      "trans_id": "NCUUXAL6G60032",
+      "occurred_at": "2026-03-11T07:28:20.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "0fff691141fc2a70",
+      "intent_id": "int_0032",
+      "trans_id": "NCUUXAL6G60032",
+      "occurred_at": "2026-03-11T07:28:20.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "48af92512428aa9f",
+      "intent_id": "int_0034",
+      "trans_id": "NCFU82QJP20034",
+      "occurred_at": "2026-03-11T07:31:17.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "edfe91f94897dde6",
+      "intent_id": "int_0034",
+      "trans_id": "NCFU82QJP20034",
+      "occurred_at": "2026-03-11T07:31:17.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "7631fe6ee2a78821",
+      "intent_id": "int_0036",
+      "trans_id": "NC6PTWTZNX0036",
+      "occurred_at": "2026-03-11T07:32:30.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "53a48c55ee24c2cf",
+      "intent_id": "int_0036",
+      "trans_id": "NC6PTWTZNX0036",
+      "occurred_at": "2026-03-11T07:32:30.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "326585fc7f30028d",
+      "intent_id": "int_0037",
+      "trans_id": "NC8YTY4VUJ0037",
+      "occurred_at": "2026-03-11T07:34:07.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "57c152ddcf3857d3",
+      "intent_id": "int_0037",
+      "trans_id": "NC8YTY4VUJ0037",
+      "occurred_at": "2026-03-11T07:34:07.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -87132
+        },
+        {
+          "account": "fee_income",
+          "cents": -748
+        },
+        {
+          "account": "vat_payable",
+          "cents": -120
+        }
+      ]
+    },
+    {
+      "entry_id": "4942493b600be9f6",
+      "intent_id": "int_0038",
+      "trans_id": "NCD8NEAGSJ0038",
+      "occurred_at": "2026-03-11T07:34:46.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "1d2d6d57c9a41da5",
+      "intent_id": "int_0038",
+      "trans_id": "NCD8NEAGSJ0038",
+      "occurred_at": "2026-03-11T07:34:46.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123405
+        },
+        {
+          "account": "fee_income",
+          "cents": -1375
+        },
+        {
+          "account": "vat_payable",
+          "cents": -220
+        }
+      ]
+    },
+    {
+      "entry_id": "846fa0f8f4268f32",
+      "intent_id": "int_0039",
+      "trans_id": "NCUYBY9NTJ0039",
+      "occurred_at": "2026-03-11T07:35:26.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "946bfdf9c446170f",
+      "intent_id": "int_0039",
+      "trans_id": "NCUYBY9NTJ0039",
+      "occurred_at": "2026-03-11T07:35:26.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "77b8f6008b7c249c",
+      "intent_id": "int_0040",
+      "trans_id": "NCUE2N8VP50040",
+      "occurred_at": "2026-03-11T07:36:46.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "8a5b62b67909ee98",
+      "intent_id": "int_0040",
+      "trans_id": "NCUE2N8VP50040",
+      "occurred_at": "2026-03-11T07:36:46.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "174cb7c39bbd2586",
+      "intent_id": "int_0044",
+      "trans_id": "NCZ7H4VTU30044",
+      "occurred_at": "2026-03-11T07:40:56.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "6d91ea2309608b6f",
+      "intent_id": "int_0044",
+      "trans_id": "NCZ7H4VTU30044",
+      "occurred_at": "2026-03-11T07:40:56.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "847a3c576643cf3e",
+      "intent_id": "int_0045",
+      "trans_id": "NCCKZXPAPP0045",
+      "occurred_at": "2026-03-11T07:41:19.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "a9f3a63edcdc8da6",
+      "intent_id": "int_0045",
+      "trans_id": "NCCKZXPAPP0045",
+      "occurred_at": "2026-03-11T07:41:19.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "903d607317dcb4ee",
+      "intent_id": "int_0046",
+      "trans_id": "NCGJSZAYG80046",
+      "occurred_at": "2026-03-11T07:42:45.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "002475dcb4156a99",
+      "intent_id": "int_0046",
+      "trans_id": "NCGJSZAYG80046",
+      "occurred_at": "2026-03-11T07:42:45.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "0ee7b4afae2a5720",
+      "intent_id": "int_0047",
+      "trans_id": "NCB8L4YA990047",
+      "occurred_at": "2026-03-11T07:43:59.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "0deae8231992f03b",
+      "intent_id": "int_0047",
+      "trans_id": "NCB8L4YA990047",
+      "occurred_at": "2026-03-11T07:43:59.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "033744ffdb92b2d7",
+      "intent_id": "int_0049",
+      "trans_id": "NCKSFPZEAN0049",
+      "occurred_at": "2026-03-11T07:45:35.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "612c11a41e57835b",
+      "intent_id": "int_0049",
+      "trans_id": "NCKSFPZEAN0049",
+      "occurred_at": "2026-03-11T07:45:35.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -86877
+        },
+        {
+          "account": "fee_income",
+          "cents": -968
+        },
+        {
+          "account": "vat_payable",
+          "cents": -155
+        }
+      ]
+    },
+    {
+      "entry_id": "5e8ede629e6591e9",
+      "intent_id": "int_0052",
+      "trans_id": "NC2CPJWP2V0052",
+      "occurred_at": "2026-03-11T07:48:42.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "13b86dcc28d02a4c",
+      "intent_id": "int_0052",
+      "trans_id": "NC2CPJWP2V0052",
+      "occurred_at": "2026-03-11T07:48:42.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "1e1d5752c6c55ad7",
+      "intent_id": "int_0054",
+      "trans_id": "NCP93VDQCZ0054",
+      "occurred_at": "2026-03-11T07:51:18.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "a9774fbfbdbbdac5",
+      "intent_id": "int_0054",
+      "trans_id": "NCP93VDQCZ0054",
+      "occurred_at": "2026-03-11T07:51:18.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "ca5433ec3ddc313f",
+      "intent_id": "int_0055",
+      "trans_id": "NCEKD82Y950055",
+      "occurred_at": "2026-03-11T07:52:18.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "71e5a8a7925be3fa",
+      "intent_id": "int_0055",
+      "trans_id": "NCEKD82Y950055",
+      "occurred_at": "2026-03-11T07:52:18.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14561
+        },
+        {
+          "account": "fee_income",
+          "cents": -125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "20c72524bb6d4073",
+      "intent_id": "int_0056",
+      "trans_id": "NCTRDZ6PD50056",
+      "occurred_at": "2026-03-11T07:52:54.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "a09de4407daacd19",
+      "intent_id": "int_0056",
+      "trans_id": "NCTRDZ6PD50056",
+      "occurred_at": "2026-03-11T07:52:54.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "c01856c83a5bfee6",
+      "intent_id": "int_0057",
+      "trans_id": "NCNVNXZXLE0057",
+      "occurred_at": "2026-03-11T07:53:53.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "b6d971ee2875c076",
+      "intent_id": "int_0057",
+      "trans_id": "NCNVNXZXLE0057",
+      "occurred_at": "2026-03-11T07:53:53.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "7b05e43cefc4b108",
+      "intent_id": "int_0058",
+      "trans_id": "NC6BG6DBMX0058",
+      "occurred_at": "2026-03-11T07:54:54.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "842870d974de211f",
+      "intent_id": "int_0058",
+      "trans_id": "NC6BG6DBMX0058",
+      "occurred_at": "2026-03-11T07:54:54.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "dc569727b427a58f",
+      "intent_id": "int_0059",
+      "trans_id": "NCJ3YAHK820059",
+      "occurred_at": "2026-03-11T07:55:57.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "0019b25f318f5b3f",
+      "intent_id": "int_0059",
+      "trans_id": "NCJ3YAHK820059",
+      "occurred_at": "2026-03-11T07:55:57.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "5e53b923ff2beda1",
+      "intent_id": "int_0061",
+      "trans_id": "NCM273FU750061",
+      "occurred_at": "2026-03-11T07:57:43.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "3c4ec49e15ed52d0",
+      "intent_id": "int_0061",
+      "trans_id": "NCM273FU750061",
+      "occurred_at": "2026-03-11T07:57:43.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -87132
+        },
+        {
+          "account": "fee_income",
+          "cents": -748
+        },
+        {
+          "account": "vat_payable",
+          "cents": -120
+        }
+      ]
+    },
+    {
+      "entry_id": "5deecd4475819426",
+      "intent_id": "int_0062",
+      "trans_id": "NCYKTJF3CP0062",
+      "occurred_at": "2026-03-11T07:58:16.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "a66a62c38feda31b",
+      "intent_id": "int_0062",
+      "trans_id": "NCYKTJF3CP0062",
+      "occurred_at": "2026-03-11T07:58:16.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "87f262dcb489fd5d",
+      "intent_id": "int_0063",
+      "trans_id": "NCY2AHP5ZA0063",
+      "occurred_at": "2026-03-11T08:00:07.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "0f2c56f276d9ba8b",
+      "intent_id": "int_0063",
+      "trans_id": "NCY2AHP5ZA0063",
+      "occurred_at": "2026-03-11T08:00:07.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "e93868b15a02a7b6",
+      "intent_id": "int_0064",
+      "trans_id": "NCJ6FKSARW0064",
+      "occurred_at": "2026-03-11T08:00:29.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "a2b6d0b22779fb51",
+      "intent_id": "int_0064",
+      "trans_id": "NCJ6FKSARW0064",
+      "occurred_at": "2026-03-11T08:00:29.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "0e94073c00bf1064",
+      "intent_id": "int_0065",
+      "trans_id": "NC83QNR83U0065",
+      "occurred_at": "2026-03-11T08:01:35.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "d8b0d1c85dfce078",
+      "intent_id": "int_0065",
+      "trans_id": "NC83QNR83U0065",
+      "occurred_at": "2026-03-11T08:01:35.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "c32143d4809c9b08",
+      "intent_id": "int_0066",
+      "trans_id": "NCD5MSCPH80066",
+      "occurred_at": "2026-03-11T08:03:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "e8239ca7b0ef7652",
+      "intent_id": "int_0066",
+      "trans_id": "NCD5MSCPH80066",
+      "occurred_at": "2026-03-11T08:03:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "d8ed3d7c5e1c7e07",
+      "intent_id": "int_0013",
+      "trans_id": "GZDISK00013",
+      "occurred_at": "2026-03-11T08:05:11.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 20000
+        },
+        {
+          "account": "escrow",
+          "cents": -20000
+        }
+      ]
+    },
+    {
+      "entry_id": "8b04214376e24008",
+      "intent_id": "int_0013",
+      "trans_id": "GZDISK00013",
+      "occurred_at": "2026-03-11T08:05:11.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 20000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19803
+        },
+        {
+          "account": "fee_income",
+          "cents": -170
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "653292d832c705a3",
+      "intent_id": "int_0068",
+      "trans_id": "NCU3UFNMY70068",
+      "occurred_at": "2026-03-11T08:05:12.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "446af833e7d208fa",
+      "intent_id": "int_0068",
+      "trans_id": "NCU3UFNMY70068",
+      "occurred_at": "2026-03-11T08:05:12.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "a5f06a5033b7802f",
+      "intent_id": "int_0070",
+      "trans_id": "NCEVDGCEQ20070",
+      "occurred_at": "2026-03-11T08:06:46.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "4b1e216895a76f01",
+      "intent_id": "int_0070",
+      "trans_id": "NCEVDGCEQ20070",
+      "occurred_at": "2026-03-11T08:06:46.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "28f432054fade533",
+      "intent_id": "int_0071",
+      "trans_id": "NC9F4ZKMJX0071",
+      "occurred_at": "2026-03-11T08:07:15.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "ee0826eeb56cda5d",
+      "intent_id": "int_0071",
+      "trans_id": "NC9F4ZKMJX0071",
+      "occurred_at": "2026-03-11T08:07:15.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -32907
+        },
+        {
+          "account": "fee_income",
+          "cents": -367
+        },
+        {
+          "account": "vat_payable",
+          "cents": -59
+        }
+      ]
+    },
+    {
+      "entry_id": "4718a2563d31bc29",
+      "intent_id": "int_0072",
+      "trans_id": "NCLWEN4B4X0072",
+      "occurred_at": "2026-03-11T08:08:42.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "73c548c56fa2df52",
+      "intent_id": "int_0072",
+      "trans_id": "NCLWEN4B4X0072",
+      "occurred_at": "2026-03-11T08:08:42.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "02e2c6fb41aff216",
+      "intent_id": "int_0073",
+      "trans_id": "NCS483YPPX0073",
+      "occurred_at": "2026-03-11T08:10:08.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "588cdd68e674c864",
+      "intent_id": "int_0073",
+      "trans_id": "NCS483YPPX0073",
+      "occurred_at": "2026-03-11T08:10:08.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -87132
+        },
+        {
+          "account": "fee_income",
+          "cents": -748
+        },
+        {
+          "account": "vat_payable",
+          "cents": -120
+        }
+      ]
+    },
+    {
+      "entry_id": "b4d6d3c4686e5d93",
+      "intent_id": "int_0075",
+      "trans_id": "NCNW842GCL0075",
+      "occurred_at": "2026-03-11T08:12:14.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "76c5e8bfd13902e5",
+      "intent_id": "int_0075",
+      "trans_id": "NCNW842GCL0075",
+      "occurred_at": "2026-03-11T08:12:14.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "0e7d4253da950dc3",
+      "intent_id": "int_0078",
+      "trans_id": "NCZCMA9YJA0078",
+      "occurred_at": "2026-03-11T08:14:12.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "e9fc3a97cabc63f1",
+      "intent_id": "int_0078",
+      "trans_id": "NCZCMA9YJA0078",
+      "occurred_at": "2026-03-11T08:14:12.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "f624ef59efdb09d8",
+      "intent_id": "int_0080",
+      "trans_id": "NCGNECMCUY0080",
+      "occurred_at": "2026-03-11T08:16:29.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "97b907da06b9eb09",
+      "intent_id": "int_0080",
+      "trans_id": "NCGNECMCUY0080",
+      "occurred_at": "2026-03-11T08:16:29.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "729351387919369e",
+      "intent_id": "int_0081",
+      "trans_id": "NCW84UQCV50081",
+      "occurred_at": "2026-03-11T08:18:09.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "e0fbf9bf26563317",
+      "intent_id": "int_0081",
+      "trans_id": "NCW84UQCV50081",
+      "occurred_at": "2026-03-11T08:18:09.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "c56867322769a751",
+      "intent_id": "int_0082",
+      "trans_id": "NCBPN8EZDU0082",
+      "occurred_at": "2026-03-11T08:18:45.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "bf11c20365500de4",
+      "intent_id": "int_0082",
+      "trans_id": "NCBPN8EZDU0082",
+      "occurred_at": "2026-03-11T08:18:45.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24681
+        },
+        {
+          "account": "fee_income",
+          "cents": -275
+        },
+        {
+          "account": "vat_payable",
+          "cents": -44
+        }
+      ]
+    },
+    {
+      "entry_id": "da2607eb7b0ce212",
+      "intent_id": "int_0083",
+      "trans_id": "NCHB6ZHUWE0083",
+      "occurred_at": "2026-03-11T08:19:28.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "fea445f2bbc7466c",
+      "intent_id": "int_0083",
+      "trans_id": "NCHB6ZHUWE0083",
+      "occurred_at": "2026-03-11T08:19:28.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "09beec993c12f3c8",
+      "intent_id": "int_0085",
+      "trans_id": "NCF4XGBS9D0085",
+      "occurred_at": "2026-03-11T08:22:16.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "d32e228eaf4d7ce7",
+      "intent_id": "int_0085",
+      "trans_id": "NCF4XGBS9D0085",
+      "occurred_at": "2026-03-11T08:22:16.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -87132
+        },
+        {
+          "account": "fee_income",
+          "cents": -748
+        },
+        {
+          "account": "vat_payable",
+          "cents": -120
+        }
+      ]
+    },
+    {
+      "entry_id": "0dc2c5c7741e8251",
+      "intent_id": "int_0086",
+      "trans_id": "NC7CY9X76N0086",
+      "occurred_at": "2026-03-11T08:23:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "b1302a5b9de89f81",
+      "intent_id": "int_0086",
+      "trans_id": "NC7CY9X76N0086",
+      "occurred_at": "2026-03-11T08:23:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "2838de845d409859",
+      "intent_id": "int_0087",
+      "trans_id": "NCER37SUL80087",
+      "occurred_at": "2026-03-11T08:24:19.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "5ccf67562d23a7f7",
+      "intent_id": "int_0087",
+      "trans_id": "NCER37SUL80087",
+      "occurred_at": "2026-03-11T08:24:19.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "deea04c39d2aa658",
+      "intent_id": "int_0088",
+      "trans_id": "NCQLSS7A3B0088",
+      "occurred_at": "2026-03-11T08:25:16.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "1f0af5acb86ca809",
+      "intent_id": "int_0088",
+      "trans_id": "NCQLSS7A3B0088",
+      "occurred_at": "2026-03-11T08:25:16.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "2c3e73f2f0d559f5",
+      "intent_id": "int_0089",
+      "trans_id": "NCMWM49G530089",
+      "occurred_at": "2026-03-11T08:25:22.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "20872a6ff52f6a9c",
+      "intent_id": "int_0089",
+      "trans_id": "NCMWM49G530089",
+      "occurred_at": "2026-03-11T08:25:22.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "605eec909ad3f446",
+      "intent_id": "int_0090",
+      "trans_id": "NC3JH6MD7V0090",
+      "occurred_at": "2026-03-11T08:26:23.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "82168f89849832ad",
+      "intent_id": "int_0090",
+      "trans_id": "NC3JH6MD7V0090",
+      "occurred_at": "2026-03-11T08:26:23.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "0689a1ffb947eba4",
+      "intent_id": "int_0091",
+      "trans_id": "NCDHRYEC320091",
+      "occurred_at": "2026-03-11T08:27:59.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "d1c219a6a08056e9",
+      "intent_id": "int_0091",
+      "trans_id": "NCDHRYEC320091",
+      "occurred_at": "2026-03-11T08:27:59.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14561
+        },
+        {
+          "account": "fee_income",
+          "cents": -125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "907251912070947d",
+      "intent_id": "int_0092",
+      "trans_id": "NCRNL8AMRG0092",
+      "occurred_at": "2026-03-11T08:28:52.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "119c7c9759027f99",
+      "intent_id": "int_0092",
+      "trans_id": "NCRNL8AMRG0092",
+      "occurred_at": "2026-03-11T08:28:52.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "3fd978d025534416",
+      "intent_id": "int_0093",
+      "trans_id": "NCYDF7L2NC0093",
+      "occurred_at": "2026-03-11T08:29:20.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "2d9a5812844c18c3",
+      "intent_id": "int_0093",
+      "trans_id": "NCYDF7L2NC0093",
+      "occurred_at": "2026-03-11T08:29:20.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19646
+        },
+        {
+          "account": "fee_income",
+          "cents": -219
+        },
+        {
+          "account": "vat_payable",
+          "cents": -35
+        }
+      ]
+    },
+    {
+      "entry_id": "3c16a0009dbd9b20",
+      "intent_id": "int_0094",
+      "trans_id": "NC5GLEJNCJ0094",
+      "occurred_at": "2026-03-11T08:30:47.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "37ff9933ca386811",
+      "intent_id": "int_0094",
+      "trans_id": "NC5GLEJNCJ0094",
+      "occurred_at": "2026-03-11T08:30:47.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "baa547cb586ac58d",
+      "intent_id": "int_0095",
+      "trans_id": "NCRAFNVGYF0095",
+      "occurred_at": "2026-03-11T08:32:16.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "4634fdcb78155511",
+      "intent_id": "int_0095",
+      "trans_id": "NCRAFNVGYF0095",
+      "occurred_at": "2026-03-11T08:32:16.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "b9fe7f58f83e2537",
+      "intent_id": "int_0096",
+      "trans_id": "NCM68AB7HX0096",
+      "occurred_at": "2026-03-11T08:32:56.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "0c41042e687096ea",
+      "intent_id": "int_0096",
+      "trans_id": "NCM68AB7HX0096",
+      "occurred_at": "2026-03-11T08:32:56.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "0d89805ab7fdd1c9",
+      "intent_id": "int_0098",
+      "trans_id": "NC6CBWACZT0098",
+      "occurred_at": "2026-03-11T08:34:15.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "4a3305dea1d080ef",
+      "intent_id": "int_0098",
+      "trans_id": "NC6CBWACZT0098",
+      "occurred_at": "2026-03-11T08:34:15.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "a5103e054cfbb743",
+      "intent_id": "int_0099",
+      "trans_id": "NC42A94GNP0099",
+      "occurred_at": "2026-03-11T08:35:59.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "a4ce49739136404b",
+      "intent_id": "int_0099",
+      "trans_id": "NC42A94GNP0099",
+      "occurred_at": "2026-03-11T08:35:59.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "b12c6a5d1fd6b1b9",
+      "intent_id": "int_0100",
+      "trans_id": "NC926KFFF60100",
+      "occurred_at": "2026-03-11T08:36:25.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "5c955b11bcd42b74",
+      "intent_id": "int_0100",
+      "trans_id": "NC926KFFF60100",
+      "occurred_at": "2026-03-11T08:36:25.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "844fbe9ac67a9436",
+      "intent_id": "int_0102",
+      "trans_id": "NCP2C8F2GB0102",
+      "occurred_at": "2026-03-11T08:38:38.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "aa10826951dff940",
+      "intent_id": "int_0102",
+      "trans_id": "NCP2C8F2GB0102",
+      "occurred_at": "2026-03-11T08:38:38.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "b186cd07f51135d5",
+      "intent_id": "int_0103",
+      "trans_id": "NCZMRK7K480103",
+      "occurred_at": "2026-03-11T08:39:57.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "eb3b088bd6d7dcee",
+      "intent_id": "int_0103",
+      "trans_id": "NCZMRK7K480103",
+      "occurred_at": "2026-03-11T08:39:57.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14561
+        },
+        {
+          "account": "fee_income",
+          "cents": -125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "4663f2e7c9922629",
+      "intent_id": "int_0104",
+      "trans_id": "NCGADYQZNV0104",
+      "occurred_at": "2026-03-11T08:40:42.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "3238f9e0a6231a0a",
+      "intent_id": "int_0104",
+      "trans_id": "NCGADYQZNV0104",
+      "occurred_at": "2026-03-11T08:40:42.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14768
+        },
+        {
+          "account": "fee_income",
+          "cents": -200
+        },
+        {
+          "account": "vat_payable",
+          "cents": -32
+        }
+      ]
+    },
+    {
+      "entry_id": "e72007b40b3c893f",
+      "intent_id": "int_0105",
+      "trans_id": "NCFEPL5AXS0105",
+      "occurred_at": "2026-03-11T08:41:13.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "2120d5afb7faf722",
+      "intent_id": "int_0105",
+      "trans_id": "NCFEPL5AXS0105",
+      "occurred_at": "2026-03-11T08:41:13.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "d0c06201e21bc8b0",
+      "intent_id": "int_0107",
+      "trans_id": "NCUZW548AX0107",
+      "occurred_at": "2026-03-11T08:43:22.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "90e3f291916cb656",
+      "intent_id": "int_0107",
+      "trans_id": "NCUZW548AX0107",
+      "occurred_at": "2026-03-11T08:43:22.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "89c8a0f3cf0d97a0",
+      "intent_id": "int_0108",
+      "trans_id": "NCANCTYDMR0108",
+      "occurred_at": "2026-03-11T08:45:17.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "a52448f181cbf075",
+      "intent_id": "int_0108",
+      "trans_id": "NCANCTYDMR0108",
+      "occurred_at": "2026-03-11T08:45:17.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "3d4e68f7b81b2cd6",
+      "intent_id": "int_0110",
+      "trans_id": "NCEBG56C460110",
+      "occurred_at": "2026-03-11T08:47:26.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "a43aa2d0ed435c9c",
+      "intent_id": "int_0110",
+      "trans_id": "NCEBG56C460110",
+      "occurred_at": "2026-03-11T08:47:26.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "8bf39d955003008e",
+      "intent_id": "int_0111",
+      "trans_id": "NCMDTB2Z3X0111",
+      "occurred_at": "2026-03-11T08:47:41.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "d647def9ec774678",
+      "intent_id": "int_0111",
+      "trans_id": "NCMDTB2Z3X0111",
+      "occurred_at": "2026-03-11T08:47:41.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "76403c4f32c6bd6a",
+      "intent_id": "int_0112",
+      "trans_id": "NCM9XN7GN60112",
+      "occurred_at": "2026-03-11T08:49:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "f8d14db3c8ecbffe",
+      "intent_id": "int_0112",
+      "trans_id": "NCM9XN7GN60112",
+      "occurred_at": "2026-03-11T08:49:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "d748b204bae262f5",
+      "intent_id": "int_0113",
+      "trans_id": "NCE2T8XUBL0113",
+      "occurred_at": "2026-03-11T08:49:54.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "99ed0fdfc77f862c",
+      "intent_id": "int_0113",
+      "trans_id": "NCE2T8XUBL0113",
+      "occurred_at": "2026-03-11T08:49:54.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "431b4d5510b60fdf",
+      "intent_id": "int_0114",
+      "trans_id": "NCJLJF3AW20114",
+      "occurred_at": "2026-03-11T08:50:13.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "14a23f8cc6756e42",
+      "intent_id": "int_0114",
+      "trans_id": "NCJLJF3AW20114",
+      "occurred_at": "2026-03-11T08:50:13.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "683ac68d78e56044",
+      "intent_id": "int_0115",
+      "trans_id": "NCKDDFNAX60115",
+      "occurred_at": "2026-03-11T08:52:20.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "7ebb5cf4cc39a9f2",
+      "intent_id": "int_0115",
+      "trans_id": "NCKDDFNAX60115",
+      "occurred_at": "2026-03-11T08:52:20.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14474
+        },
+        {
+          "account": "fee_income",
+          "cents": -200
+        },
+        {
+          "account": "vat_payable",
+          "cents": -32
+        }
+      ]
+    },
+    {
+      "entry_id": "c6c9f6f1a60c4a50",
+      "intent_id": "int_0009",
+      "trans_id": "QCV7C2B250A",
+      "occurred_at": "2026-03-11T09:17:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "680d26b777e82cf7",
+      "intent_id": "int_0009",
+      "trans_id": "QCV7C2B250A",
+      "occurred_at": "2026-03-11T09:17:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "83631f002fe9e181",
+      "intent_id": "int_0014",
+      "trans_id": "NC4M68AB7H8091",
+      "occurred_at": "2026-03-11T09:20:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "253998528f24fb40",
+      "intent_id": "int_0014",
+      "trans_id": "NC4M68AB7H8091",
+      "occurred_at": "2026-03-11T09:20:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14561
+        },
+        {
+          "account": "fee_income",
+          "cents": -125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "405c0abcf9552af2",
+      "intent_id": "int_0011",
+      "trans_id": "TILLB100FEE",
+      "occurred_at": "2026-03-11T09:30:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "dece84b7ef5b51cb",
+      "intent_id": "int_0011",
+      "trans_id": "TILLB100FEE",
+      "occurred_at": "2026-03-11T09:30:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9768
+        },
+        {
+          "account": "fee_income",
+          "cents": -200
+        },
+        {
+          "account": "vat_payable",
+          "cents": -32
+        }
+      ]
+    },
+    {
+      "entry_id": "bb8079bfd0c26943",
+      "intent_id": "int_0012",
+      "trans_id": "COMMA125000",
+      "occurred_at": "2026-03-11T09:45:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "52025d82b98245fd",
+      "intent_id": "int_0012",
+      "trans_id": "COMMA125000",
+      "occurred_at": "2026-03-11T09:45:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "776874a7e3f8c888",
+      "intent_id": "int_0116",
+      "trans_id": "NCUULTEEY48116",
+      "occurred_at": "2026-03-11T10:00:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "b1a7067b54061953",
+      "intent_id": "int_0116",
+      "trans_id": "NCUULTEEY48116",
+      "occurred_at": "2026-03-11T10:00:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14474
+        },
+        {
+          "account": "fee_income",
+          "cents": -200
+        },
+        {
+          "account": "vat_payable",
+          "cents": -32
+        }
+      ]
+    },
+    {
+      "entry_id": "4713587d06dafe5a",
+      "intent_id": "int_0117",
+      "trans_id": "NC2KLSMH278117",
+      "occurred_at": "2026-03-11T10:01:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "333fa44f18b5a9bf",
+      "intent_id": "int_0117",
+      "trans_id": "NC2KLSMH278117",
+      "occurred_at": "2026-03-11T10:01:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "b6370d41ba2f46cf",
+      "intent_id": "int_0118",
+      "trans_id": "NCAUFKDED38118",
+      "occurred_at": "2026-03-11T10:02:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "b3d938d5d881630f",
+      "intent_id": "int_0118",
+      "trans_id": "NCAUFKDED38118",
+      "occurred_at": "2026-03-11T10:02:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "711f26c37faa4a90",
+      "intent_id": "int_0119",
+      "trans_id": "NCBVUGGG9K8119",
+      "occurred_at": "2026-03-11T10:03:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "4d20fefd1c650de3",
+      "intent_id": "int_0119",
+      "trans_id": "NCBVUGGG9K8119",
+      "occurred_at": "2026-03-11T10:03:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "7d0b76b0bc19a9ef",
+      "intent_id": "int_0120",
+      "trans_id": "NCR6XKSWQC8120",
+      "occurred_at": "2026-03-11T10:04:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "e98c66b463bc7a64",
+      "intent_id": "int_0120",
+      "trans_id": "NCR6XKSWQC8120",
+      "occurred_at": "2026-03-11T10:04:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "93fc09ac5a5931a0",
+      "intent_id": "int_0121",
+      "trans_id": "NCWVSYZSP98121",
+      "occurred_at": "2026-03-11T10:05:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "8d422e75ffcdd63d",
+      "intent_id": "int_0121",
+      "trans_id": "NCWVSYZSP98121",
+      "occurred_at": "2026-03-11T10:05:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "feace754e897ad57",
+      "intent_id": "int_0122",
+      "trans_id": "NCJAZKJEAH8122",
+      "occurred_at": "2026-03-11T10:06:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "5f480c9c5a907d9b",
+      "intent_id": "int_0122",
+      "trans_id": "NCJAZKJEAH8122",
+      "occurred_at": "2026-03-11T10:06:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -87132
+        },
+        {
+          "account": "fee_income",
+          "cents": -748
+        },
+        {
+          "account": "vat_payable",
+          "cents": -120
+        }
+      ]
+    },
+    {
+      "entry_id": "53dfe847e42d81cd",
+      "intent_id": "int_0123",
+      "trans_id": "NCWHWPFKNG8123",
+      "occurred_at": "2026-03-11T10:07:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "9009d4f0d7c7b6ee",
+      "intent_id": "int_0123",
+      "trans_id": "NCWHWPFKNG8123",
+      "occurred_at": "2026-03-11T10:07:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "738741d0deabff7f",
+      "intent_id": "int_0124",
+      "trans_id": "NC8VAWWW468124",
+      "occurred_at": "2026-03-11T10:08:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "03bbfb02af323824",
+      "intent_id": "int_0124",
+      "trans_id": "NC8VAWWW468124",
+      "occurred_at": "2026-03-11T10:08:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "0fbc9194c0dd5e1e",
+      "intent_id": "int_0125",
+      "trans_id": "NCZBJ37JAE8125",
+      "occurred_at": "2026-03-11T10:09:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "0fdc41a68aad2716",
+      "intent_id": "int_0125",
+      "trans_id": "NCZBJ37JAE8125",
+      "occurred_at": "2026-03-11T10:09:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4768
+        },
+        {
+          "account": "fee_income",
+          "cents": -200
+        },
+        {
+          "account": "vat_payable",
+          "cents": -32
+        }
+      ]
+    },
+    {
+      "entry_id": "e38629c147058a40",
+      "intent_id": "int_0126",
+      "trans_id": "NCSBJK88VS8126",
+      "occurred_at": "2026-03-11T10:10:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "0cbc580db44d4c17",
+      "intent_id": "int_0126",
+      "trans_id": "NCSBJK88VS8126",
+      "occurred_at": "2026-03-11T10:10:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "81475f9cbfea42cb",
+      "intent_id": "int_0127",
+      "trans_id": "NCAAGJBYPE8127",
+      "occurred_at": "2026-03-11T10:11:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "4191a2b7749db932",
+      "intent_id": "int_0127",
+      "trans_id": "NCAAGJBYPE8127",
+      "occurred_at": "2026-03-11T10:11:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "98d8660a0b2eae18",
+      "intent_id": "int_0128",
+      "trans_id": "NCJ2ZXURJN8128",
+      "occurred_at": "2026-03-11T10:12:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "acf8c3af7e25fb15",
+      "intent_id": "int_0128",
+      "trans_id": "NCJ2ZXURJN8128",
+      "occurred_at": "2026-03-11T10:12:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14561
+        },
+        {
+          "account": "fee_income",
+          "cents": -125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "b2914088bb327d47",
+      "intent_id": "int_0130",
+      "trans_id": "NCMC6ZY6T88130",
+      "occurred_at": "2026-03-11T10:14:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "881835a1447392ec",
+      "intent_id": "int_0130",
+      "trans_id": "NCMC6ZY6T88130",
+      "occurred_at": "2026-03-11T10:14:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "e2941fa7d13abcd5",
+      "intent_id": "int_0131",
+      "trans_id": "NC4CYE76EK8131",
+      "occurred_at": "2026-03-11T10:15:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "443d025c486406ed",
+      "intent_id": "int_0131",
+      "trans_id": "NC4CYE76EK8131",
+      "occurred_at": "2026-03-11T10:15:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "2d8797288d119a5e",
+      "intent_id": "int_0132",
+      "trans_id": "NCLJ8XGW2A8132",
+      "occurred_at": "2026-03-11T10:16:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "87278ba779b4eadc",
+      "intent_id": "int_0132",
+      "trans_id": "NCLJ8XGW2A8132",
+      "occurred_at": "2026-03-11T10:16:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "45df8947f8ba6b7d",
+      "intent_id": "int_0133",
+      "trans_id": "NCR4XZTKFD8133",
+      "occurred_at": "2026-03-11T10:17:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "45b368e97e1365d8",
+      "intent_id": "int_0133",
+      "trans_id": "NCR4XZTKFD8133",
+      "occurred_at": "2026-03-11T10:17:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "983ffe40eda0a910",
+      "intent_id": "int_0134",
+      "trans_id": "NCHGFEWJ6T8134",
+      "occurred_at": "2026-03-11T10:18:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "da6b83e1cf8ecc2e",
+      "intent_id": "int_0134",
+      "trans_id": "NCHGFEWJ6T8134",
+      "occurred_at": "2026-03-11T10:18:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -86877
+        },
+        {
+          "account": "fee_income",
+          "cents": -968
+        },
+        {
+          "account": "vat_payable",
+          "cents": -155
+        }
+      ]
+    },
+    {
+      "entry_id": "051a9cff736705bb",
+      "intent_id": "int_0135",
+      "trans_id": "NCA22VWYBF8135",
+      "occurred_at": "2026-03-11T10:19:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "317a72ecb82bcbf6",
+      "intent_id": "int_0135",
+      "trans_id": "NCA22VWYBF8135",
+      "occurred_at": "2026-03-11T10:19:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "47604c004185370d",
+      "intent_id": "int_0136",
+      "trans_id": "NC2XAYU8QQ8136",
+      "occurred_at": "2026-03-11T10:20:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "41aaa418310b2ee2",
+      "intent_id": "int_0136",
+      "trans_id": "NC2XAYU8QQ8136",
+      "occurred_at": "2026-03-11T10:20:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "c7057b267d9fcd15",
+      "intent_id": "int_0137",
+      "trans_id": "NCG5B9KY8G8137",
+      "occurred_at": "2026-03-11T10:21:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "aa8b79778d043f91",
+      "intent_id": "int_0137",
+      "trans_id": "NCG5B9KY8G8137",
+      "occurred_at": "2026-03-11T10:21:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "02a62a6fbff71308",
+      "intent_id": "int_0138",
+      "trans_id": "NCHWCCJQTL8138",
+      "occurred_at": "2026-03-11T10:22:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "aa94e9578492b762",
+      "intent_id": "int_0138",
+      "trans_id": "NCHWCCJQTL8138",
+      "occurred_at": "2026-03-11T10:22:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "51a78311abfe7d82",
+      "intent_id": "int_0139",
+      "trans_id": "NCM6YBWL5N8139",
+      "occurred_at": "2026-03-11T10:23:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "8ce54e3530e9d9e7",
+      "intent_id": "int_0139",
+      "trans_id": "NCM6YBWL5N8139",
+      "occurred_at": "2026-03-11T10:23:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "f1191517964e32cb",
+      "intent_id": "int_0140",
+      "trans_id": "NC5NJ2XZCF8140",
+      "occurred_at": "2026-03-11T10:24:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "dee9c217b11ff7ec",
+      "intent_id": "int_0140",
+      "trans_id": "NC5NJ2XZCF8140",
+      "occurred_at": "2026-03-11T10:24:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14561
+        },
+        {
+          "account": "fee_income",
+          "cents": -125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "fe8ecb35c1d4efe6",
+      "intent_id": "int_0141",
+      "trans_id": "NCVYDFLJES8141",
+      "occurred_at": "2026-03-11T10:25:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "620f8bb90c998041",
+      "intent_id": "int_0141",
+      "trans_id": "NCVYDFLJES8141",
+      "occurred_at": "2026-03-11T10:25:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "6bd1d6d200088f97",
+      "intent_id": "int_0142",
+      "trans_id": "NC24Q6WXTJ8142",
+      "occurred_at": "2026-03-11T10:26:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "01b9966104e80631",
+      "intent_id": "int_0142",
+      "trans_id": "NC24Q6WXTJ8142",
+      "occurred_at": "2026-03-11T10:26:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "4d068bf469de48b6",
+      "intent_id": "int_0143",
+      "trans_id": "NC3PS7SWY48143",
+      "occurred_at": "2026-03-11T10:27:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "fefbd817892ae548",
+      "intent_id": "int_0143",
+      "trans_id": "NC3PS7SWY48143",
+      "occurred_at": "2026-03-11T10:27:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24681
+        },
+        {
+          "account": "fee_income",
+          "cents": -275
+        },
+        {
+          "account": "vat_payable",
+          "cents": -44
+        }
+      ]
+    },
+    {
+      "entry_id": "ca2eb4c3f523652a",
+      "intent_id": "int_0144",
+      "trans_id": "NC5H24UYRN8144",
+      "occurred_at": "2026-03-11T10:28:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 33333
+        },
+        {
+          "account": "escrow",
+          "cents": -33333
+        }
+      ]
+    },
+    {
+      "entry_id": "c5b2c98fabee9a1f",
+      "intent_id": "int_0144",
+      "trans_id": "NC5H24UYRN8144",
+      "occurred_at": "2026-03-11T10:28:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 33333
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -33005
+        },
+        {
+          "account": "fee_income",
+          "cents": -283
+        },
+        {
+          "account": "vat_payable",
+          "cents": -45
+        }
+      ]
+    },
+    {
+      "entry_id": "deea3196136720ae",
+      "intent_id": "int_0145",
+      "trans_id": "NCP37RF96U8145",
+      "occurred_at": "2026-03-11T10:29:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 50100
+        },
+        {
+          "account": "escrow",
+          "cents": -50100
+        }
+      ]
+    },
+    {
+      "entry_id": "bc7aa07682293e81",
+      "intent_id": "int_0145",
+      "trans_id": "NCP37RF96U8145",
+      "occurred_at": "2026-03-11T10:29:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 50100
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -49606
+        },
+        {
+          "account": "fee_income",
+          "cents": -426
+        },
+        {
+          "account": "vat_payable",
+          "cents": -68
+        }
+      ]
+    },
+    {
+      "entry_id": "56df6a6d4c5b1173",
+      "intent_id": "int_0146",
+      "trans_id": "NCW8X2B9DQ8146",
+      "occurred_at": "2026-03-11T10:30:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 88000
+        },
+        {
+          "account": "escrow",
+          "cents": -88000
+        }
+      ]
+    },
+    {
+      "entry_id": "7654810a14ca4121",
+      "intent_id": "int_0146",
+      "trans_id": "NCW8X2B9DQ8146",
+      "occurred_at": "2026-03-11T10:30:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 88000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -87132
+        },
+        {
+          "account": "fee_income",
+          "cents": -748
+        },
+        {
+          "account": "vat_payable",
+          "cents": -120
+        }
+      ]
+    },
+    {
+      "entry_id": "a3475615fabedbbe",
+      "intent_id": "int_0147",
+      "trans_id": "NC75ZYS7MP8147",
+      "occurred_at": "2026-03-11T10:31:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 125000
+        },
+        {
+          "account": "escrow",
+          "cents": -125000
+        }
+      ]
+    },
+    {
+      "entry_id": "271d7e59aa0768a8",
+      "intent_id": "int_0147",
+      "trans_id": "NC75ZYS7MP8147",
+      "occurred_at": "2026-03-11T10:31:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 125000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -123768
+        },
+        {
+          "account": "fee_income",
+          "cents": -1062
+        },
+        {
+          "account": "vat_payable",
+          "cents": -170
+        }
+      ]
+    },
+    {
+      "entry_id": "4c4ab1ab7fd6ed64",
+      "intent_id": "int_0148",
+      "trans_id": "NCQCS5PLYB8148",
+      "occurred_at": "2026-03-11T10:32:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 249999
+        },
+        {
+          "account": "escrow",
+          "cents": -249999
+        }
+      ]
+    },
+    {
+      "entry_id": "f8001849d9d6dfff",
+      "intent_id": "int_0148",
+      "trans_id": "NCQCS5PLYB8148",
+      "occurred_at": "2026-03-11T10:32:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 249999
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -247534
+        },
+        {
+          "account": "fee_income",
+          "cents": -2125
+        },
+        {
+          "account": "vat_payable",
+          "cents": -340
+        }
+      ]
+    },
+    {
+      "entry_id": "a6b8d7578b1c7a52",
+      "intent_id": "int_0149",
+      "trans_id": "NCD8Y8E38T8149",
+      "occurred_at": "2026-03-11T10:33:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 5000
+        },
+        {
+          "account": "escrow",
+          "cents": -5000
+        }
+      ]
+    },
+    {
+      "entry_id": "91b5a8db6754615f",
+      "intent_id": "int_0149",
+      "trans_id": "NCD8Y8E38T8149",
+      "occurred_at": "2026-03-11T10:33:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 5000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -4861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "6c26272a3d124ed8",
+      "intent_id": "int_0150",
+      "trans_id": "NCW6STKGB48150",
+      "occurred_at": "2026-03-11T10:34:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 10000
+        },
+        {
+          "account": "escrow",
+          "cents": -10000
+        }
+      ]
+    },
+    {
+      "entry_id": "320724d1ab58c70c",
+      "intent_id": "int_0150",
+      "trans_id": "NCW6STKGB48150",
+      "occurred_at": "2026-03-11T10:34:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 10000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -9861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "1efe338939964069",
+      "intent_id": "int_0151",
+      "trans_id": "NCPV7MXWQE8151",
+      "occurred_at": "2026-03-11T10:35:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "fe8415afc11755e4",
+      "intent_id": "int_0151",
+      "trans_id": "NCPV7MXWQE8151",
+      "occurred_at": "2026-03-11T10:35:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "47bc6e8d42732776",
+      "intent_id": "int_0152",
+      "trans_id": "NC2MMFPAMB8152",
+      "occurred_at": "2026-03-11T10:36:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 14706
+        },
+        {
+          "account": "escrow",
+          "cents": -14706
+        }
+      ]
+    },
+    {
+      "entry_id": "50b94b9d66697eed",
+      "intent_id": "int_0152",
+      "trans_id": "NC2MMFPAMB8152",
+      "occurred_at": "2026-03-11T10:36:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14474
+        },
+        {
+          "account": "fee_income",
+          "cents": -200
+        },
+        {
+          "account": "vat_payable",
+          "cents": -32
+        }
+      ]
+    },
+    {
+      "entry_id": "bdfff7083d711da1",
+      "intent_id": "int_0153",
+      "trans_id": "NCYYQFQA348153",
+      "occurred_at": "2026-03-11T10:37:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 15000
+        },
+        {
+          "account": "escrow",
+          "cents": -15000
+        }
+      ]
+    },
+    {
+      "entry_id": "0b517ff58ea64f2f",
+      "intent_id": "int_0153",
+      "trans_id": "NCYYQFQA348153",
+      "occurred_at": "2026-03-11T10:37:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 15000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -14852
+        },
+        {
+          "account": "fee_income",
+          "cents": -128
+        },
+        {
+          "account": "vat_payable",
+          "cents": -20
+        }
+      ]
+    },
+    {
+      "entry_id": "9f65379dc5bcfb4c",
+      "intent_id": "int_0154",
+      "trans_id": "NCLFQG9F7B8154",
+      "occurred_at": "2026-03-11T10:38:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "a5a71537a1f54b6c",
+      "intent_id": "int_0154",
+      "trans_id": "NCLFQG9F7B8154",
+      "occurred_at": "2026-03-11T10:38:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    },
+    {
+      "entry_id": "c8d3c4bb3a83a09c",
+      "intent_id": "int_0155",
+      "trans_id": "NCGPVDVH5P8155",
+      "occurred_at": "2026-03-11T10:39:05.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 25000
+        },
+        {
+          "account": "escrow",
+          "cents": -25000
+        }
+      ]
+    },
+    {
+      "entry_id": "b692d95b947b0ba6",
+      "intent_id": "int_0155",
+      "trans_id": "NCGPVDVH5P8155",
+      "occurred_at": "2026-03-11T10:39:05.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 25000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -24754
+        },
+        {
+          "account": "fee_income",
+          "cents": -212
+        },
+        {
+          "account": "vat_payable",
+          "cents": -34
+        }
+      ]
+    },
+    {
+      "entry_id": "52689c67a00f0aad",
+      "intent_id": "int_0157",
+      "trans_id": "TWOSHOTS001",
+      "occurred_at": "2026-03-11T11:02:06.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 12000
+        },
+        {
+          "account": "escrow",
+          "cents": -12000
+        }
+      ]
+    },
+    {
+      "entry_id": "e41faba7d363a3c8",
+      "intent_id": "int_0157",
+      "trans_id": "TWOSHOTS001",
+      "occurred_at": "2026-03-11T11:02:06.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 12000
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -11861
+        },
+        {
+          "account": "fee_income",
+          "cents": -120
+        },
+        {
+          "account": "vat_payable",
+          "cents": -19
+        }
+      ]
+    },
+    {
+      "entry_id": "8714de8ed0f24481",
+      "intent_id": "int_0014",
+      "trans_id": "NC4M68AB7H8091",
+      "occurred_at": "2026-03-11T12:10:00.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": -14706
+        },
+        {
+          "account": "escrow",
+          "cents": 14706
+        }
+      ]
+    },
+    {
+      "entry_id": "7f9eedb5f5fbc42c",
+      "intent_id": "int_0014",
+      "trans_id": "NC4M68AB7H8091",
+      "occurred_at": "2026-03-11T12:10:00.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": -14706
+        },
+        {
+          "account": "vendor_payable",
+          "cents": 14561
+        },
+        {
+          "account": "fee_income",
+          "cents": 125
+        },
+        {
+          "account": "vat_payable",
+          "cents": 20
+        }
+      ]
+    },
+    {
+      "entry_id": "216e600c68792a73",
+      "intent_id": "int_0156",
+      "trans_id": "FENCEEIGHT1",
+      "occurred_at": "2026-03-11T12:40:04.000Z",
+      "lines": [
+        {
+          "account": "cash",
+          "cents": 19900
+        },
+        {
+          "account": "escrow",
+          "cents": -19900
+        }
+      ]
+    },
+    {
+      "entry_id": "ef1b0e6a870280cd",
+      "intent_id": "int_0156",
+      "trans_id": "FENCEEIGHT1",
+      "occurred_at": "2026-03-11T12:40:04.000Z",
+      "lines": [
+        {
+          "account": "escrow",
+          "cents": 19900
+        },
+        {
+          "account": "vendor_payable",
+          "cents": -19704
+        },
+        {
+          "account": "fee_income",
+          "cents": -169
+        },
+        {
+          "account": "vat_payable",
+          "cents": -27
+        }
+      ]
+    }
+  ]
+}

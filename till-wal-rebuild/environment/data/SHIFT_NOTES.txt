@@ -1,0 +1,1 @@
+clear-prod-3 fell over around 18:00 EAT. Fence file still said 7, take that with salt. Tail never flushed. 882211 is not the 85 book. I keep mixing them up.
