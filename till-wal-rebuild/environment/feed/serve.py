@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Paginated nclog tail. Token in X-Nyota-Token, JSON pages of base64 bytes."""
-
 from __future__ import annotations
 
 import base64

@@ -1,3 +1,3 @@
-A plausible cheat is empty books that still sum to zero, or replaying the two WAL records and ignoring the inbox.
+Empty books that still sum to zero, or replaying only the two WAL records, will not match pinned intents, cash totals, till B fees, gzip nclog, comma amounts, or reject sources.
 
-Pinned intents, cash totals, till B fees, gzip nclog, comma amounts, and reject sources will not match if you skip the inbox or the feed. Balanced zeros fail the posted-entry checks. Hitting /v1/frames once without the token, or without following next, is not the tail.
+Hitting /v1/frames once, or without the token, is not the tail.

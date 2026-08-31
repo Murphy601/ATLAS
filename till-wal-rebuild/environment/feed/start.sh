@@ -1,5 +1,4 @@
 #!/bin/sh
-# Harbor replaces CMD with `sleep infinity` but keeps this ENTRYPOINT.
 python3 /opt/nyota-feed/serve.py >/tmp/nyota-feed.log 2>&1 &
 i=0
 while [ "$i" -lt 50 ]; do
