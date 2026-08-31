@@ -1,5 +1,5 @@
-NyotaClear till-journal rebuild after a torn WAL on clear-prod-3.
+Crash dump for the NyotaClear till writer on clear-prod-3.
 
-`environment/data` is a synthetic crash dump (132 intents, csv + jsonl + two length-prefixed binaries). `tests/golden/*.json` is the frozen output of `solution/settle.py` run against that dump; do not hand-edit the golden files — regenerate them from the solver if the corpus changes. Bulk STK rows stay on fence 7 and the fence-8 bump is late in `occurred_at` order so a higher fence does not mass-stale earlier records. Rebuild expiry only fires for intents that were never rejected, so pinned cases do not stack `stale_fence` and `timeout` on the same intent.
+I generated `environment/data` (132 intents, csv, jsonl, torn WAL, nclog). `tests/golden` is just `solution/settle.py` run against that dump and copied — if you change the dump, rerun the solver and replace the golden files, don't edit them by hand. STK bulk is fence 7; the fence 8 record is later in time on purpose so it doesn't stale everything that came before. Expiry at as_of only hits intents we never rejected, so you don't get stale_fence and timeout stacked on the same pinned case.
 
-`cheat/` is a probe, not part of the solver: `fake_balanced.py` writes a zeroed but schema-shaped ledger. The tests reject that without a full inbox replay.
+`cheat/fake_balanced.py` is me trying to game it: empty books that still look like the schema. Tests should fail that unless the inbox actually got replayed.
