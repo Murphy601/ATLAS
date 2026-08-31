@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 mkdir -p /logs/verifier
+chmod 700 /logs/verifier
 printf '0' > /logs/verifier/reward.txt
 set +e
 pytest /tests/test_ledger.py -q --ctrf /logs/verifier/ctrf.json

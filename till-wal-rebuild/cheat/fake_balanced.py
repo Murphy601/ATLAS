@@ -24,6 +24,7 @@ out.mkdir(parents=True, exist_ok=True)
     + "\n"
 )
 (out / "rejects.json").write_text(json.dumps({"rejects": []}, indent=2) + "\n")
+(out / "audit.ndjson").write_text("")
 (out / "summary.json").write_text(
     json.dumps(
         {
