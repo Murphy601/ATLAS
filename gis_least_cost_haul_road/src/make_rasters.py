@@ -39,7 +39,8 @@ def main():
         classes={str(c): dict(name=n, rgb=list(col), cost=cost) for c, (n, col, cost) in S.CLASSES.items()},
         culvert_cost=S.CULVERT_COST, crossing_radius=S.CROSSING_RADIUS,
         wetland_setback=S.WETLAND_SETBACK, heritage_radius=S.HERITAGE_RADIUS,
-        max_grade=S.MAX_GRADE, points_latlon=pts,
+        max_grade=S.MAX_GRADE, formation_width=S.FORMATION_WIDTH, steep_grade=S.STEEP_GRADE,
+        steep_run_max=S.STEEP_RUN_MAX, max_deflection_deg=S.MAX_DEFLECTION_DEG, points_latlon=pts,
     )
     (WORK / "brief_values.json").write_text(json.dumps(brief, indent=1))
     print(json.dumps(pts, indent=1))

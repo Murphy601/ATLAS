@@ -1,4 +1,4 @@
-"""Synthetic site definition for the Cedar Bluff haul road task.
+"""Synthetic site definition for the Cedar Bluff haul road task (Rev C).
 
 All geometry is authored here from analytic functions; nothing is derived
 from third-party data.  Local coordinates: x east, y north, metres, origin at
@@ -36,14 +36,26 @@ CROSSING_RADIUS = 30.0
 WETLAND_SETBACK = 30.0
 HERITAGE_RADIUS = 150.0
 MAX_GRADE = 10.0
+# C-003 haul-truck operating criteria (Rev C)
+FORMATION_WIDTH = 14.0          # limit of road, 7.0 m each side of the centreline
+STEEP_GRADE = 8.0               # moves steeper than this count towards a sustained run
+STEEP_RUN_MAX = 60.0            # max horizontal length of a sustained run
+MAX_DEFLECTION_DEG = 45.0       # max change of travel direction between consecutive moves
 
-# key points in UTM (authored); published to the brief as WGS84 lat/long
+# escarpment (Cedar Bluff) geometry, local metres
+ESC_H = 45.0
+ESC_W = 225.0
+CHUTE_Y, CHUTE_HALF, CHUTE_W = 1105.0, 40.0, 520.0
+GAP_Y, GAP_HALF, GAP_W = 1500.0, 90.0, 1000.0
+SPUR_Y, SPUR_GRADE, SPUR_FALL = 1805.0, 0.092, 0.35
+SLUMP_Y, SLUMP_HALF, SLUMP_W = 2600.0, 230.0, 700.0
+
 PTS_UTM = {
     "START": (583000 + 153.2, N0 + 402.6),     # county road tie-in
-    "END": (583000 + 3318.4, N0 + 2296.9),     # quarry plant gate
+    "END": (583000 + 3318.4, N0 + 1616.9),     # quarry plant gate
     "X1": (None, N0 + 2010.0),                 # crossing windows, x filled below
     "X2": (None, N0 + 880.0),
-    "HERITAGE": (583000 + 2511.9, N0 + 1501.9),
+    "HERITAGE": (None, N0 + GAP_Y + 1.9),
 }
 
 
@@ -51,39 +63,72 @@ def creek_x(y):
     return 1500.0 + 120.0 * np.sin(y / 450.0)
 
 
-def ridge_x(y):
-    return 2500.0 + 80.0 * np.sin(y / 600.0 + 1.0)
+def creek_lc_x(y):
+    # the mapped channel runs straight past wetland W-1 (reach X-1)
+    return np.where(np.abs(y - 2010.0) < 260.0, creek_x(2010.0), creek_x(y))
 
 
-def terrain_m(x, y):
+def toe_x(y):
+    return 2700.0 + 40.0 * np.sin(y / 520.0)
+
+
+def _smooth(u):
+    u = np.clip(u, 0.0, 1.0)
+    return u * u * (3.0 - 2.0 * u)
+
+
+def _lowland(x, y):
     z = 370.0 + 0.02 * x + 0.004 * y
-    # creek valley
     dx = x - creek_x(y)
     z -= 20.0 * np.exp(-(dx / 200.0) ** 2)
-    # ridge with a saddle near y = 1500, fading out to the north
-    dr = x - ridge_x(y)
-    h = 58.0 - 32.0 * np.exp(-((y - 1500.0) / 230.0) ** 2)
-    h *= 1.0 / (1.0 + np.exp((y - 2560.0) / 70.0))
-    z += h * np.exp(-(dr / 170.0) ** 2)
-    # quarry plateau east of the ridge
-    z += 18.0 / (1.0 + np.exp(-(x - 2900.0) / 120.0))
-    # knoll south-west
     z += 16.0 * np.exp(-(((x - 700.0) / 260.0) ** 2 + ((y - 1150.0) / 220.0) ** 2))
-    # gentle texture
     z += 2.2 * np.sin(x / 97.0 + 0.7) * np.cos(y / 131.0 - 0.3)
     z += 1.3 * np.sin((x + 2 * y) / 173.0 + 1.9)
     z += 0.35 * np.cos((3 * x - y) / 83.0 + 0.4)
     return z
 
 
-def _fill_crossings():
-    # offsets keep every DEM cell centre >= 1 m from the 30 m window boundary
+def _notch(z_face, x, y, yc, half, width, h):
+    """Re-entrant valley cut into the escarpment: gentler face of horizontal width `width`."""
+    z_in = h * _smooth((x - toe_x(y)) / width)
+    w = _smooth((np.abs(y - yc) - half) / 20.0)
+    return z_in + (z_face - z_in) * w
+
+
+def escarpment_rel(x, y):
+    h = ESC_H
+    z = h * _smooth((x - toe_x(y)) / ESC_W)
+    z = _notch(z, x, y, SLUMP_Y, SLUMP_HALF, SLUMP_W, h)
+    z = _notch(z, x, y, CHUTE_Y, CHUTE_HALF, CHUTE_W, h)
+    z = _notch(z, x, y, GAP_Y, GAP_HALF, GAP_W, h)
+    return z
+
+
+def terrain_m(x, y):
+    z = _lowland(x, y) + escarpment_rel(x, y)
+    # spur: a one-cell crest projecting west from the plateau at a constant grade
+    x_top = toe_x(SPUR_Y) + ESC_W
+    z_top = _lowland(x_top, SPUR_Y) + ESC_H
+    crest = z_top - SPUR_GRADE * (x_top - x)
+    spur = np.where(x <= x_top, crest - SPUR_FALL * np.abs(y - SPUR_Y), -np.inf)
+    return np.maximum(z, spur)
+
+
+def face_slope_pct(x, y, h=1.0):
+    gx = (terrain_m(x + h, y) - terrain_m(x - h, y)) / (2 * h)
+    gy = (terrain_m(x, y + h) - terrain_m(x, y - h)) / (2 * h)
+    return 100 * np.hypot(gx, gy)
+
+
+def _fill_points():
+    # offsets keep every DEM cell centre clear of the 30 m window boundary
     for k, off in (("X1", 2.9), ("X2", 2.25)):
         y = PTS_UTM[k][1] - N0
         PTS_UTM[k] = (583000 + float(creek_x(y)) + off, PTS_UTM[k][1])
+    PTS_UTM["HERITAGE"] = (583000 + float(toe_x(GAP_Y)) + 301.7, PTS_UTM["HERITAGE"][1])
 
 
-_fill_crossings()
+_fill_points()
 
 
 def landcover_codes():
@@ -93,53 +138,45 @@ def landcover_codes():
     cy = LC_UL_N - LC_CELL * (np.arange(LC_NY) + 0.5) - N0
     X, Y = np.meshgrid(cx, cy)
 
-    # cropland west of creek, south half
     crop = (X < 1150) & (Y < 1700) & (Y > 150) & ~((X > 500) & (X < 950) & (Y > 900) & (Y < 1400))
     lc[crop] = 2
-    # woodland: riparian band + ridge east flank + patch north-west
     ripar = np.abs(X - creek_x(Y)) < 210
     lc[ripar] = 3
     wood2 = ((X - 2150) / 260) ** 2 + ((Y - 700) / 380) ** 2 < 1
     lc[wood2] = 3
     wood3 = ((X - 700) / 350) ** 2 + ((Y - 2300) / 260) ** 2 < 1
     lc[wood3] = 3
-    # rock outcrop on ridge crest south and north of saddle
-    rdr = np.abs(X - ridge_x(Y))
-    rock = (rdr < 110) & (np.abs(Y - 1500) > 330) & (Y < 2450)
+    # rock outcrop on the steep bluff face
+    rock = (face_slope_pct(X, Y) > 18.0) & (X > 2400) & (np.abs(Y - SPUR_Y) > 20.0)
     lc[rock] = 4
-    rock2 = ((X - 2830) / 150) ** 2 + ((Y - 1900) / 120) ** 2 < 1
-    lc[rock2] = 4
-    # farmstead north-west of X1
     farm = (np.abs(X - 1150) < 50) & (np.abs(Y - 2140) < 40)
     lc[farm] = 8
 
-    # existing gravel track: polyline from county road to farmstead
     track = [(140, 420), (420, 700), (760, 1000), (980, 1560), (1060, 1900), (1150, 2090)]
     _burn_polyline(lc, X, Y, track, 5, halfwidth=11.0)
 
-    # watercourse: 4-connected rasterisation of the creek centreline
     for i in range(LC_NY):
         yc = cy[i]
-        xc = creek_x(yc)
+        xc = creek_lc_x(yc)
         j = int(np.floor((xc + E0 - LC_UL_E) / LC_CELL))
         lc[i, j] = 6
         if i > 0:
-            jp = int(np.floor((creek_x(cy[i - 1]) + E0 - LC_UL_E) / LC_CELL))
+            jp = int(np.floor((creek_lc_x(cy[i - 1]) + E0 - LC_UL_E) / LC_CELL))
             lo, hi = sorted((j, jp))
             lc[i, lo:hi + 1] = 6
-    # wetland on the west bank near X1, separated from the creek by one
-    # 20 m land-cover column of riparian woodland
+    # wetland on the west bank near X1, separated from the creek by two
+    # 20 m land-cover columns of riparian woodland
     for i in range(LC_NY):
         if not (WET_Y0 <= cy[i] <= WET_Y1):
             continue
         t = (cy[i] - 0.5 * (WET_Y0 + WET_Y1)) / (0.5 * (WET_Y1 - WET_Y0))
         width = max(1, int(round(WET_W * np.sqrt(max(0.0, 1 - t * t)))))
-        jc = int(np.nonzero(lc[i] == 6)[0].min())
-        lc[i, jc - 1 - width:jc - 1] = 7
+        jc = int(np.floor((creek_lc_x(cy[i]) + E0 - LC_UL_E) / LC_CELL))
+        lc[i, jc - WET_GAP - width:jc - WET_GAP] = 7
     return lc
 
 
-WET_Y0, WET_Y1, WET_W = 1830.0, 2190.0, 6
+WET_Y0, WET_Y1, WET_W, WET_GAP = 1830.0, 2190.0, 6, 2
 
 
 def _burn_polyline(lc, X, Y, pts, code, halfwidth):
@@ -161,5 +198,34 @@ def dem_dn():
     z_m = terrain_m(X, Y)
     z_ft = z_m / FT_US
     dn = np.round((z_ft - DN_BASE_FT) / DN_STEP_FT).astype(np.int64)
+    _clear_threshold_bands(dn)
     assert dn.min() > 0 and dn.max() < 65535, (dn.min(), dn.max())
     return dn.astype(np.uint16)
+
+
+def _clear_threshold_bands(dn, band=0.02):
+    """No neighbour move may grade within (T, T+band] of a published threshold, so rounding
+    conventions and foot definitions cannot flip a move across 8 % or 10 %."""
+    step_m = DN_STEP_FT * FT_US
+    for _ in range(50):
+        changed = False
+        ny, nx = dn.shape
+        for di, dj in ((0, 1), (1, 0), (1, 1), (1, -1)):
+            L = DEM_CELL * np.hypot(di, dj)
+            j0, j1 = max(0, -dj), nx - max(0, dj)
+            a = dn[0:ny - di, j0:j1]
+            b = dn[di:ny, j0 + dj:j1 + dj]
+            g = np.abs(b - a) * step_m / L * 100.0
+            bad = np.zeros(g.shape, bool)
+            for t in (STEEP_GRADE, MAX_GRADE):
+                bad |= (g > t) & (g <= t + band)
+            for i, j in zip(*np.nonzero(bad)):
+                ia, ja, ib, jb = i, j + j0, i + di, j + j0 + dj
+                if dn[ib, jb] >= dn[ia, ja]:
+                    dn[ib, jb] += 1
+                else:
+                    dn[ia, ja] += 1
+                changed = True
+        if not changed:
+            return
+    raise RuntimeError("threshold bands not cleared")
