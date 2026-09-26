@@ -1,62 +1,100 @@
 {
- "cost_usd": 2339944.0222752644,
- "length_m": 4921.442276647838,
- "n_vertices": 419,
- "max_grade_pct": 9.483169430188026,
+ "cost_usd": 2618855.936010009,
+ "length_m": 5513.401871576774,
+ "n_vertices": 455,
+ "max_grade_pct": 9.957327901697688,
+ "max_turn_deg": 45,
+ "max_steep_run_m": 56.568542494923804,
+ "wetland_clear_m": 650.5382386916237,
+ "heritage_clear_m": 317.93242785842494,
+ "crossing": "X-2",
+ "n_max": 3351475.0,
  "start": [
   583155.0,
   3349105.0
  ],
  "end": [
   586315.0,
-  3350995.0
+  3350315.0
  ],
  "start_elev_m": 374.5359410718821,
- "end_elev_m": 462.3459486918974,
+ "end_elev_m": 488.6746253492507,
  "len_by": {
   "Cultivated cropland": 215.0,
   "Existing gravel track": 876.1017305526668,
-  "Grassland / pasture": 3343.355697996829,
+  "Grassland / pasture": 3935.3152929257667,
   "Woodland": 466.98484809835236,
   "Watercourse": 20.0
  },
  "cost_by": {
   "Cultivated cropland": 103297.74955549902,
   "Existing gravel track": 143426.36762493197,
-  "Grassland / pasture": 1458033.3933632514,
-  "Woodland": 558532.8287242184,
-  "Watercourse": 76653.68300736614
+  "Grassland / pasture": 1736273.3817741438,
+  "Woodland": 559233.7101059811,
+  "Watercourse": 76624.72694945431
  },
  "band_len": [
-  2863.086578651013,
-  1570.660171779818,
-  223.13708498984806,
-  264.55844122715916
+  3321.49278298668,
+  1516.2236636408625,
+  358.7005768508843,
+  316.98484809834736
  ],
  "variants": [
   [
-   "Adopted route (all constraints)",
-   "2,339,944",
-   "4,921.4",
-   "X-2"
+   "Adopted route (all C-002 and C-003 criteria)",
+   "2,618,856",
+   "5,513.4",
+   "X-2",
+   "45",
+   "56.6"
   ],
   [
-   "Check: without 30 m wetland setback",
-   "1,989,674",
-   "4,664.3",
-   "X-1"
+   "Check: centreline only (14.0 m formation ignored)",
+   "2,453,681",
+   "5,477.4",
+   "X-1",
+   "45",
+   "56.6"
+  ],
+  [
+   "Check: 45 deg direction-change limit (T4) ignored",
+   "2,333,848",
+   "4,753.7",
+   "X-2",
+   "135",
+   "56.6"
+  ],
+  [
+   "Check: 60 m sustained-grade limit (T3) ignored",
+   "2,081,106",
+   "4,077.2",
+   "X-2",
+   "45",
+   "620.0"
+  ],
+  [
+   "Check: C-003 ignored entirely (Rev B rules only)",
+   "2,017,567",
+   "4,383.6",
+   "X-1",
+   "90",
+   "620.0"
   ],
   [
    "Check: without HS-1 exclusion",
-   "2,105,916",
-   "4,260.9",
-   "X-2"
+   "2,123,219",
+   "4,279.2",
+   "X-2",
+   "45",
+   "60.0"
   ],
   [
-   "Check: Rev A woodland rate 690 USD/m",
-   "2,191,398",
-   "4,921.4",
-   "X-2"
+   "Check: without 30 m wetland setback",
+   "2,407,754",
+   "5,465.7",
+   "X-1",
+   "45",
+   "56.6"
   ]
  ]
 }
