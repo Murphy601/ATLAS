@@ -1,12 +1,26 @@
 {
- "cost_usd": 2618855.936010009,
- "length_m": 5513.401871576774,
- "n_vertices": 455,
- "max_grade_pct": 9.957327901697688,
+ "cost_usd": 3110903.742836715,
+ "constr_usd": 2926731.022491273,
+ "haul_usd": 184172.7203454416,
+ "loaded_rise_m": 23.0215900431802,
+ "min_k": 1.4270988482273401,
+ "min_tangent_m": 40.0,
+ "start_tangent_m": 30.0,
+ "end_tangent_m": 183.84776310849793,
+ "n_deflections": 33,
+ "max_adverse_loaded_pct": 5.883875578276053,
+ "max_rise_pct": 9.978880559493343,
+ "g1_utm": [
+  586454.9009028933,
+  3350102.4996742546
+ ],
+ "length_m": 5974.528855298846,
+ "n_vertices": 492,
+ "max_grade_pct": 9.978880559493343,
  "max_turn_deg": 45,
  "max_steep_run_m": 56.568542494923804,
- "wetland_clear_m": 650.5382386916237,
- "heritage_clear_m": 317.93242785842494,
+ "wetland_clear_m": 664.6803743153547,
+ "heritage_clear_m": 453.60542083404675,
  "crossing": "X-2",
  "n_max": 3351475.0,
  "start": [
@@ -14,87 +28,191 @@
   3349105.0
  ],
  "end": [
-  586315.0,
-  3350315.0
+  586455.0,
+  3350105.0
  ],
  "start_elev_m": 374.5359410718821,
- "end_elev_m": 488.6746253492507,
+ "end_elev_m": 484.96824993649983,
  "len_by": {
-  "Cultivated cropland": 215.0,
-  "Existing gravel track": 876.1017305526668,
-  "Grassland / pasture": 3935.3152929257667,
-  "Woodland": 466.98484809835236,
+  "Cultivated cropland": 632.2792206135786,
+  "Existing gravel track": 573.2590180780453,
+  "Grassland / pasture": 4215.081886954618,
+  "Woodland": 533.9087296526043,
   "Watercourse": 20.0
  },
  "cost_by": {
-  "Cultivated cropland": 103297.74955549902,
-  "Existing gravel track": 143426.36762493197,
-  "Grassland / pasture": 1736273.3817741438,
-  "Woodland": 559233.7101059811,
-  "Watercourse": 76624.72694945431
+  "Cultivated cropland": 303815.9867784396,
+  "Existing gravel track": 92731.04651095942,
+  "Grassland / pasture": 1865786.291377952,
+  "Woodland": 587744.0148165559,
+  "Watercourse": 76653.68300736614
  },
  "band_len": [
-  3321.49278298668,
-  1516.2236636408625,
-  358.7005768508843,
-  316.98484809834736
+  3865.756851698599,
+  1483.0865786510117,
+  316.98484809834827,
+  308.70057685088705
  ],
  "variants": [
   [
-   "Adopted route (all C-002 and C-003 criteria)",
-   "2,618,856",
-   "5,513.4",
+   "Adopted route (all C-002, C-003 and C-004 criteria)",
+   "3,110,904",
+   "5,974.5",
+   "492",
    "X-2",
-   "45",
-   "56.6"
+   "5.88",
+   "1.43",
+   "40.0"
   ],
   [
-   "Check: centreline only (14.0 m formation ignored)",
-   "2,453,681",
-   "5,477.4",
-   "X-1",
-   "45",
-   "56.6"
+   "Check: D3 loaded adverse limit ignored (or 9.0 % read as grade)",
+   "3,079,905",
+   "5,966.2",
+   "492",
+   "X-2",
+   "8.11",
+   "1.43",
+   "40.0"
+  ],
+  [
+   "Check: D5 vertical curvature ignored",
+   "3,108,097",
+   "5,962.8",
+   "490",
+   "X-2",
+   "5.88",
+   "1.35",
+   "40.0"
+  ],
+  [
+   "Check: D6 curve radius ignored",
+   "3,037,459",
+   "5,988.1",
+   "483",
+   "X-2",
+   "5.49",
+   "1.40",
+   "10.0"
+  ],
+  [
+   "Check: D6 with R tan(22.5) between deflections",
+   "3,050,379",
+   "5,997.4",
+   "486",
+   "X-2",
+   "5.49",
+   "1.40",
+   "20.0"
+  ],
+  [
+   "Check: D7 haulage ignored (construction cost only)",
+   "2,890,615",
+   "6,058.4",
+   "495",
+   "X-2",
+   "5.49",
+   "1.44",
+   "40.0"
+  ],
+  [
+   "Check: D7 rise charged in chainage direction",
+   "3,967,261",
+   "5,982.8",
+   "492",
+   "X-2",
+   "5.88",
+   "1.43",
+   "40.0"
+  ],
+  [
+   "Check: D7 threshold 4.0 % read as grade (no rolling resistance)",
+   "2,964,315",
+   "6,094.9",
+   "497",
+   "X-2",
+   "5.49",
+   "1.44",
+   "40.0"
+  ],
+  [
+   "Check: D7 threshold ignored (every loaded rise charged)",
+   "3,131,810",
+   "5,974.5",
+   "492",
+   "X-2",
+   "5.88",
+   "1.43",
+   "40.0"
+  ],
+  [
+   "Check: G1 at superseded Rev C position",
+   "2,890,113",
+   "5,623.7",
+   "471",
+   "X-2",
+   "5.88",
+   "1.44",
+   "40.0"
+  ],
+  [
+   "Check: EPSG:2277 read as international feet",
+   "3,274,997",
+   "6,401.1",
+   "533",
+   "X-2",
+   "5.88",
+   "1.43",
+   "40.0"
+  ],
+  [
+   "Check: G1 surface coordinates used as grid (SAF ignored)",
+   "2,862,024",
+   "5,552.4",
+   "456",
+   "X-2",
+   "5.88",
+   "1.43",
+   "40.0"
+  ],
+  [
+   "Check: C-004 ignored entirely (Rev C rules)",
+   "2,618,852",
+   "5,513.4",
+   "455",
+   "X-2",
+   "8.14",
+   "1.19",
+   "10.0"
   ],
   [
    "Check: 45 deg direction-change limit (T4) ignored",
-   "2,333,848",
-   "4,753.7",
+   "2,976,243",
+   "5,738.0",
+   "470",
    "X-2",
-   "135",
-   "56.6"
+   "5.75",
+   "1.45",
+   "40.0"
   ],
   [
    "Check: 60 m sustained-grade limit (T3) ignored",
-   "2,081,106",
-   "4,077.2",
+   "2,567,344",
+   "4,621.3",
+   "401",
    "X-2",
-   "45",
-   "620.0"
-  ],
-  [
-   "Check: C-003 ignored entirely (Rev B rules only)",
-   "2,017,567",
-   "4,383.6",
-   "X-1",
-   "90",
-   "620.0"
+   "5.73",
+   "1.73",
+   "40.0"
   ],
   [
    "Check: without HS-1 exclusion",
-   "2,123,219",
-   "4,279.2",
+   "2,217,326",
+   "4,000.9",
+   "346",
    "X-2",
-   "45",
-   "60.0"
-  ],
-  [
-   "Check: without 30 m wetland setback",
-   "2,407,754",
-   "5,465.7",
-   "X-1",
-   "45",
-   "56.6"
+   "5.73",
+   "1.52",
+   "40.0"
   ]
  ]
 }
