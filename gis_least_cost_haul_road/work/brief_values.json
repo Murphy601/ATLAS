@@ -1,0 +1,114 @@
+{
+ "epsg": 32614,
+ "dem_file": "CB-DEM-10m_heightmap_uint16.png",
+ "lc_file": "CB-LC-20m_landcover.png",
+ "dem_ul_e": 583000.0,
+ "dem_ul_n": 3351500.0,
+ "dem_cell": 10.0,
+ "lc_ul_e": 582900.0,
+ "lc_ul_n": 3351620.0,
+ "lc_cell": 20.0,
+ "dn_base_ft": 1150.0,
+ "dn_step_ft": 0.01,
+ "classes": {
+  "1": {
+   "name": "Grassland / pasture",
+   "rgb": [
+    201,
+    222,
+    150
+   ],
+   "cost": 420.0
+  },
+  "2": {
+   "name": "Cultivated cropland",
+   "rgb": [
+    240,
+    214,
+    120
+   ],
+   "cost": 480.0
+  },
+  "3": {
+   "name": "Woodland",
+   "rgb": [
+    86,
+    140,
+    72
+   ],
+   "cost": 940.0
+  },
+  "4": {
+   "name": "Rock outcrop",
+   "rgb": [
+    168,
+    150,
+    140
+   ],
+   "cost": 1150.0
+  },
+  "5": {
+   "name": "Existing gravel track",
+   "rgb": [
+    120,
+    72,
+    40
+   ],
+   "cost": 160.0
+  },
+  "6": {
+   "name": "Watercourse",
+   "rgb": [
+    60,
+    120,
+    220
+   ],
+   "cost": null
+  },
+  "7": {
+   "name": "Wetland",
+   "rgb": [
+    150,
+    200,
+    210
+   ],
+   "cost": null
+  },
+  "8": {
+   "name": "Farmstead / structures",
+   "rgb": [
+    220,
+    60,
+    60
+   ],
+   "cost": null
+  }
+ },
+ "culvert_cost": 3800.0,
+ "crossing_radius": 30.0,
+ "wetland_setback": 30.0,
+ "heritage_radius": 150.0,
+ "max_grade": 10.0,
+ "points_latlon": {
+  "START": [
+   30.2707418,
+   -98.1355013
+  ],
+  "END": [
+   30.287613,
+   -98.1024422
+  ],
+  "X1": [
+   30.2851604,
+   -98.1225516
+  ],
+  "X2": [
+   30.2749484,
+   -98.1202827
+  ],
+  "HERITAGE": [
+   30.2804968,
+   -98.1108923
+  ]
+ }
+}

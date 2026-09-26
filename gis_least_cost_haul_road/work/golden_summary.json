@@ -1,0 +1,62 @@
+{
+ "cost_usd": 2339944.0222752644,
+ "length_m": 4921.442276647838,
+ "n_vertices": 419,
+ "max_grade_pct": 9.483169430188026,
+ "start": [
+  583155.0,
+  3349105.0
+ ],
+ "end": [
+  586315.0,
+  3350995.0
+ ],
+ "start_elev_m": 374.5359410718821,
+ "end_elev_m": 462.3459486918974,
+ "len_by": {
+  "Cultivated cropland": 215.0,
+  "Existing gravel track": 876.1017305526668,
+  "Grassland / pasture": 3343.355697996829,
+  "Woodland": 466.98484809835236,
+  "Watercourse": 20.0
+ },
+ "cost_by": {
+  "Cultivated cropland": 103297.74955549902,
+  "Existing gravel track": 143426.36762493197,
+  "Grassland / pasture": 1458033.3933632514,
+  "Woodland": 558532.8287242184,
+  "Watercourse": 76653.68300736614
+ },
+ "band_len": [
+  2863.086578651013,
+  1570.660171779818,
+  223.13708498984806,
+  264.55844122715916
+ ],
+ "variants": [
+  [
+   "Adopted route (all constraints)",
+   "2,339,944",
+   "4,921.4",
+   "X-2"
+  ],
+  [
+   "Check: without 30 m wetland setback",
+   "1,989,674",
+   "4,664.3",
+   "X-1"
+  ],
+  [
+   "Check: without HS-1 exclusion",
+   "2,105,916",
+   "4,260.9",
+   "X-2"
+  ],
+  [
+   "Check: Rev A woodland rate 690 USD/m",
+   "2,191,398",
+   "4,921.4",
+   "X-2"
+  ]
+ ]
+}
