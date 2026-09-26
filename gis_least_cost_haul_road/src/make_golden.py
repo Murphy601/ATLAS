@@ -306,6 +306,7 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
         "exact optimum; the end state is accepted only if the last tangent is at least 18.64 m.",
     ]:
         S.append(Paragraph(p, body)); S.append(Spacer(1, 2.5))
+    S.pop()
     S.append(PageBreak())
     rt = [["Item applied", "Value"],
           ["Grassland / pasture; cultivated cropland", "420 / 480 USD/m"],
@@ -323,8 +324,9 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
           ["Grade factor f(g)", "1.00 (g<=3); 1.00+0.05(g-3) (3<g<=6); 1.15+0.12(g-6) (6<g<=10)"]]
     t = Table(rt, colWidths=[125 * mm, 140 * mm]); t.setStyle(ts)
     S.append(Paragraph("Rates and constraint values applied (C-002, C-003, C-004 Rev D)", h2)); S.append(t)
+    S.append(PageBreak())
     S.append(Paragraph("3. Plan and long section", h2))
-    S.append(RLImage(str(figs[0]), width=150 * mm, height=112 * mm))
+    S.append(RLImage(str(figs[0]), width=180 * mm, height=134 * mm))
     S.append(PageBreak())
     S.append(RLImage(str(figs[1]), width=260 * mm, height=85 * mm))
     S.append(Paragraph("4. Breakdown", h2))

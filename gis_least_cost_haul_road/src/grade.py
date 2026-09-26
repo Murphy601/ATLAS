@@ -109,7 +109,7 @@ RUBRIC = [
     ("R15", 5, f"The PDF report states a route length in cultivated cropland of {G['crop']:,.1f} m (+/- 0.2 percent)."),
     ("R16", 1, f"The PDF report states a maximum route grade of {G['max_rise']:.2f} percent (+/- 0.02 percentage points)."),
     ("R17", 1, "The PDF report states that the route climbs the escarpment by the northern slump, reaching "
-               "N 3 351 475 (+/- 25 m) before returning south along the plateau to G1."),
+               f"N {_sp(G['n_max'], '.0f')} (+/- 25 m) before returning south along the plateau to G1."),
     ("R18", 1, "The GeoPackage centreline has a vertex within 30 m of E 584 613.5, N 3 349 580.0 (EPSG:32614), the "
                "centre of approved crossing window X-2."),
     ("C1", 5, "No row of the CSV vertex table has grade_to_next_pct below -6.00 (no move climbed by loaded trucks, "
