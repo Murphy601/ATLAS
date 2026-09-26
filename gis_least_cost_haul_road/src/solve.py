@@ -308,6 +308,23 @@ def check_path(res, opts=None):
     return dict(max_grade=float(np.abs(g).max()), max_turn_deg=45 * max(turns), max_steep_run=run_max)
 
 
+def clearances(res):
+    """Minimum centreline-segment distance to the wetland boundary and to the HS-1 point (m)."""
+    cell = BRIEF["dem_cell"]
+    P = res["path"]
+    A = np.array([(res["EX"][p], res["EY"][p]) for p in P[:-1]])
+    B = np.array([(res["EX"][p], res["EY"][p]) for p in P[1:]])
+    wi, wj = np.nonzero(res["lcd"] == 7)
+    wet = np.inf
+    for i, j in zip(wi, wj):
+        cx, cy = res["EX"][i, j], res["EY"][i, j]
+        d = _seg_box_dist(A[:, 0], A[:, 1], B[:, 0], B[:, 1], cx - cell / 2, cx + cell / 2, cy - cell / 2, cy + cell / 2)
+        wet = min(wet, float(d.min()))
+    h = res["pts"]["HERITAGE"]
+    her = float(_seg_point_dist(A[:, 0], A[:, 1], B[:, 0], B[:, 1], h[0], h[1]).min())
+    return dict(wetland_m=wet, heritage_m=her)
+
+
 def xing(rows):
     xs = [x for x in rows if x["landcover"] == "Watercourse"]
     if not xs:

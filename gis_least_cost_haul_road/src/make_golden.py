@@ -34,6 +34,12 @@ def main():
     rows, L = SV.summarise(res)
     cost = res["cost"]
     g = np.array([r["grade_pct"] for r in rows[:-1]])
+    chk = SV.check_path(res)
+    clr = SV.clearances(res)
+    assert chk["max_grade"] <= b["max_grade"] and chk["max_turn_deg"] <= b["max_deflection_deg"]
+    assert chk["max_steep_run"] <= b["steep_run_max"] + 1e-9
+    half = b["formation_width"] / 2
+    assert clr["wetland_m"] - half >= b["wetland_setback"] and clr["heritage_m"] - half >= b["heritage_radius"]
 
     with open(OUT / CSVF, "w", newline="") as f:
         w = csv.writer(f)
@@ -47,7 +53,7 @@ def main():
     line = LineString([(r["easting"], r["northing"]) for r in rows])
     gdf = gpd.GeoDataFrame(
         dict(route_id=["CB-HR-01"], length_m=[round(L, 2)], cost_usd=[round(cost, 2)],
-             max_grade_pct=[round(float(np.abs(g).max()), 3)], crossing=["X-2"]),
+             max_grade_pct=[round(float(np.abs(g).max()), 3)], crossing=[SV.xing(rows)]),
         geometry=[line], crs=f"EPSG:{b['epsg']}")
     (OUT / GPKG).unlink(missing_ok=True)
     gdf.to_file(OUT / GPKG, layer="centreline", driver="GPKG")
@@ -68,30 +74,30 @@ def main():
                 for lo, hi in bands]
 
     variants = [
-        ("Adopted route (all constraints)", {}),
-        ("Check: without 30 m wetland setback", {"no_setback": True}),
+        ("Adopted route (all C-002 and C-003 criteria)", {}),
+        ("Check: centreline only (14.0 m formation ignored)", {"no_width": True}),
+        ("Check: 45 deg direction-change limit (T4) ignored", {"no_turn": True}),
+        ("Check: 60 m sustained-grade limit (T3) ignored", {"no_sustain": True}),
+        ("Check: C-003 ignored entirely (Rev B rules only)", {"no_width": True, "no_turn": True, "no_sustain": True}),
         ("Check: without HS-1 exclusion", {"no_heritage": True}),
-        ("Check: Rev A woodland rate 690 USD/m", "revA"),
+        ("Check: without 30 m wetland setback", {"no_setback": True}),
     ]
     var_rows = []
     for name, o in variants:
-        if o == "revA":
-            keep = SV.BRIEF["classes"]["3"]["cost"]
-            SV.BRIEF["classes"]["3"]["cost"] = 690.0
-            rr = SV.solve({})
-            SV.BRIEF["classes"]["3"]["cost"] = keep
-        else:
-            rr = SV.solve(o)
+        rr = SV.solve(o)
         rws, LL = SV.summarise(rr)
-        xw = [x for x in rws if x["landcover"] == "Watercourse"][0]
-        xname = "X-2" if xw["northing"] < 3350200 else "X-1"
-        var_rows.append([name, f"{rr['cost']:,.0f}", f"{LL:,.1f}", xname])
+        cp = SV.check_path(rr)
+        var_rows.append([name, f"{rr['cost']:,.0f}", f"{LL:,.1f}", SV.xing(rws),
+                         f"{cp['max_turn_deg']:.0f}", f"{cp['max_steep_run']:.1f}"])
     only_x1 = SV.solve({"drop_X2": True})
     assert only_x1 is None
 
     figs = plan_and_profile(res, rows)
-    write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs)
+    write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, clr, res["pts"])
     summary = dict(cost_usd=cost, length_m=L, n_vertices=len(rows), max_grade_pct=float(np.abs(g).max()),
+                   max_turn_deg=chk["max_turn_deg"], max_steep_run_m=float(chk["max_steep_run"]),
+                   wetland_clear_m=clr["wetland_m"], heritage_clear_m=clr["heritage_m"],
+                   crossing=SV.xing(rows), n_max=max(r["northing"] for r in rows),
                    start=[rows[0]["easting"], rows[0]["northing"]], end=[rows[-1]["easting"], rows[-1]["northing"]],
                    start_elev_m=rows[0]["elev_m"], end_elev_m=rows[-1]["elev_m"],
                    len_by=len_by, cost_by=cost_by, band_len=band_len, variants=var_rows)
@@ -140,14 +146,20 @@ def plan_and_profile(res, rows):
     fig, ax = plt.subplots(figsize=(11, 3.6))
     ch = [r["chainage_m"] for r in rows]; el = [r["elev_m"] for r in rows]
     ax.plot(ch, el, "k", lw=1.2)
+    for a, c in zip(rows[:-1], rows[1:]):
+        if abs(a["grade_pct"]) > b["steep_grade"]:
+            ax.axvspan(a["chainage_m"], c["chainage_m"], color="orange", alpha=0.5, lw=0)
+    ax.plot([], [], color="orange", lw=6, alpha=0.5, label="moves steeper than 8.0 % (each run <= 60.0 m)")
+    ax.legend(loc="upper left", fontsize=8)
     ax.set_xlabel("Chainage (m)"); ax.set_ylabel("Elevation (m, NAVD 88)"); ax.grid(alpha=0.4)
     ax.set_title("Long section along adopted centreline (terrain at DEM cell centres)")
     fig.tight_layout(); f2 = WORK / "golden_profile.png"; fig.savefig(f2, dpi=170); plt.close(fig)
     return f1, f2
 
 
-def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs):
+def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, clr, pts):
     b = SV.BRIEF
+    half = b["formation_width"] / 2
     ss = getSampleStyleSheet()
     body = ss["BodyText"]; body.fontSize = 9.5; body.leading = 12.5
     h1, h2 = ss["Heading1"], ss["Heading2"]
@@ -158,50 +170,56 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs):
                      ("FONTSIZE", (0, 0), (-1, -1), 9), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
     S = []
     S.append(Paragraph("Cedar Bluff Quarry Haul Road - Least-Cost Route Report (route CB-HR-01)", h1))
-    S.append(Paragraph("Basis: drawing CB-HR C-001/C-002 Rev B and the two rasters it registers. "
+    S.append(Paragraph("Basis: drawing set CB-HR C-001 to C-003 Rev C and the two rasters it registers. "
                        "Horizontal CRS WGS 84 / UTM zone 14N (EPSG:32614); lengths are horizontal. "
                        "Status: route study only, not for construction.", body))
     S.append(Spacer(1, 4))
     S.append(Paragraph("1. Result", h2))
     x2 = [r for r in rows if r["landcover"] == "Watercourse"]
+    top = max(rows, key=lambda r: r["northing"])
     res_tab = [
         ["Quantity", "Value"],
         ["Total accumulated route cost (USD)", f"{cost:,.2f}"],
         ["Horizontal length, start cell centre to end cell centre (m)", f"{L:,.2f}"],
-        ["Vertices (DEM cell centres) / moves", f"{len(rows)} / {len(rows) - 1}  ({sum(1 for a, c in zip(rows, rows[1:]) if a['easting'] != c['easting'] and a['northing'] != c['northing'])} diagonal)"],
+        ["Vertices (DEM cell centres) / moves", f"{len(rows)} / {len(rows) - 1}"],
         ["Start cell centre (T1 on CR-114)", f"E {rows[0]['easting']:.2f}  N {rows[0]['northing']:.2f}  z {rows[0]['elev_m']:.2f} m"],
         ["End cell centre (G1 quarry gate)", f"E {rows[-1]['easting']:.2f}  N {rows[-1]['northing']:.2f}  z {rows[-1]['elev_m']:.2f} m"],
-        ["Creek crossing", f"Approved window X-2, culvert on 2 watercourse cells at N {x2[0]['northing']:.0f} "
-                           f"(E {x2[0]['easting']:.0f} to {x2[-1]['easting']:.0f})"],
-        ["Maximum grade on any move (limit 10.0 %)", f"{np.abs(g).max():.2f} % (uphill towards G1); steepest downhill {g.min():.2f} %"],
-        ["Northernmost point (route passes round the north end of Cedar Bluff Ridge)",
-         f"E {max(rows, key=lambda r: r['northing'])['easting']:.0f}  N {max(r['northing'] for r in rows):.0f}"],
-        ["Closest approach to HS-1 recorded point (exclusion 150 m)",
-         f"{min(np.hypot(r['easting'] - 585511.9, r['northing'] - 3350201.9) for r in rows):.0f} m"],
+        ["Creek crossing", f"Approved window {SV.xing(rows)}, culvert on {len(x2)} watercourse cells at N {x2[0]['northing']:.0f}"],
+        ["Crossing through the other window (X-1)", "None compliant: no route exists through X-1 (Section 5)"],
+        ["Maximum grade on any move (T1 limit 10.0 %)", f"{chk['max_grade']:.2f} %"],
+        ["Longest continuous run of moves > 8.0 % (T3 limit 60.0 m)", f"{chk['max_steep_run']:.1f} m"],
+        ["Largest change of direction between moves (T4 limit 45 deg)", f"{chk['max_turn_deg']:.0f} deg"],
+        ["Escarpment ascent", f"northern slump; route reaches N {top['northing']:.0f} at E {top['easting']:.0f}, "
+                              f"then returns south along the plateau to G1"],
+        ["Min. distance centreline to wetland W-1 boundary / formation edge",
+         f"{clr['wetland_m']:.1f} m / {clr['wetland_m'] - half:.1f} m (limit 30.0 m)"],
+        ["Min. distance centreline to HS-1 / formation edge", f"{clr['heritage_m']:.1f} m / {clr['heritage_m'] - half:.1f} m (limit 150.0 m)"],
     ]
     t = Table(res_tab, colWidths=[120 * mm, 140 * mm]); t.setStyle(ts); S.append(t)
-    S.append(Spacer(1, 6))
+    S.append(PageBreak())
     S.append(Paragraph("2. Method", h2))
     for p in [
-        "<b>Terrain.</b> DEM DN converted to elevation with Elevation(ft) = 1150.00 + 0.01 x DN (Table 1), then to metres "
-        "with the US survey foot (1 ft = 1200/3937 m). The drawing's vertical unit is feet while the grid is in metres; "
-        "without the conversion every grade is 3.28 times too large and no route under 10 % exists.",
-        "<b>Georeferencing.</b> Both rasters are pixel-is-area with the upper-left corner of the upper-left pixel as registered "
-        "on C-002 Table 1. DEM cell centres are at E 583 005 + 10i, N 3 351 495 - 10j. The land-cover raster has its own "
-        "origin (E 582 900, N 3 351 620) and 20 m pixels; its edges coincide with DEM cell edges, so each land-cover pixel covers "
-        "exactly 2 x 2 DEM cells, and each DEM cell takes the class of the land-cover pixel containing its centre. "
-        "Colours were matched on exact RGB (every pixel matched one of the 8 classes).",
-        "<b>Control points.</b> Table 3 WGS 84 lat/long converted to EPSG:32614 with PROJ (pyproj). "
-        "T1 -> E 583 153.23, N 3 349 102.62 (cell centre E 583 155, N 3 349 105); "
-        "G1 -> E 586 318.42, N 3 350 996.91 (cell centre E 586 315, N 3 350 995).",
-        "<b>Constraints.</b> Prohibited: wetland, farmstead, and watercourse cells except those whose centre is within 30.0 m of "
-        "X-1 or X-2 (costed at 3 800 USD/m); every cell whose centre is within 30.0 m of the mapped wetland boundary (the edges of "
-        "the wetland pixels); every cell whose centre is within 150.0 m of HS-1. Woodland at the Rev B rate of 940 USD/m.",
-        "<b>Search.</b> Dijkstra accumulated-cost search on the 10 m DEM grid, 8-connected (queen's case). A move of horizontal "
-        "length d (10 m or 14.142 m) between cells i and j costs d x (c_i + c_j)/2 x f(g), where g = |z_j - z_i| / d is the grade "
-        "along that move and f is the brief's grade factor; any move with g above 10.0 % is not allowed. Grade therefore depends on "
-        "the direction of travel: a hillside too steep to climb straight up can still be traversed on the diagonal. A single "
-        "isotropic terrain-slope raster does not model this and gives a different route.",
+        "<b>Terrain.</b> DEM DN converted with Elevation(ft) = 1150.00 + 0.01 x DN (C-002 Table 1), then to metres with the US "
+        "survey foot (1200/3937 m). Grades use metres on both axes.",
+        "<b>Georeferencing.</b> Both rasters are pixel-is-area with the registered upper-left corner. DEM cell centres are at "
+        "E 583 005 + 10i, N 3 351 495 - 10j. The land-cover raster has its own origin (E 582 900, N 3 351 620) and 20 m pixels; "
+        "each DEM cell takes the class of the land-cover pixel containing its centre (exact RGB match).",
+        f"<b>Control points.</b> Table 3 WGS 84 lat/long converted to EPSG:32614 with PROJ. "
+        f"T1 -> E {pts['START'][0]:,.2f}, N {pts['START'][1]:,.2f}; G1 (relocated at Rev C) -> E {pts['END'][0]:,.2f}, "
+        f"N {pts['END'][1]:,.2f}; HS-1 -> E {pts['HERITAGE'][0]:,.2f}, N {pts['HERITAGE'][1]:,.2f}.",
+        f"<b>Road footprint (C-003).</b> The road is the full formation of Section A-A: 1.00 + 1.00 + 10.00 + 1.00 + 1.00 = "
+        f"{b['formation_width']:.2f} m, i.e. {half:.2f} m either side of the centreline. Per C-003 Note C1 the wetland setback and "
+        f"HS-1 exclusion are measured to the formation edge along every straight move, so a move is allowed only if its centreline "
+        f"segment stays more than {b['wetland_setback'] + half:.1f} m from every wetland pixel and more than "
+        f"{b['heritage_radius'] + half:.1f} m from HS-1. The crossing-window test (Note 3) stays on cell centres (Note C2).",
+        "<b>Haul truck criteria (C-003 Table 4).</b> T1: every move at most 10.0 %. T2/T3: a move steeper than 8.0 % is a steep "
+        "move; consecutive steep moves may total at most 60.0 m horizontal; any move at 8.0 % or flatter resets the run. "
+        "T4: direction may change by at most 45 deg between consecutive moves (the first move is free).",
+        "<b>Search.</b> T3 and T4 depend on the path taken, so a cell-only Dijkstra cannot enforce them. The search runs on an "
+        "expanded state (cell, arrival heading 1 of 8, steep run so far in 10 m steps); a move is expanded only if its heading "
+        "is within one octant of the arrival heading and the updated run is within 60 m. A move of horizontal length d between "
+        "cells i and j costs d x (c_i + c_j)/2 x f(g), g = |z_j - z_i| / d, with the brief's grade factor. The best of the "
+        "arrival states at the G1 cell is taken.",
     ]:
         S.append(Paragraph(p, body)); S.append(Spacer(1, 3))
     rt = [["Item applied", "Value"],
@@ -209,21 +227,26 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs):
           ["Woodland (Rev B; Rev A 690 withdrawn)", "940 USD/m"], ["Rock outcrop", "1,150 USD/m"],
           ["Existing gravel track", "160 USD/m"], ["Watercourse cell within 30.0 m of X-1 / X-2 centre (culvert)", "3,800 USD/m"],
           ["Watercourse elsewhere, wetland, farmstead", "prohibited"],
-          ["Wetland W-1 setback from mapped boundary", "30.0 m, prohibited"],
-          ["HS-1 exclusion radius", "150.0 m, prohibited"], ["Maximum grade on any move", "10.0 %"],
+          ["Formation width (C-003 Section A-A)", f"{b['formation_width']:.1f} m ({half:.1f} m each side)"],
+          ["Wetland W-1 setback, to formation edge", "30.0 m"],
+          ["HS-1 exclusion radius, to formation edge", "150.0 m"],
+          ["Maximum grade on any move (T1)", "10.0 %"],
+          ["Steep-move threshold / max continuous steep run (T2, T3)", "> 8.0 % / 60.0 m"],
+          ["Max change of direction between consecutive moves (T4)", "45 deg"],
           ["Grade factor f(g)", "1.00 (g<=3); 1.00+0.05(g-3) (3<g<=6); 1.15+0.12(g-6) (6<g<=10)"]]
     t = Table(rt, colWidths=[120 * mm, 140 * mm]); t.setStyle(ts)
-    S.append(Paragraph("Rates and constraint values applied (C-002 Rev B)", h2)); S.append(t)
+    S.append(Paragraph("Rates and constraint values applied (C-002 Rev C, C-003 Rev C)", h2)); S.append(t)
     S.append(PageBreak())
     S.append(Paragraph("3. Plan and long section", h2))
     S.append(RLImage(str(figs[0]), width=190 * mm, height=141 * mm))
     S.append(PageBreak())
     S.append(RLImage(str(figs[1]), width=260 * mm, height=85 * mm))
     S.append(Paragraph("4. Breakdown", h2))
-    order = ["Grassland / pasture", "Cultivated cropland", "Woodland", "Existing gravel track", "Watercourse"]
+    order = ["Grassland / pasture", "Cultivated cropland", "Woodland", "Rock outcrop", "Existing gravel track", "Watercourse"]
     bt = [["Land-cover class", "Length (m)", "Cost (USD)"]]
     for k in order:
-        bt.append([k if k != "Watercourse" else "Watercourse at X-2 (culvert)", f"{len_by[k]:,.1f}", f"{cost_by[k]:,.0f}"])
+        if len_by.get(k, 0) > 0:
+            bt.append([k if k != "Watercourse" else "Watercourse at X-2 (culvert)", f"{len_by[k]:,.1f}", f"{cost_by[k]:,.0f}"])
     bt.append(["Total", f"{sum(len_by.values()):,.1f}", f"{sum(cost_by.values()):,.0f}"])
     t = Table(bt, colWidths=[80 * mm, 35 * mm, 40 * mm]); t.setStyle(ts); S.append(t)
     S.append(Paragraph("Each move's length is split equally between its two end cells; its cost is split in proportion to the "
@@ -231,27 +254,37 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs):
     gt = [["Grade band (abs)", "0-3 %", "3-6 %", "6-8 %", "8-10 %"], ["Length (m)"] + [f"{v:,.1f}" for v in band_len]]
     t = Table(gt, colWidths=[45 * mm] + [28 * mm] * 4); t.setStyle(ts); S.append(Spacer(1, 4)); S.append(t)
     S.append(PageBreak())
-    S.append(Paragraph("5. Options and checks", h2))
+    S.append(Paragraph("5. What controls the alignment", h2))
     S.append(Paragraph(
-        "<b>Crossing X-1 is not feasible.</b> The only land between wetland W-1 and Cedar Branch at X-1 is one 20 m land-cover "
-        "column, and all of it lies within the 30 m wetland setback. X-1 cannot be reached from the west bank, and with X-2 "
-        "removed the search finds no compliant route. The northern end of the farm track (towards the farmstead) and the 2025 "
-        "indicative route through X-1 and HS-1 are therefore not viable. The adopted route uses the southern 0.88 km of the "
-        "track and then leaves it towards X-2. <b>Cedar Bluff Ridge saddle:</b> the lowest pass over the ridge lies inside the "
-        "HS-1 150 m exclusion. Without the exclusion the least-cost route would take the saddle (run below). With it, the "
-        "adopted route climbs round the north end of the ridge. The runs below were made only as sensitivity checks; each "
-        "breaks a stated constraint and none is an option.", body))
-    vt = [["Run", "Cost (USD)", "Length (m)", "Crossing"]] + var_rows
-    t = Table(vt, colWidths=[95 * mm, 35 * mm, 30 * mm, 25 * mm]); t.setStyle(ts); S.append(Spacer(1, 4)); S.append(t)
+        f"<b>Creek crossing - X-1 is not feasible.</b> At X-1 the eastern watercourse column is 35.0 m from the W-1 boundary. "
+        f"A centreline there passes the 30 m setback, but the formation edge would be 35.0 - {half:.1f} = {35.0 - half:.1f} m "
+        f"from the wetland. With X-2 removed the search finds no compliant route, so the only crossing is X-2. A centreline-only "
+        f"model crosses at X-1 instead (run table below).", body))
+    S.append(Spacer(1, 3))
+    S.append(Paragraph(
+        "<b>Cedar Bluff escarpment.</b> The escarpment between the creek lowland and the G1 plateau has four candidate ascents. "
+        "(a) The saddle gap next to HS-1 is closed by the 150 m exclusion measured to the formation edge. "
+        "(b) The spur crest facing G1 grades at about 9.2 % for over 600 m: every move is under 10 %, but it breaks T3 (60 m). "
+        "(c) The chute to the south climbs steeper than 10 % on the fall line and needs 90 and 135 deg switchbacks, "
+        "which breaks T4. (d) The northern slump is flatter and allows short steep runs broken by flatter moves. "
+        "The adopted route uses (d): it follows the southern farm track, crosses at X-2, runs north across the lowland, climbs "
+        "the slump and returns south along the plateau to G1. That detour is why it is longer and dearer than the routes that "
+        "ignore C-003.", body))
+    S.append(Spacer(1, 3))
+    S.append(Paragraph("Sensitivity runs (each 'Check' breaks a stated criterion and is not an option):", body))
+    vt = [["Run", "Cost (USD)", "Length (m)", "Crossing", "Max turn (deg)", "Max steep run (m)"]] + var_rows
+    t = Table(vt, colWidths=[95 * mm, 30 * mm, 27 * mm, 20 * mm, 27 * mm, 32 * mm]); t.setStyle(ts)
+    S.append(Spacer(1, 4)); S.append(t)
     S.append(Spacer(1, 6))
-    S.append(Paragraph("6. Compliance", h2))
+    S.append(Paragraph("6. Compliance and limitations", h2))
     for p in [
-        f"No vertex lies in a prohibited, setback or HS-1 cell; the only watercourse cells used are within 30 m of X-2. "
-        f"Every move is at or below 10.0 % (maximum {np.abs(g).max():.2f} %).",
-        "Limitations: the centreline is a 10 m raster least-cost path, i.e. a corridor for alignment design, not a geometric "
-        "design. Curvature, sight distance, earthworks balance and culvert hydraulics are not assessed. In flat, uniform-cost "
-        "ground several paths tie on cost; tie-break and foot-definition checks gave the same cost and length, with paths no "
-        "more than 10 m from this one.",
+        f"Every move is at or below 10.0 % (max {chk['max_grade']:.2f} %); the longest run of moves over 8.0 % is "
+        f"{chk['max_steep_run']:.1f} m; no change of direction exceeds {chk['max_turn_deg']:.0f} deg; the formation edge stays "
+        f"{clr['wetland_m'] - half:.1f} m from W-1 and {clr['heritage_m'] - half:.1f} m from HS-1; the only watercourse cells "
+        f"used are within 30 m of X-2.",
+        "The centreline is a 10 m raster least-cost path: a corridor for alignment design, not a geometric design. Curve radii, "
+        "sight distance, earthworks and culvert hydraulics are not assessed. Tie-break order, international versus US survey "
+        "foot, and segment versus vertex clearance testing all give the same route (cost within 1 USD).",
         "Deliverables: CB_HaulRoad_Centreline.gpkg (layer 'centreline', one LineString, EPSG:32614), "
         "CB_HaulRoad_Vertices.csv (one row per vertex, start to end), this report.",
     ]:
