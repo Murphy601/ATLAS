@@ -40,9 +40,12 @@ def title_block(fig, sheet, name):
     line("REVISIONS", 8, "bold", 0.025)
     line("A  2026-08-03  Issued for route study", 9, dy=0.022)
     line("B  2026-09-14  Woodland clearing rate", 9, dy=0.018)
-    line("                   revised per arborist", 9, dy=0.018)
-    line("                   survey (C-002 Table 2)", 9, dy=0.035)
-    line("Rev B supersedes Rev A in full.", 9, "bold", 0.05)
+    line("                   revised (C-002 Table 2)", 9, dy=0.022)
+    line("C  2026-09-24  Plant gate G1 relocated;", 9, dy=0.018)
+    line("                   haul truck criteria and", 9, dy=0.018)
+    line("                   typical section added", 9, dy=0.018)
+    line("                   (Sheet C-003)", 9, dy=0.03)
+    line("Rev C supersedes Rev B in full.", 9, "bold", 0.04)
     line("Horizontal: WGS 84 / UTM zone 14N", 9, dy=0.02)
     line("(EPSG:32614), metres", 9, dy=0.025)
     line("Vertical: NAVD 88, US survey feet", 9, dy=0.05)
@@ -51,8 +54,8 @@ def title_block(fig, sheet, name):
     ax.text(0.05, 0.14, "SHEET", fontsize=8, weight="bold", va="top")
     ax.text(0.05, 0.11, sheet, fontsize=30, weight="bold", va="top")
     ax.text(0.62, 0.14, "REV", fontsize=8, weight="bold", va="top")
-    ax.text(0.62, 0.11, "B", fontsize=30, weight="bold", va="top")
-    ax.text(0.05, 0.035, "Drawn: R.O.  Checked: J.M.  Date: 2026-09-14", fontsize=8)
+    ax.text(0.62, 0.11, "C", fontsize=30, weight="bold", va="top")
+    ax.text(0.05, 0.035, "Drawn: R.O.  Checked: J.M.  Date: 2026-09-24", fontsize=8)
 
 
 def hillshade(z, cell, az=315, alt=45):
@@ -88,8 +91,8 @@ def sheet1(path):
     P = {k: to_utm.transform(v[1], v[0]) for k, v in B["points_latlon"].items()}
     # indicative 2025 desk-study route (superseded)
     ind = [P["START"], (583420, 3349390), (583760, 3349700), (583980, 3350260), (584060, 3350600),
-           (584180, 3350760), P["X1"], (584700, 3350850), (585150, 3350520), P["HERITAGE"],
-           (585900, 3350600), P["END"]]
+           (584180, 3350760), P["X1"], (584700, 3350700), (585250, 3350505), (585900, 3350505),
+           (586150, 3350400), P["END"]]
     ind = np.array(ind)
     ax.plot(ind[:, 0], ind[:, 1], ls=(0, (6, 4)), color="#7a1fa2", lw=1.6)
     ax.annotate("INDICATIVE ROUTE - 2025 DESK STUDY\n(SUPERSEDED, NOT VERIFIED - SEE NOTE 7)",
@@ -111,7 +114,7 @@ def sheet1(path):
     ax.text(583950, 3351250, "FARMSTEAD", fontsize=8, weight="bold", color="#8a1010")
     ax.text(584120, 3350330, "WETLAND W-1", fontsize=8, weight="bold", color="#135c6b")
     ax.text(583300, 3349330, "EXISTING GRAVEL\nFARM TRACK", fontsize=8, weight="bold", color="#5a2d10", rotation=40)
-    ax.text(585300, 3351420, "CEDAR BLUFF RIDGE", fontsize=9, weight="bold", color="#40342a")
+    ax.text(585950, 3349050, "CEDAR BLUFF\nESCARPMENT", fontsize=9, weight="bold", color="#40342a")
     ax.set_xlim(582880, 586720); ax.set_ylim(3348600, 3351640)
     ax.set_aspect("equal")
     xt = np.arange(583000, 586700, 500); yt = np.arange(3348700, 3351600, 500)
@@ -132,7 +135,7 @@ def sheet1(path):
         x = 0.01 + (n % 4) * 0.25; y = 0.66 - (n // 4) * 0.36
         lx.add_patch(Rectangle((x, y), 0.03, 0.26, fc=col, ec="k"))
         lx.text(x + 0.035, y + 0.13, lab, va="center", fontsize=8)
-    lx.text(0.01, 0.0, "Contours from CB-DEM-10m, 10 ft interval (50 ft index), NAVD 88 US survey feet.  "
+    lx.text(0.01, 0.08, "Contours from CB-DEM-10m, 10 ft interval (50 ft index), NAVD 88 US survey feet.  "
             "Land-cover colours as C-002 Table 2.", fontsize=7.5)
     title_block(fig, "C-001", ["SITE CONSTRAINTS", "PLAN"])
     fig.savefig(path, dpi=DPI)
@@ -169,7 +172,7 @@ def sheet2(path):
         ["Value", "Elevation = 1150.00 + 0.01 x DN  (US survey feet, NAVD 88)", "Exact RGB triplet = class (no anti-aliasing)"],
     ], [0.15, 0.40, 0.40], size=9)
 
-    ax.text(0.0, y - 0.012, "TABLE 2 - LAND-COVER CLASSES AND BASE UNIT RATES (REV B)", fontsize=11, weight="bold", va="top")
+    ax.text(0.0, y - 0.012, "TABLE 2 - LAND-COVER CLASSES AND BASE UNIT RATES (REV B, UNCHANGED AT REV C)", fontsize=11, weight="bold", va="top")
     rows = []
     for c in sorted(B["classes"]):
         info = B["classes"][c]
@@ -202,6 +205,7 @@ def sheet2(path):
         "5. Heritage site HS-1: exclusion zone of radius 150.0 m about the recorded point (Texas Historical Commission consultation, 2026).",
         "6. Maximum grade 10.0 percent for loaded 40 t haul trucks, in either direction of travel.",
         "7. The indicative route on C-001 is from a 2025 desk study that pre-dates the LiDAR, the land-cover survey and Notes 3 to 5.",
+        "8. Haul truck operating criteria and the road typical section are on Sheet C-003. Where C-003 and these notes differ, C-003 governs.",
     ]
     yy = y - 0.02
     for i, t in enumerate(notes):
@@ -212,13 +216,89 @@ def sheet2(path):
     plt.close(fig)
 
 
+def dim(ax, x0, x1, y, txt, size=9):
+    ax.annotate("", (x0, y), (x1, y), arrowprops=dict(arrowstyle="<|-|>", lw=0.8, color="k", shrinkA=0, shrinkB=0))
+    ax.text((x0 + x1) / 2, y + 0.12, txt, ha="center", va="bottom", fontsize=size)
+
+
+def sheet3(path):
+    fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI)
+    fig.add_artist(Rectangle((0.005, 0.005), 0.99, 0.99, fill=False, lw=2.5, transform=fig.transFigure))
+    ax0 = fig.add_axes([0.02, 0.02, 0.77, 0.96]); ax0.axis("off"); ax0.set_xlim(0, 1); ax0.set_ylim(0, 1)
+    ax0.text(0.0, 0.985, "HAUL ROAD TYPICAL SECTION AND HAUL TRUCK OPERATING CRITERIA", fontsize=15, weight="bold", va="top")
+    ax0.text(0.0, 0.945, "TYPICAL SECTION A-A  (TANGENT, CUT/FILL NOT SHOWN)   SCALE 1:100 AT A3 - DO NOT SCALE FROM THIS PLOT",
+             fontsize=11, weight="bold", va="top")
+
+    ax = fig.add_axes([0.04, 0.50, 0.73, 0.40]); ax.axis("off")
+    ax.set_xlim(-12, 12); ax.set_ylim(-3.2, 4.2)
+    # ground and formation
+    ax.fill_between([-12, 12], -3.2, -1.2, color="#d8c7a8", zorder=0)
+    ax.plot([-12, -10, 10, 12], [-1.2, -1.2, -1.2, -1.2], color="#6b5a3a", lw=1)
+    xs = [-7, -6, -5, 5, 6, 7]
+    ax.fill([-7, -7, -6.4, -6, -6], [-1.2, -0.2, 0.25, 0.25, -1.2], color="#9c8f7a", ec="k", lw=0.8)   # berm
+    ax.fill([7, 7, 6.4, 6, 6], [-1.2, -0.2, 0.25, 0.25, -1.2], color="#9c8f7a", ec="k", lw=0.8)
+    ax.fill([-6, -5, -5, -6], [-1.2, -1.2, -0.05, -0.1], color="#c9bda3", ec="k", lw=0.8)                 # shoulder
+    ax.fill([6, 5, 5, 6], [-1.2, -1.2, -0.05, -0.1], color="#c9bda3", ec="k", lw=0.8)
+    ax.fill([-5, 0, 5, 5, -5], [-0.05, 0.0, -0.05, -1.2, -1.2], color="#8a8a8a", ec="k", lw=0.8)          # running surface
+    ax.plot([0, 0], [-1.6, 3.9], color="k", lw=0.8, ls=(0, (8, 3, 2, 3)))
+    ax.text(0, 3.95, "CL  (route centreline =\nDEM cell centres, C-002 Note 2)", ha="center", va="bottom", fontsize=9)
+    for x in (-7, -6, -5, 5, 6, 7):
+        ax.plot([x, x], [0.35, 2.55], color="k", lw=0.5)
+    y = 1.1
+    dim(ax, -7, -6, y, "1.00"); dim(ax, -6, -5, y, "1.00"); dim(ax, -5, 5, y, "10.00")
+    dim(ax, 5, 6, y, "1.00"); dim(ax, 6, 7, y, "1.00")
+    ax.text(-6.5, 2.0, "SAFETY\nBERM", ha="center", fontsize=8.5, weight="bold")
+    ax.text(-5.5, 2.0, "SHLDR", ha="center", fontsize=8.5, weight="bold")
+    ax.text(0, 2.0, "RUNNING SURFACE (2 LANES, 150 mm CRUSHED LIMESTONE)", ha="center", fontsize=8.5, weight="bold")
+    ax.text(5.5, 2.0, "SHLDR", ha="center", fontsize=8.5, weight="bold")
+    ax.text(6.5, 2.0, "SAFETY\nBERM", ha="center", fontsize=8.5, weight="bold")
+    ax.text(-7.1, -0.2, "FORMATION\nEDGE", ha="right", va="center", fontsize=8.5, weight="bold")
+    ax.text(7.1, -0.2, "FORMATION\nEDGE", ha="left", va="center", fontsize=8.5, weight="bold")
+    ax.annotate("CLEARING LIMIT 3.0 m BEYOND FORMATION EDGE\n(CLEARING QUANTITIES ONLY - SEE NOTE C3)",
+                (-10, -1.2), (-11.8, -2.9), fontsize=8, arrowprops=dict(arrowstyle="->"))
+    ax.plot([-10, -10], [-1.2, -0.6], color="#2a6a2a", lw=1.2, ls="--")
+    ax.plot([10, 10], [-1.2, -0.6], color="#2a6a2a", lw=1.2, ls="--")
+    ax.text(2.2, -0.55, "3.0 % CROSSFALL", fontsize=8)
+    ax.text(6.5, 0.6, "1.2 m", fontsize=7.5, ha="center")
+    ax.text(8.2, -2.7, "DIMENSIONS IN METRES", fontsize=8, style="italic")
+
+    y = 0.46
+    ax0.text(0.0, y, "TABLE 4 - HAUL TRUCK OPERATING CRITERIA (40 t ARTICULATED HAUL TRUCK, LOADED)", fontsize=11, weight="bold", va="top")
+    y = table(ax0, 0.0, y - 0.017, ["Ref", "Criterion", "Value", "Application to the route study"], [
+        ["T1", "Maximum grade, either direction", "10.0 %", "Every move; as C-002 Note 6"],
+        ["T2", "Sustained steep grade", "> 8.0 %", "A move steeper than 8.0 % is a steep move"],
+        ["T3", "Maximum continuous run of steep moves", "60.0 m", "Horizontal length; any move at 8.0 % or flatter ends the run"],
+        ["T4", "Maximum change of direction between", "45 deg", "Measured between consecutive grid moves; the first move"],
+        ["", "   consecutive moves", "", "   from the start cell is unrestricted"],
+        ["T5", "Design speed (loaded)", "40 km/h", "Information only"],
+        ["T6", "Rated payload / gross vehicle mass", "40 t / 72 t", "Information only"],
+    ], [0.04, 0.29, 0.09, 0.53], size=9)
+    notes = [
+        "NOTES",
+        "C1. 'The road' in C-002 Notes 4 and 5 means the full formation shown in Section A-A. Wetland setback and heritage exclusion are",
+        "      measured to the formation edge on either side of the centreline, along every straight move between cell centres.",
+        "C2. The crossing-window test of C-002 Note 3 is applied to centreline cell centres only.",
+        "C3. The clearing limit and batters are for quantities only and are not routing constraints.",
+        "C4. Criteria T1 to T4 apply together. Unit rates (C-002 Table 2) and the grade factor are unchanged by this sheet.",
+    ]
+    yy = y - 0.025
+    for i, t in enumerate(notes):
+        ax0.text(0.0, yy, t, fontsize=9.5 if i else 11, weight="bold" if i == 0 else "normal", va="top")
+        yy -= 0.022
+    title_block(fig, "C-003", ["TYPICAL SECTION", "AND HAUL TRUCK", "CRITERIA"])
+    fig.savefig(path, dpi=DPI)
+    plt.close(fig)
+
+
 def main():
     w = ROOT / "work"
-    p1, p2 = w / "C-001.png", w / "C-002.png"
-    sheet1(p1); sheet2(p2)
-    out = ROOT / "inputs" / "CB-HR-C001-C002_RevB.pdf"
+    p1, p2, p3 = w / "C-001.png", w / "C-002.png", w / "C-003.png"
+    sheet1(p1); sheet2(p2); sheet3(p3)
+    for old in (ROOT / "inputs").glob("CB-HR-*.pdf"):
+        old.unlink()
+    out = ROOT / "inputs" / "CB-HR-C001-C003_RevC.pdf"
     c = canvas.Canvas(str(out), pagesize=landscape((11 * 72, 17 * 72)))
-    for p in (p1, p2):
+    for p in (p1, p2, p3):
         c.drawImage(str(p), 0, 0, width=17 * 72, height=11 * 72)
         c.showPage()
     c.save()
