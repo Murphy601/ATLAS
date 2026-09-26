@@ -6,9 +6,9 @@ import numpy as np
 import solve as SV
 
 ROOT = Path(".")
-MISSES = ["no_adverse", "no_vc", "no_radius", "radius_single", "no_haul", "haul_flip", "haul_no_rr", "haul_linear",
-          "end_revc", "end_nosaf"]
-N_CP, SPACING = 13, 8
+MISSES = ["revD_golden", "no_plateau", "plateau_all", "zone_per_move", "no_zone", "no_gate", "gate_3",
+          "no_adverse", "no_vc", "no_radius", "no_haul", "haul_flip", "end_revc"]
+N_CP, SPACING = 20, 6
 
 r = SV.solve({}); rows, _ = SV.summarise(r)
 PG = np.array([(x["easting"], x["northing"]) for x in rows])
@@ -40,7 +40,7 @@ ranked = sorted(chosen, key=lambda v: -len(cov[v]))
 w7 = set(ranked[:6])
 cps = "CPS = [  # (id, weight, E, N): golden cell centres that single-rule misses avoid\n"
 for n, v in enumerate(chosen, 1):
-    cps += f'    ("P{n}", {7 if v in w7 else 5}, {PG[v][0]:.1f}, {PG[v][1]:.1f}),  # vertex {v + 1}: {" ".join(cov[v])}\n'
+    cps += f'    ("P{n}", 7, {PG[v][0]:.1f}, {PG[v][1]:.1f}),  # vertex {v + 1}: {" ".join(cov[v])}\n'
 cps += "]\n"
 print(cps)
 
@@ -52,7 +52,7 @@ nmax = max(float(x["northing_m"]) for x in crow)
 top = [x for x in crow if float(x["northing_m"]) == nmax][0]
 ncharged = sum(1 for x in crow if x["grade_to_next_pct"] and float(x["grade_to_next_pct"]) < -1.0)
 g = (f'LM = dict(wc_cost={float(wc["cum_cost_usd"]):.2f}, top_cost={float(top["cum_cost_usd"]):.2f}, '
-     f'top_ch={float(top["chainage_m"]):.2f}, n_charged={ncharged})\n'
+     f'top_ch={float(top["chainage_m"]):.2f}, n_charged={ncharged}, lease={sm["lease_len_m"]:.2f})\n'
      f'G = dict(total={sm["cost_usd"]:.2f}, constr={sm["constr_usd"]:.2f}, haul={sm["haul_usd"]:.2f}, '
      f'length={sm["length_m"]:.2f}, rows={sm["n_vertices"]}, ndef={sm["n_deflections"]},\n'
      f'         wood={lb["Woodland"]:.1f}, grass={lb["Grassland / pasture"]:.1f}, '

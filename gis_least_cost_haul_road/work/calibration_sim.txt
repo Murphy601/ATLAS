@@ -1,17 +1,18 @@
-items 58 {9: 10, 7: 11, 5: 14, 3: 2, 1: 17, -3: 1, -5: 2, -7: 1} positive total 260
-A  C-004 not applied (Rev C rules, Rev C gate)             6.5%  lost: R1 R2 R3 R4 R5 R6 R7 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C1 C2 C3 S3 S4 S5 S6 S7
-B  all but D6 radius (curves treated as out of scope)     39.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P5 P6 P11 P12 P13 R20 R21 R22 R23 R24 R13 R14 R15 C3 S4
-C  D6 as R tan(22.5) between deflections                  26.9%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P5 P6 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C3 S4
-D  all but D7 haulage (construction cost only)            38.1%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P7 P8 P9 P10 P11 R20 R21 R22 R23 R24 R12 R13 R14 R15 S6
-E  all but D5 vertical curvature                          59.6%  lost: R1 R2 R4 R5 R6 P3 P4 P5 P6 R20 R22 R23 R13 C2 S5
-F  D3 9.0 % read as grade limit                           43.1%  lost: R1 R2 R3 R4 R6 P1 P2 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C1 S3
-G  G1 from superseded C-002 Table 3                       52.7%  lost: R1 R2 R3 R4 R5 R7 P7 P8 P9 P10 P11 P12 P13 R20 R24 R13 S7
-H  G1 surface coordinates used as grid (SAF ignored)      50.0%  lost: R1 R2 R3 R4 R5 R6 R7 P7 P8 P9 P10 P11 P12 P13 R20 R24 R13 S7
-H2 EPSG:2277 read as international feet                   50.0%  lost: R1 R2 R3 R4 R5 R6 R7 P7 P8 P9 P10 P11 P12 P13 R20 R24 R13 S7
-I  D7 rise charged in chainage direction                  48.1%  lost: R1 R2 R3 R4 R6 P1 P2 P3 P7 P8 P9 P10 R20 R21 R22 R23 R24 R15 S6
-L  D7 threshold read as 4.0 % grade (rolling resistance dropped)  34.2%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 S6
-M  D7 threshold ignored (every loaded rise charged)       57.3%  lost: R1 R2 R3 R6 P1 P2 P7 P8 P9 P10 R20 R21 R22 R24 S6
-N  'effective grade' misread twice (D3 and D7 without rolling resistance)  29.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C1 S3 S6
-J  D5 and D6 both missed (geometry treated as out of scope)  30.4%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P11 P12 P13 R20 R21 R22 R23 R24 R13 R14 R15 C2 C3 S4 S5
-K  D6 and D7 both missed                                  29.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P5 P6 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R13 R14 R15 C3 S4 S6
-mean 39.7%
+items 77 {9: 11, 7: 27, 5: 11, 3: 4, 1: 19, -3: 1, -5: 2, -7: 2} positive total 374
+A  Rev E updates ignored (exact Rev D answer)                 3,110,904   5974.5   20.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 R20 R21 R22 R23 R24 R25 E1 E2 E3 E4 E5 E6 R12 R13 R15 N5
+B  plateau lease rate not applied                             3,158,560   6028.3   56.1%  lost: R1 R2 R3 R4 R5 P10 P11 P12 P13 P14 P15 P16 P17 R20 R22 R23 R24 R25 E3 E4 E5 R13
+C  lease rate applied to all grassland                        6,898,660   5963.8   45.5%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 R20 R21 R22 R23 R24 R25 E3 E4 E5 R12 R13
+D  slip-zone 30 m tested only on moves inside the band        4,891,903   6033.1   60.4%  lost: R1 R2 R4 R5 P1 P2 P3 P4 P5 P6 P7 P8 R20 R22 R23 E2 E6 R12 R13 N5
+E  slip-zone limit ignored                                    4,859,069   6032.1   48.7%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 R20 R21 R22 R23 R24 R25 E2 E6 R12 R13 R15 N5
+F  gate approach ignored                                      4,871,082   6039.0   67.6%  lost: R1 R2 R3 R4 R5 R6 P18 P19 P20 R20 R25 E1 E4 R13 N5
+G  gate approach as 3 moves (30 m)                            4,890,415   6056.5   75.1%  lost: R1 R2 R3 R4 R5 P19 P20 R20 R25 E1 N5
+G2 gate approach appended after routing to its start cell     4,897,291   6062.4   82.9%  lost: R1 R2 R3 P19 R20 R25 C3 N5
+H  slip zone per move and gate ignored                        4,863,527   6009.7   43.9%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P18 P19 P20 R20 R22 R23 R25 E1 E2 E4 E6 R12 R13 N5
+I  all but D6 radius                                          4,784,702   6069.1   37.7%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P10 P11 P18 P19 P20 R20 R21 R22 R23 R24 R25 E4 R12 R13 R14 R15 C3 S4 N5
+J  all but D7 haulage                                         4,683,990   6121.8   39.0%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P9 P12 P13 P14 P15 P16 P17 R20 R21 R22 R23 R24 R25 R12 R13 R14 R15 S6
+K  all but D5 vertical curvature                              4,773,748   6071.7   61.5%  lost: R1 R2 R4 R5 R6 P9 P10 P11 P12 P13 P14 P15 R20 R22 R23 E4 R13 C2 S5 N5
+L  D3 9.0 % read as grade limit                               4,866,975   6029.7   43.9%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P17 P18 R20 R21 R22 R23 R24 R25 E4 R12 R13 R14 R15 C1 S3 N5
+M  G1 from superseded C-002 Table 3                           4,423,038   5744.7   51.3%  lost: R1 R2 R3 R4 R5 R6 R7 P12 P13 P14 P15 P16 P17 P18 P19 P20 R20 R24 R25 E1 E4 R13 S7 N5
+N  D7 rise charged in chainage direction                      5,752,017   6087.2   55.3%  lost: R1 R2 R3 R4 R6 P3 P4 P5 P6 P7 P8 P9 P16 P17 R20 R21 R22 R23 R24 R25 R13 R15 S6
+O  Rev D relaxed path (no D5, D6, T3; updates ignored)        2,524,885   4657.3   15.2%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19 P20 R20 R21 R22 R23 R24 R25 E1 E2 E3 E4 E5 E6 R12 R13 R14 R15 R16 R17 C3 C5 N5
+mean 50.3%
