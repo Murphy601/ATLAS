@@ -25,6 +25,8 @@ WORK = ROOT / "work"
 GPKG = "CB_HaulRoad_Centreline.gpkg"
 CSVF = "CB_HaulRoad_Vertices.csv"
 PDFF = "CB_HaulRoad_RouteReport.pdf"
+CSV_HEADER = ["seq", "easting_m", "northing_m", "elev_m", "chainage_m", "grade_to_next_pct", "landcover_class",
+              "unit_rate_usd_per_m", "cum_constr_usd", "cum_haul_usd", "cum_cost_usd"]
 
 
 def main():
@@ -46,21 +48,21 @@ def main():
     assert abs(constr + haul - cost) < 1e-6
     half = b["formation_width"] / 2
     assert clr["wetland_m"] - half >= b["wetland_setback"] and clr["heritage_m"] - half >= b["heritage_radius"]
+    pe = SV.PROMPT_E
+    assert chk["max_zone_run"] <= pe["zone_run_max"] + 1e-9 and chk["gate_ok"]
 
     with open(OUT / CSVF, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["seq", "easting_m", "northing_m", "elev_m", "chainage_m", "grade_to_next_pct",
-                    "landcover_class", "cum_cost_usd"])
+        w.writerow(CSV_HEADER)
         for r in rows:
             w.writerow([r["seq"], f"{r['easting']:.2f}", f"{r['northing']:.2f}", f"{r['elev_m']:.3f}",
                         f"{r['chainage_m']:.2f}", "" if np.isnan(r["grade_pct"]) else f"{r['grade_pct']:.3f}",
-                        r["landcover"], f"{r['cum_cost_usd']:.2f}"])
+                        r["landcover"], f"{r['unit_rate']:.2f}", f"{r['cum_constr_usd']:.2f}",
+                        f"{r['cum_haul_usd']:.2f}", f"{r['cum_cost_usd']:.2f}"])
 
     line = LineString([(r["easting"], r["northing"]) for r in rows])
     gdf = gpd.GeoDataFrame(
-        dict(route_id=["CB-HR-01"], length_m=[round(L, 2)], cost_usd=[round(cost, 2)],
-             constr_usd=[round(constr, 2)], haul_usd=[round(haul, 2)],
-             max_grade_pct=[round(float(np.abs(g).max()), 3)], crossing=[SV.xing(rows)]),
+        dict(route_id=["CB-HR-01E"], total_cost_usd=[round(cost, 2)], length_m=[round(L, 2)]),
         geometry=[line], crs=f"EPSG:{b['epsg']}")
     (OUT / GPKG).unlink(missing_ok=True)
     gdf.to_file(OUT / GPKG, layer="centreline", driver="GPKG")
@@ -68,20 +70,30 @@ def main():
     # breakdowns: each move's length and cost split equally between its two end cells' classes
     len_by = collections.defaultdict(float)
     cost_by = collections.defaultdict(float)
+    lease_len = 0.0
     for a, c in zip(rows[:-1], rows[1:]):
         d = c["chainage_m"] - a["chainage_m"]
         seg = c["cum_constr_usd"] - a["cum_constr_usd"]
-        ca, cc = b_cost(a["landcover"]), b_cost(c["landcover"])
-        for cls, share in ((a["landcover"], ca / (ca + cc)), (c["landcover"], cc / (ca + cc))):
-            len_by[cls] += d / 2
-            cost_by[cls] += seg * share
+        ca, cc = a["unit_rate"], c["unit_rate"]
+        for x, share in ((a, ca / (ca + cc)), (c, cc / (ca + cc))):
+            len_by[x["landcover"]] += d / 2
+            cost_by[x["landcover"]] += seg * share
+            if x["unit_rate"] == pe["plateau_grass_cost"]:
+                lease_len += d / 2
     bands = [(0, 3), (3, 6), (6, 8), (8, 10)]
     dists = np.diff([r["chainage_m"] for r in rows])
     band_len = [float(dists[(np.abs(g) > lo) & (np.abs(g) <= hi) | ((lo == 0) & (np.abs(g) == 0))].sum())
                 for lo, hi in bands]
 
     variants = [
-        ("Adopted route (all C-002, C-003 and C-004 criteria)", {}),
+        ("Adopted route (drawing set Rev D + Rev E updates)", {}),
+        ("Check: Rev E updates ignored (Rev D basis)", SV.REV_E_OFF),
+        ("Check: plateau lease rate not applied", {"no_plateau": True}),
+        ("Check: lease rate applied to all grassland", {"plateau_all": True}),
+        ("Check: slip-zone 30 m limit tested only on moves inside the band", {"zone_per_move": True}),
+        ("Check: slip-zone limit ignored", {"no_zone": True}),
+        ("Check: gate approach ignored", {"no_gate": True}),
+        ("Check: gate approach of 3 moves (30 m)", {"gate_moves": 3}),
         ("Check: D3 loaded adverse limit ignored (or 9.0 % read as grade)", {"no_adverse": True}),
         ("Check: D5 vertical curvature ignored", {"no_vc": True}),
         ("Check: D6 curve radius ignored", {"no_tangent": True}),
@@ -92,7 +104,6 @@ def main():
         ("Check: D7 threshold ignored (every loaded rise charged)", {"haul_linear": True}),
         ("Check: G1 at superseded Rev C position", {"end_revc": True}),
         ("Check: EPSG:2277 read as international feet", {"end_intl": True}),
-        ("Check: G1 surface coordinates used as grid (SAF ignored)", {"end_nosaf": True}),
         ("Check: C-004 ignored entirely (Rev C rules)", SV.VARIANTS["revC_rules"]),
         ("Check: 45 deg direction-change limit (T4) ignored", {"no_turn": True}),
         ("Check: 60 m sustained-grade limit (T3) ignored", {"no_sustain": True}),
@@ -109,10 +120,14 @@ def main():
         assert SV.solve(o) is None
     only_x1 = SV.solve({"drop_X2": True})
     assert only_x1 is None
+    assert SV.solve({"gate_heading": 2}) is None
+    assert SV.solve({"end_nosaf": True}) is None
 
     figs = plan_and_profile(res, rows)
-    write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, clr, res["pts"], constr, haul)
+    write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, clr, res["pts"], constr, haul,
+              lease_len)
     summary = dict(cost_usd=cost, constr_usd=constr, haul_usd=haul, loaded_rise_m=haul / b["haul_rise_cost"],
+                   lease_len_m=lease_len, max_zone_run_m=chk["max_zone_run"],
                    min_k=chk["min_k"], min_tangent_m=chk["min_tangent"], start_tangent_m=chk["start_tangent"],
                    end_tangent_m=chk["end_tangent"], n_deflections=chk["n_deflections"],
                    max_adverse_loaded_pct=chk["max_adverse_loaded"], max_rise_pct=chk["max_rise"],
@@ -148,8 +163,14 @@ def plan_and_profile(res, rows):
               vmin=0, vmax=1, interpolation="nearest")
     cs = ax.contour(EX, EY, z, levels=np.arange(360, 520, 5), colors="k", linewidths=0.3)
     ax.clabel(cs, cs.levels[::2], fontsize=6, fmt="%d m")
+    pe = SV.PROMPT_E
+    ax.axhspan(pe["zone_n_min"], pe["zone_n_max"], color="purple", alpha=0.15, lw=0,
+               label=f"Rev E slip zone (runs > 8 % touching it <= {pe['zone_run_max']:.0f} m)")
+    lease = (lcd == 1) & (res["base"] == pe["plateau_grass_cost"])
+    ax.contour(EX, EY, lease.astype(float), levels=[0.5], colors="blue", linewidths=1.0, linestyles="--")
+    ax.plot([], [], "b--", lw=1.0, label=f"Rev E plateau lease edge (grassland >= {pe['plateau_ft']:,.0f} ft)")
     p = np.array([(r["easting"], r["northing"]) for r in rows])
-    ax.plot(p[:, 0], p[:, 1], color="red", lw=2.2, label="Adopted centreline CB-HR-01")
+    ax.plot(p[:, 0], p[:, 1], color="red", lw=2.2, label="Adopted centreline CB-HR-01E")
     h = res["pts"]["HERITAGE"]
     ax.add_patch(plt.Circle(h, 150, fill=False, ec="darkred", lw=1.5, ls="--", label="HS-1 150 m exclusion"))
     for k, lab in (("START", "T1"), ("END", "G1"), ("X1", "X-1"), ("X2", "X-2"), ("HERITAGE", "HS-1")):
@@ -179,8 +200,9 @@ def plan_and_profile(res, rows):
     return f1, f2
 
 
-def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, clr, pts, constr, haul):
+def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, clr, pts, constr, haul, lease_len):
     b = SV.BRIEF
+    pe = SV.PROMPT_E
     half = b["formation_width"] / 2
     adv = b["eff_adverse_max"] - b["rolling_resistance"]
     t_mid, t_end = SV.tangent_lengths(b["min_radius"])
@@ -194,8 +216,10 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
     ts = TableStyle([("GRID", (0, 0), (-1, -1), 0.5, colors.black), ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
                      ("FONTSIZE", (0, 0), (-1, -1), 8.5), ("VALIGN", (0, 0), (-1, -1), "MIDDLE")])
     S = []
-    S.append(Paragraph("Cedar Bluff Quarry Haul Road - Least-Cost Route Report (route CB-HR-01)", h1))
-    S.append(Paragraph("Basis: drawing set CB-HR C-001 to C-004 Rev D and the two rasters it registers. "
+    S.append(Paragraph("Cedar Bluff Quarry Haul Road - Least-Cost Route Report (route CB-HR-01E)", h1))
+    S.append(Paragraph("Basis: drawing set CB-HR C-001 to C-004 Rev D and the two rasters it registers, with the three "
+                       "Rev E updates in the brief (plateau lease rate, Cedar Branch slip zone, G1 gate approach), which "
+                       "govern where they differ from the drawing set. "
                        "Horizontal CRS WGS 84 / UTM zone 14N (EPSG:32614); lengths are horizontal. "
                        "Status: route study only, not for construction.", body))
     S.append(Spacer(1, 4))
@@ -216,6 +240,12 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
         ["Max grade rising / falling in chainage direction (T1 10.0 %)", f"+{chk['max_rise']:.2f} % / -{chk['max_adverse_loaded']:.2f} %"],
         ["Max loaded uphill grade (D3: 9.0 - 3.0 = 6.0 %)", f"{chk['max_adverse_loaded']:.2f} %"],
         ["Longest continuous run of moves > 8.0 % (T3 60.0 m)", f"{chk['max_steep_run']:.1f} m"],
+        [f"Longest run > 8.0 % touching the slip zone N {pe['zone_n_min']:,.0f} to {pe['zone_n_max']:,.0f} (limit {pe['zone_run_max']:.1f} m)",
+         f"{chk['max_zone_run']:.1f} m"],
+        [f"Route length on plateau lease (grassland at or above {pe['plateau_ft']:,.2f} ft, {pe['plateau_grass_cost']:,.0f} USD/m)",
+         f"{lease_len:,.1f} m"],
+        ["G1 gate approach (last 40.0 m straight, due west)", "4 westward moves from "
+         f"E {rows[-5]['easting']:.0f} to E {rows[-1]['easting']:.0f} at N {rows[-1]['northing']:.0f}"],
         ["Largest change of direction between moves (T4 45 deg)", f"{chk['max_turn_deg']:.0f} deg"],
         ["Smallest K between consecutive moves (D5 1.4 m/%)", f"{chk['min_k']:.3f} m/%"],
         ["Shortest tangent between deflection vertices (D6: >= 2R tan 22.5 = 37.28 m)", f"{chk['min_tangent']:.2f} m"],
@@ -260,15 +290,28 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
         f"{b['haul_eff_threshold'] - b['rolling_resistance']:.1f} % once the 3.0 % rolling resistance is added; otherwise the construction "
         "term alone. The fall is not credited; the 450 USD/m brake-wear and 6.0 % empty top-gear figures in Table 7 are "
         "information only.",
+        f"<b>Rev E (a) plateau lease.</b> A DEM cell whose class is Grassland / pasture and whose ground elevation is at or above "
+        f"{pe['plateau_ft']:,.2f} ft takes a base unit rate of {pe['plateau_grass_cost']:,.0f} USD/m instead of 420 USD/m. The test is made "
+        f"on the DEM value in feet (1150.00 + 0.01 x DN), i.e. {pe['plateau_ft'] * 1200 / 3937:.3f} m; no DEM cell lies exactly on the threshold.",
+        f"<b>Rev E (b) Cedar Branch slip zone.</b> Any continuous run of moves steeper than 8.0 % that contains a move with either "
+        f"end cell centre between N {pe['zone_n_min']:,.0f} and N {pe['zone_n_max']:,.0f} is limited to {pe['zone_run_max']:.1f} m over "
+        f"its whole length, including the part outside the band. The steep-run state carries a flag set by the first such move "
+        f"and cleared when the run ends.",
+        "<b>Rev E (c) gate approach.</b> The last four moves into the G1 cell are due west (40.0 m straight), so the route enters "
+        "the gate cell from the east side. Every drawing-set rule applies on the approach as elsewhere.",
         "<b>Search.</b> T3, T4, D5 and D6 depend on the path, so the search runs on an expanded state: cell x arrival heading "
-        "(which also fixes the previous move and its grade for D5) x steep-run length (for T3) x moves since the last deflection "
-        "vertex, with a separate counter for the first tangent (for D6). Dijkstra on this graph gives the exact optimum; the end "
-        "state is accepted only if the last tangent is at least 18.64 m.",
+        "(which also fixes the previous move and its grade for D5) x steep-run length and slip-zone flag (for T3 and Rev E b) "
+        "x moves since the last deflection vertex, with a separate counter for the first tangent (for D6). The gate approach "
+        "removes every move into the last four approach cells other than the westward one. Dijkstra on this graph gives the "
+        "exact optimum; the end state is accepted only if the last tangent is at least 18.64 m.",
     ]:
         S.append(Paragraph(p, body)); S.append(Spacer(1, 2.5))
     S.append(PageBreak())
     rt = [["Item applied", "Value"],
           ["Grassland / pasture; cultivated cropland", "420 / 480 USD/m"],
+          [f"Grassland / pasture at or above {pe['plateau_ft']:,.2f} ft (Rev E plateau lease)", f"{pe['plateau_grass_cost']:,.0f} USD/m"],
+          ["Rev E slip zone; gate approach", f"N {pe['zone_n_min']:,.0f} to {pe['zone_n_max']:,.0f}, runs > 8.0 % touching it "
+           f"<= {pe['zone_run_max']:.1f} m; last 40.0 m due west into G1"],
           ["Woodland (Rev B; Rev A 690 withdrawn); rock outcrop", "940 / 1,150 USD/m"],
           ["Existing gravel track; culvert cell within 30.0 m of X-1 / X-2", "160 / 3,800 USD/m"],
           ["Watercourse elsewhere, wetland, farmstead", "prohibited"],
@@ -317,11 +360,22 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
         f"loaded climbing above the top-gear range; because of the {b['haul_eff_threshold']:.1f} % threshold, charging the rise in "
         f"chainage direction, dropping the rolling resistance from the threshold or charging every loaded rise each gives a "
         f"different line. Each run below breaks exactly one stated rule and is not an option.", body))
+    S.append(Spacer(1, 2))
+    S.append(Paragraph(
+        f"<b>Rev E.</b> The plateau lease cannot be avoided (G1 is on the plateau). At {pe['plateau_grass_cost']:,.0f} USD/m the grade "
+        f"factor multiplies a larger base rate, which changes the trade-off between grade, length and loaded haulage on the "
+        f"plateau: the plateau leg moves off the line it takes without the lease, although the length on leased ground "
+        f"({lease_len:,.1f} m) is the same. The slip zone breaks "
+        f"the two 56.6 m steep runs of the Rev D climb out of the Cedar Branch valley into runs of at most "
+        f"{chk['max_zone_run']:.1f} m. The gate approach turns the end of the route to arrive from the east. Applying the "
+        f"30 m limit only to moves inside the band, or ignoring any one of the three updates, gives a different line.", body))
     S.append(Spacer(1, 3))
     vt = [["Run", "Total (USD)", "Length (m)", "Vertices", "Xing", "Max loaded uphill %", "Min K", "Min tangent (m)"]] + var_rows
     vt.append(["D3 applied to chainage-rising moves / to both directions", "no route", "", "", "", "", "", ""])
     vt.append(["D5 read as a flat 7.14 % grade-change limit", "no route", "", "", "", "", "", ""])
     vt.append(["Only X-1 available", "no route", "", "", "", "", "", ""])
+    vt.append(["Gate approach read as travelling east into G1", "no route", "", "", "", "", "", ""])
+    vt.append(["G1 surface coordinates used as grid (SAF ignored): gate approach leaves the DEM", "no route", "", "", "", "", "", ""])
     t = Table(vt, colWidths=[98 * mm, 25 * mm, 22 * mm, 16 * mm, 12 * mm, 30 * mm, 16 * mm, 26 * mm]); t.setStyle(ts)
     S.append(t)
     S.append(Spacer(1, 5))
@@ -331,12 +385,14 @@ def write_pdf(rows, L, cost, g, len_by, cost_by, band_len, var_rows, figs, chk, 
         f"the longest run over 8.0 % is {chk['max_steep_run']:.1f} m; no change of direction exceeds {chk['max_turn_deg']:.0f} deg; "
         f"K >= {chk['min_k']:.3f}; tangents >= {chk['min_tangent']:.2f} m (ends {chk['start_tangent']:.2f} / {chk['end_tangent']:.2f} m); "
         f"the formation edge stays {clr['wetland_m'] - half:.1f} m from W-1 and {clr['heritage_m'] - half:.1f} m from HS-1; "
-        f"the only watercourse cells used are within 30 m of X-2.",
+        f"the only watercourse cells used are within 30 m of X-2; the longest steep run touching the slip zone is "
+        f"{chk['max_zone_run']:.1f} m; the last 40.0 m run due west into G1.",
         "The centreline is a 10 m raster least-cost path screened against C-004 geometry; it is a corridor, not a geometric "
         "design. Tie-break order, international versus US survey foot for the DEM, and thresholds moved by 0.02 (grade), "
         "0.01 (K) or 1 m (radius) give the same route.",
-        "Deliverables: CB_HaulRoad_Centreline.gpkg (layer 'centreline', one LineString, EPSG:32614), "
-        "CB_HaulRoad_Vertices.csv (one row per vertex, start to end; cum_cost_usd is the total route cost including haulage), "
+        "Deliverables: CB_HaulRoad_Centreline.gpkg (layer 'centreline', one LineString, EPSG:32614, fields route_id, "
+        "total_cost_usd, length_m), CB_HaulRoad_Vertices.csv (one row per vertex, start to end, 11 columns; unit_rate_usd_per_m "
+        "is the base rate of the vertex cell; cum_cost_usd = cum_constr_usd + cum_haul_usd), "
         "this report.",
     ]:
         S.append(Paragraph(p, body)); S.append(Spacer(1, 3))

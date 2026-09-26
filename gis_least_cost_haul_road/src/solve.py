@@ -15,6 +15,8 @@ from pyproj import Transformer
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 BRIEF = json.loads((ROOT / "work" / "brief_values.json").read_text())
+# Rev E: rules stated in the prompt only (the drawing set and rasters are unchanged)
+PROMPT_E = json.loads((ROOT / "work" / "prompt_e.json").read_text())
 
 SQ2 = float(np.sqrt(2.0))
 # heading index -> (d_row, d_col); 0 = north, clockwise
@@ -109,6 +111,17 @@ def build_cost(opts):
     for c, info in b["classes"].items():
         if info["cost"] is not None:
             base[lcd == int(c)] = info["cost"]
+    pe = PROMPT_E
+    if not opts.get("no_plateau"):
+        if opts.get("plateau_all"):
+            lease = lcd == 1
+        elif opts.get("plateau_m"):
+            lease = (lcd == 1) & (z >= pe["plateau_ft"])
+        else:
+            thr = opts.get("plateau_ft", pe["plateau_ft"])
+            dn = np.array(Image.open(ROOT / "inputs" / b["dem_file"]), dtype=np.float64)
+            lease = (lcd == 1) & (b["dn_base_ft"] + b["dn_step_ft"] * dn >= thr)
+        base[lease] = opts.get("plateau_cost", pe["plateau_grass_cost"])
     for k in ("X1", "X2"):
         if opts.get("drop_" + k):
             continue
@@ -154,6 +167,16 @@ def build_cost(opts):
         lim = b["heritage_radius"] + half
         move_ok &= _seg_point_dist(AX, AY, BX, BY, h[0], h[1]) > lim
         base[np.hypot(EX - h[0], EY - h[1]) <= lim] = np.nan
+    if not opts.get("no_gate"):
+        # the last gate_moves moves into G1 are one straight run on gate_heading
+        gh = opts.get("gate_heading", pe["gate_heading"])
+        ei, ej = cell_of(pts["END"])
+        for k in range(opts.get("gate_moves", pe["gate_moves"])):
+            ti, tj = ei - k * DIRS[gh, 0], ej - k * DIRS[gh, 1]
+            for h in range(8):
+                si_, sj_ = ti - DIRS[h, 0], tj - DIRS[h, 1]
+                if h != gh and 0 <= si_ < ny and 0 <= sj_ < nx:
+                    move_ok[si_, sj_, h] = False
     return z, lcd, EX, EY, base, pts, move_ok
 
 
@@ -166,7 +189,8 @@ def cell_of(pt):
 
 @nb.njit(cache=True)
 def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, sustain_on, nxt, nrun,
-              si, sj, ei, ej, rev_order, adv_mode, adv_max, vc_k, vc_flat, tan_mid, tan_end, TS, F, haul_c, haul_thr):
+              si, sj, ei, ej, rev_order, adv_mode, adv_max, vc_k, vc_flat, tan_mid, tan_end, TS, F, haul_c, haul_thr,
+              zmode, zone, short_ok):
     """State = (cell, heading of last move or 8 at start, steep-run state, tangent counter).
 
     adv_mode: 0 off, 1 adverse-loaded limit on moves falling in chainage direction (loaded
@@ -180,6 +204,10 @@ def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, susta
     haul_c: USD per metre of rise climbed by loaded trucks (END -> START), i.e. charged on moves
     that fall in chainage direction by more than haul_thr percent; a negative value charges rising
     moves instead.
+    zmode: steep runs touching `zone` cells are limited to run states with short_ok.  1: a run
+    that has had any move with an end cell in the zone keeps the shorter limit over its whole
+    length (the steep-run state carries a zone flag); 2: the shorter limit is tested only on
+    moves that are themselves in the zone; 0 off.
     """
     ny, nx = z.shape
     NH = 9
@@ -277,9 +305,20 @@ def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, susta
                     continue
             nr = 0
             if sustain_on and g > steep_g:
-                nr = nxt[r, 1 if h % 2 == 1 else 0]
-                if nr < 0:
+                zf = 2 if zmode == 1 else 1
+                nidx = nxt[r // zf, 1 if h % 2 == 1 else 0]
+                if nidx < 0:
                     continue
+                inz = zone[i, j] or zone[a, bq]
+                if zmode == 1:
+                    nflag = 1 if (r % 2 == 1 or inz) else 0
+                    if nflag == 1 and not short_ok[nidx]:
+                        continue
+                    nr = nidx * 2 + nflag
+                else:
+                    if zmode == 2 and inz and not short_ok[nidx]:
+                        continue
+                    nr = nidx
             if g <= 3.0:
                 f = 1.0
             elif g <= 6.0:
@@ -331,7 +370,12 @@ def solve(opts=None):
     st, nxt = run_states(b["steep_run_max"], b["dem_cell"])
     turn_on = not opts.get("no_turn")
     sustain_on = not opts.get("no_sustain")
-    nrun = len(st) if sustain_on else 1
+    zmode = 0 if (opts.get("no_zone") or not sustain_on) else (2 if opts.get("zone_per_move") else 1)
+    zone = ((EY >= opts.get("zone_n_min", PROMPT_E["zone_n_min"]))
+            & (EY <= opts.get("zone_n_max", PROMPT_E.get("zone_n_max", np.inf))))
+    short_ok = np.array([b["dem_cell"] * (a_ + SQ2 * b_) <= opts.get("zone_run_max", PROMPT_E["zone_run_max"]) + 1e-9
+                         for a_, b_ in st])
+    nrun = (len(st) * (2 if zmode == 1 else 1)) if sustain_on else 1
     adv_max = opts.get("adv_max", b.get("adverse_max", 0.0))
     adv_mode = 0 if (opts.get("no_adverse") or not adv_max) else (
         -1 if opts.get("adv_flip") else 2 if opts.get("adv_abs") else 1)
@@ -357,7 +401,7 @@ def solve(opts=None):
     end, dist, prev = _dijkstra(z, base, move_ok, DIRS, DLEN, b["dem_cell"], b["max_grade"], b["steep_grade"],
                                 turn_on, sustain_on, nxt, nrun, si, sj, ei, ej, bool(opts.get("rev_order")),
                                 adv_mode, float(adv_max), float(vc_k), float(vc_flat), float(tan_mid),
-                                float(tan_end), TS, F, float(haul_c), float(haul_thr))
+                                float(tan_end), TS, F, float(haul_c), float(haul_thr), zmode, zone, short_ok)
     if end < 0:
         return None
     path = []
@@ -369,7 +413,35 @@ def solve(opts=None):
         s = prev[s]
     path.reverse()
     return dict(z=z, lcd=lcd, EX=EX, EY=EY, base=base, pts=pts, path=path, cost=float(dist[end]),
-                move_ok=move_ok, haul_c=float(haul_c), haul_thr=float(haul_thr))
+                move_ok=move_ok, haul_c=float(haul_c), haul_thr=float(haul_thr), zone=zone)
+
+
+def solve_gate_append(opts=None):
+    """Failure mode: route to the start of the gate approach as if it were the end, then append the approach."""
+    opts = dict(opts or {}, no_gate=True)
+    gh, n = PROMPT_E["gate_heading"], PROMPT_E["gate_moves"]
+    orig = build_cost
+
+    def moved_end(o):
+        out = list(orig(o))
+        pts = dict(out[5])
+        ei, ej = cell_of(pts["END"])
+        pts["END"] = (out[2][ei - n * DIRS[gh, 0], ej - n * DIRS[gh, 1]], out[3][ei - n * DIRS[gh, 0], ej - n * DIRS[gh, 1]])
+        pts["END_TRUE"] = orig(o)[5]["END"]
+        out[5] = pts
+        return tuple(out)
+
+    globals()["build_cost"] = moved_end
+    try:
+        r = solve(opts)
+    finally:
+        globals()["build_cost"] = orig
+    ei, ej = cell_of(r["pts"]["END_TRUE"])
+    r["path"] = r["path"] + [(ei - k * DIRS[gh, 0], ej - k * DIRS[gh, 1]) for k in range(n - 1, -1, -1)]
+    r["pts"]["END"] = r["pts"]["END_TRUE"]
+    rows, _ = summarise(r)
+    r["cost"] = rows[-1]["cum_cost_usd"]
+    return r
 
 
 def summarise(res):
@@ -392,7 +464,7 @@ def summarise(res):
         else:
             dd, g, seg, hl = 0.0, float("nan"), 0.0, 0.0
         rows.append(dict(seq=k + 1, easting=e, northing=n, elev_m=z[i, j], chainage_m=ch,
-                         grade_pct=g, landcover=b["classes"][str(lcd[i, j])]["name"],
+                         grade_pct=g, landcover=b["classes"][str(lcd[i, j])]["name"], unit_rate=res["base"][i, j],
                          cum_constr_usd=cum, cum_haul_usd=hcum, cum_cost_usd=cum + hcum))
         ch += dd
         cum += seg
@@ -408,10 +480,19 @@ def check_path(res, opts=None):
     P = res["path"]
     hd = [int(np.nonzero((DIRS == (a[0] - p[0], a[1] - p[1])).all(1))[0][0]) for p, a in zip(P[:-1], P[1:])]
     turns = [min((y - x) % 8, (x - y) % 8) for x, y in zip(hd[:-1], hd[1:])]
-    run = 0.0; run_max = 0.0
-    for gg, h in zip(g, hd):
-        run = run + b["dem_cell"] * DLEN[h] if abs(gg) > b["steep_grade"] else 0.0
+    run = 0.0; run_max = 0.0; zrun_max = 0.0; touched = False
+    zone = res.get("zone")
+    for k, (gg, h) in enumerate(zip(g, hd)):
+        if abs(gg) > b["steep_grade"]:
+            run += b["dem_cell"] * DLEN[h]
+            touched |= zone is not None and bool(zone[P[k]] or zone[P[k + 1]])
+        else:
+            run, touched = 0.0, False
         run_max = max(run_max, run)
+        if touched:
+            zrun_max = max(zrun_max, run)
+    ng = PROMPT_E["gate_moves"]
+    gate_ok = len(hd) >= ng and all(x == PROMPT_E["gate_heading"] for x in hd[-ng:])
     # deflection vertices = interior vertices where the heading changes
     defl = [k + 1 for k in range(len(hd) - 1) if hd[k] != hd[k + 1]]
     ch = np.concatenate([[0.0], np.cumsum([b["dem_cell"] * DLEN[h] for h in hd])])
@@ -420,6 +501,7 @@ def check_path(res, opts=None):
     dg = np.abs(np.diff(g))
     kk = (Ls[:-1] + Ls[1:]) / 2 / np.maximum(dg, 1e-12)
     return dict(max_grade=float(np.abs(g).max()), max_turn_deg=45 * max(turns), max_steep_run=run_max,
+                max_zone_run=zrun_max, gate_ok=gate_ok,
                 max_adverse_loaded=float(max(0.0, (-g).max())), max_rise=float(g.max()),
                 max_grade_change=float(dg.max()), min_k=float(kk.min()),
                 min_tangent=float(min(tans)) if tans else float("inf"), n_deflections=len(defl),
@@ -451,8 +533,21 @@ def xing(rows):
     return "X-1" if xs[0]["northing"] > 3350200 else "X-2"
 
 
+REV_E_OFF = {"no_plateau": True, "no_zone": True, "no_gate": True}
+
 VARIANTS = {
     "golden": {},
+    # Rev E prompt levers
+    "revD_golden": REV_E_OFF,                     # prompt addendum ignored: the Rev D answer
+    "no_plateau": {"no_plateau": True},
+    "plateau_all": {"plateau_all": True},         # lease rate applied to all grassland
+    "plateau_m": {"plateau_m": True},             # 1,500 ft compared with metres (no cell qualifies)
+    "plateau_intl": {"plateau_ft": 1500.0 * 0.3048 / (1200.0 / 3937.0)},  # threshold via international foot
+    "no_zone": {"no_zone": True},
+    "zone_per_move": {"zone_per_move": True},     # 30 m tested only on moves inside the zone
+    "no_gate": {"no_gate": True},
+    "gate_3": {"gate_moves": 3},                  # 40 m read as 3 moves / 30 m
+    "gate_east": {"gate_heading": 2},             # approach read as travelling east into G1
     # Rev D levers
     "no_adverse": {"no_adverse": True},           # also the 9 % effective limit read as grade
     "adv_flip": {"adv_flip": True},               # adverse limit applied to chainage-rising moves
@@ -496,5 +591,6 @@ if __name__ == "__main__":
         c = check_path(r)
         print(f"{name:22s} cost ${r['cost']:,.0f}  L={L:,.1f} m  cells={len(rows)}  maxg={c['max_grade']:.2f}%  "
               f"turn<={c['max_turn_deg']}  run<={c['max_steep_run']:.1f}  adv={c['max_adverse_loaded']:.2f}  "
-              f"dg={c['max_grade_change']:.2f}  tan>={c['min_tangent']:.1f}  {xing(rows)}  "
+              f"dg={c['max_grade_change']:.2f}  tan>={c['min_tangent']:.1f}  zrun={c['max_zone_run']:.1f}  "
+              f"gate={'Y' if c['gate_ok'] else 'n'}  {xing(rows)}  "
               f"Nmax={max(x['northing'] for x in rows):.0f}")

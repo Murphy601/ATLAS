@@ -1,0 +1,9 @@
+{
+ "plateau_ft": 1500.0,
+ "plateau_grass_cost": 1300.0,
+ "zone_n_min": 3349600.0,
+ "zone_n_max": 3349800.0,
+ "zone_run_max": 30.0,
+ "gate_moves": 4,
+ "gate_heading": 6
+}
