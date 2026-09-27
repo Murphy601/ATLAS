@@ -1,4 +1,4 @@
-"""Synthetic site definition for the Cedar Bluff haul road task (Rev C).
+"""Synthetic site definition for the Cedar Bluff haul road task (Rev D).
 
 All geometry is authored here from analytic functions; nothing is derived
 from third-party data.  Local coordinates: x east, y north, metres, origin at
@@ -41,6 +41,17 @@ FORMATION_WIDTH = 14.0          # limit of road, 7.0 m each side of the centreli
 STEEP_GRADE = 8.0               # moves steeper than this count towards a sustained run
 STEEP_RUN_MAX = 60.0            # max horizontal length of a sustained run
 MAX_DEFLECTION_DEG = 45.0       # max change of travel direction between consecutive moves
+# C-004 (Rev D) additions
+ROLLING_RESISTANCE = 3.0        # percent, haul road surface
+EFF_ADVERSE_MAX = 9.0           # loaded, grade resistance + rolling resistance
+ADVERSE_MAX = EFF_ADVERSE_MAX - ROLLING_RESISTANCE   # 6.0 % actual grade, loaded uphill
+MIN_K = 1.4                     # m of horizontal length per 1 % algebraic grade change
+MIN_RADIUS = 45.0               # m, horizontal curve at every deflection vertex
+HAUL_RISE_COST = 8000.0         # USD per m of vertical rise climbed by loaded trucks (PV, 20 yr)
+HAUL_EFF_THRESHOLD = 4.0        # charged only on moves whose loaded effective grade exceeds this
+LOADED_DIRECTION = "G1 -> T1"
+G1_REVD_UTM = (586454.9, 3350102.5)   # re-surveyed gate; published in EPSG:2277 surface coordinates only
+G1_SAF = 1.00012                      # TxDOT surface adjustment factor: surface = grid x SAF about (0, 0)
 
 # escarpment (Cedar Bluff) geometry, local metres
 ESC_H = 45.0
@@ -217,7 +228,7 @@ def _clear_threshold_bands(dn, band=0.02):
             b = dn[di:ny, j0 + dj:j1 + dj]
             g = np.abs(b - a) * step_m / L * 100.0
             bad = np.zeros(g.shape, bool)
-            for t in (STEEP_GRADE, MAX_GRADE):
+            for t in (HAUL_EFF_THRESHOLD - ROLLING_RESISTANCE, ADVERSE_MAX, STEEP_GRADE, MAX_GRADE):
                 bad |= (g > t) & (g <= t + band)
             for i, j in zip(*np.nonzero(bad)):
                 ia, ja, ib, jb = i, j + j0, i + di, j + j0 + dj

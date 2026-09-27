@@ -98,10 +98,6 @@
    30.2707418,
    -98.1355013
   ],
-  "END": [
-   30.2814772,
-   -98.1024981
-  ],
   "X1": [
    30.2851604,
    -98.1225516
@@ -113,6 +109,24 @@
   "HERITAGE": [
    30.2804614,
    -98.1056944
+  ],
+  "END_REVC": [
+   30.2814772,
+   -98.1024981
   ]
- }
+ },
+ "rolling_resistance": 3.0,
+ "eff_adverse_max": 9.0,
+ "adverse_max": 6.0,
+ "min_k": 1.4,
+ "min_radius": 45.0,
+ "haul_rise_cost": 8000.0,
+ "haul_eff_threshold": 4.0,
+ "loaded_direction": "G1 -> T1",
+ "g1_spcs_epsg": 2277,
+ "g1_surface_ftus": [
+  3001506.17,
+  10073679.76
+ ],
+ "g1_saf": 1.00012
 }

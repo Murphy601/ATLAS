@@ -96,6 +96,15 @@ def build_cost(opts):
     z, lcd, EX, EY, lc_native = load(opts)
     to_utm = Transformer.from_crs(4326, b["epsg"], always_xy=True)
     pts = {k: to_utm.transform(v[1], v[0]) for k, v in b["points_latlon"].items()}
+    e_ft, n_ft = b["g1_surface_ftus"]
+    if not opts.get("end_nosaf"):
+        e_ft, n_ft = e_ft / b["g1_saf"], n_ft / b["g1_saf"]
+    if opts.get("end_intl"):
+        pts["END"] = Transformer.from_crs(32139, b["epsg"], always_xy=True).transform(e_ft * 0.3048, n_ft * 0.3048)
+    elif opts.get("end_revc"):
+        pts["END"] = pts["END_REVC"]
+    else:
+        pts["END"] = Transformer.from_crs(b["g1_spcs_epsg"], b["epsg"], always_xy=True).transform(e_ft, n_ft)
     base = np.full(z.shape, np.nan)
     for c, info in b["classes"].items():
         if info["cost"] is not None:
@@ -157,17 +166,33 @@ def cell_of(pt):
 
 @nb.njit(cache=True)
 def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, sustain_on, nxt, nrun,
-              si, sj, ei, ej, rev_order):
+              si, sj, ei, ej, rev_order, adv_mode, adv_max, vc_k, vc_flat, tan_mid, tan_end, TS, F, haul_c, haul_thr):
+    """State = (cell, heading of last move or 8 at start, steep-run state, tangent counter).
+
+    adv_mode: 0 off, 1 adverse-loaded limit on moves falling in chainage direction (loaded
+    trucks travel END -> START), -1 same limit on rising moves, 2 limit on |grade|.
+    vc_k: minimum K (m per % grade change); consecutive moves may differ in grade by at most
+    (L1 + L2) / 2 / K.  vc_flat: flat limit on the grade change instead.  <= 0 disables.
+    Tangent counter: 0..TS = moves since the last deflection vertex (TS saturated); TS+1+k =
+    k moves on the first tangent from the start (k saturates at F).  tan_mid is the minimum
+    distance between successive deflection vertices, tan_end between the start (or end) and
+    the nearest deflection vertex.  tan_mid <= 0 disables (TS = F = 0).
+    haul_c: USD per metre of rise climbed by loaded trucks (END -> START), i.e. charged on moves
+    that fall in chainage direction by more than haul_thr percent; a negative value charges rising
+    moves instead.
+    """
     ny, nx = z.shape
     NH = 9
-    nstate = ny * nx * NH * nrun
+    tan_on = tan_mid > 0.0
+    ntan = TS + F + 2 if tan_on else 1
+    nstate = ny * nx * NH * nrun * ntan
     dist = np.full(nstate, np.inf)
-    prev = np.full(nstate, -1, np.int64)
-    cap = 1 << 22
+    prev = np.full(nstate, -1, np.int32)
+    cap = 1 << 25
     hk = np.empty(cap, np.float64)
     hv = np.empty(cap, np.int64)
     n = 0
-    s0 = ((si * nx + sj) * NH + 8) * nrun
+    s0 = (((si * nx + sj) * NH + 8) * nrun) * ntan + (TS + 1 if tan_on else 0)
     dist[s0] = 0.0
     hk[0] = 0.0; hv[0] = s0; n = 1
     best_end = -1
@@ -189,15 +214,22 @@ def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, susta
             hk[p] = k; hv[p] = v
         if dcur > dist[s]:
             continue
-        r = s % nrun
-        t = s // nrun
+        tc = s % ntan
+        u = s // ntan
+        r = u % nrun
+        t = u // nrun
         hd = t % NH
         cidx = t // NH
         i = cidx // nx
         j = cidx % nx
         if i == ei and j == ej:
-            best_end = s
-            break
+            if not tan_on or tc > TS or tc == TS or tc * dlen[hd] * cell >= tan_end - 1e-9:
+                best_end = s
+                break
+        g_last = 0.0
+        if hd != 8:
+            pi = i - dirs[hd, 0]; pj = j - dirs[hd, 1]
+            g_last = (z[i, j] - z[pi, pj]) / (dlen[hd] * cell) * 100.0
         for q in range(8):
             h = 7 - q if rev_order else q
             if not move_ok[i, j, h]:
@@ -206,13 +238,43 @@ def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, susta
                 dd = (h - hd) % 8
                 if dd != 0 and dd != 1 and dd != 7:
                     continue
+            ntc = 0
+            if tan_on:
+                if hd == 8:
+                    ntc = TS + 1 + min(1, F)
+                elif tc > TS:
+                    k = tc - TS - 1
+                    if h == hd:
+                        ntc = TS + 1 + min(k + 1, F)
+                    else:
+                        if k < F and k * dlen[hd] * cell < tan_end - 1e-9:
+                            continue
+                        ntc = 1
+                elif h == hd:
+                    ntc = min(tc + 1, TS)
+                else:
+                    if tc < TS and tc * dlen[hd] * cell < tan_mid - 1e-9:
+                        continue
+                    ntc = 1
             a = i + dirs[h, 0]; bq = j + dirs[h, 1]
             if np.isnan(base[a, bq]):
                 continue
             L = dlen[h] * cell
-            g = abs(z[a, bq] - z[i, j]) / L * 100.0
+            gs = (z[a, bq] - z[i, j]) / L * 100.0
+            g = abs(gs)
             if g > max_g:
                 continue
+            if adv_mode == 1 and -gs > adv_max:
+                continue
+            if adv_mode == -1 and gs > adv_max:
+                continue
+            if adv_mode == 2 and g > adv_max:
+                continue
+            if hd != 8:
+                if vc_k > 0.0 and abs(gs - g_last) > (dlen[hd] + dlen[h]) * cell / 2.0 / vc_k:
+                    continue
+                if vc_flat > 0.0 and abs(gs - g_last) > vc_flat:
+                    continue
             nr = 0
             if sustain_on and g > steep_g:
                 nr = nxt[r, 1 if h % 2 == 1 else 0]
@@ -225,8 +287,11 @@ def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, susta
             else:
                 f = 1.15 + 0.12 * (g - 6.0)
             nd = dcur + L * (base[i, j] + base[a, bq]) / 2.0 * f
-            nh = h if turn_on else 0
-            ns = ((a * nx + bq) * NH + nh) * nrun + nr
+            if haul_c > 0.0 and -gs > haul_thr:
+                nd += haul_c * (z[i, j] - z[a, bq])
+            elif haul_c < 0.0 and gs > haul_thr:
+                nd += -haul_c * (z[a, bq] - z[i, j])
+            ns = (((a * nx + bq) * NH + h) * nrun + nr) * ntan + ntc
             if nd < dist[ns]:
                 dist[ns] = nd
                 prev[ns] = s
@@ -243,6 +308,21 @@ def _dijkstra(z, base, move_ok, dirs, dlen, cell, max_g, steep_g, turn_on, susta
     return best_end, dist, prev
 
 
+def tangent_lengths(R, opts=None):
+    """Minimum straight lengths implied by a minimum curve radius R at 45 deg deflections:
+    between successive deflection vertices 2 R tan(22.5 deg), and R tan(22.5 deg) between the
+    start / end cell and the nearest deflection vertex."""
+    opts = opts or {}
+    if R <= 0:
+        return 0.0, 0.0
+    T = R * np.tan(np.radians(22.5))
+    if opts.get("tan_no_ends"):
+        return 2 * T, 0.0
+    if opts.get("tan_single"):
+        return T, T
+    return 2 * T, T
+
+
 def solve(opts=None):
     opts = opts or {}
     b = BRIEF
@@ -252,21 +332,44 @@ def solve(opts=None):
     turn_on = not opts.get("no_turn")
     sustain_on = not opts.get("no_sustain")
     nrun = len(st) if sustain_on else 1
+    adv_max = opts.get("adv_max", b.get("adverse_max", 0.0))
+    adv_mode = 0 if (opts.get("no_adverse") or not adv_max) else (
+        -1 if opts.get("adv_flip") else 2 if opts.get("adv_abs") else 1)
+    vc_k = 0.0 if opts.get("no_vc") else opts.get("vc_k", b.get("min_k", 0.0))
+    vc_flat = opts.get("vc_flat", 0.0)
+    if vc_flat:
+        vc_k = 0.0
+    haul_c = 0.0 if opts.get("no_haul") else opts.get("haul_c", b.get("haul_rise_cost", 0.0))
+    if opts.get("haul_flip"):
+        haul_c = -haul_c
+    haul_thr = opts.get("haul_thr", b.get("haul_eff_threshold", 0.0) - b.get("rolling_resistance", 0.0)
+                        if b.get("haul_eff_threshold") else 0.0)
+    if opts.get("haul_no_rr"):
+        haul_thr = b["haul_eff_threshold"]
+    if opts.get("haul_linear"):
+        haul_thr = 0.0
+    R = 0.0 if opts.get("no_tangent") else opts.get("radius", b.get("min_radius", 0.0))
+    tan_mid, tan_end = tangent_lengths(R, opts)
+    TS = int(np.ceil(tan_mid / b["dem_cell"] - 1e-9)) if tan_mid > 0 else 0
+    F = int(np.ceil(tan_end / b["dem_cell"] - 1e-9)) if tan_mid > 0 else 0
     si, sj = cell_of(pts["START"])
     ei, ej = cell_of(pts["END"])
     end, dist, prev = _dijkstra(z, base, move_ok, DIRS, DLEN, b["dem_cell"], b["max_grade"], b["steep_grade"],
-                                turn_on, sustain_on, nxt, nrun, si, sj, ei, ej, bool(opts.get("rev_order")))
+                                turn_on, sustain_on, nxt, nrun, si, sj, ei, ej, bool(opts.get("rev_order")),
+                                adv_mode, float(adv_max), float(vc_k), float(vc_flat), float(tan_mid),
+                                float(tan_end), TS, F, float(haul_c), float(haul_thr))
     if end < 0:
         return None
     path = []
     s = end
+    ntan = TS + F + 2 if tan_mid > 0 else 1
     while s != -1:
-        c = (s // nrun) // 9
+        c = ((s // ntan) // nrun) // 9
         path.append((int(c // nx), int(c % nx)))
         s = prev[s]
     path.reverse()
     return dict(z=z, lcd=lcd, EX=EX, EY=EY, base=base, pts=pts, path=path, cost=float(dist[end]),
-                move_ok=move_ok)
+                move_ok=move_ok, haul_c=float(haul_c), haul_thr=float(haul_thr))
 
 
 def summarise(res):
@@ -276,6 +379,7 @@ def summarise(res):
     rows = []
     ch = 0.0
     cum = 0.0
+    hcum = 0.0
     for k, (i, j) in enumerate(path):
         e, n = res["EX"][i, j], res["EY"][i, j]
         if k < len(path) - 1:
@@ -283,13 +387,16 @@ def summarise(res):
             dd = np.hypot(a - i, bq - j) * cell
             g = (z[a, bq] - z[i, j]) / dd * 100.0
             seg = dd * (res["base"][i, j] + res["base"][a, bq]) / 2 * grade_factor(abs(g))
+            hc, ht = res.get("haul_c", 0.0), res.get("haul_thr", 0.0)
+            hl = hc * (z[i, j] - z[a, bq]) if hc > 0 and -g > ht else (-hc * (z[a, bq] - z[i, j]) if hc < 0 and g > ht else 0.0)
         else:
-            dd, g, seg = 0.0, float("nan"), 0.0
+            dd, g, seg, hl = 0.0, float("nan"), 0.0, 0.0
         rows.append(dict(seq=k + 1, easting=e, northing=n, elev_m=z[i, j], chainage_m=ch,
                          grade_pct=g, landcover=b["classes"][str(lcd[i, j])]["name"],
-                         cum_cost_usd=cum))
+                         cum_constr_usd=cum, cum_haul_usd=hcum, cum_cost_usd=cum + hcum))
         ch += dd
         cum += seg
+        hcum += hl
     return rows, ch
 
 
@@ -305,7 +412,19 @@ def check_path(res, opts=None):
     for gg, h in zip(g, hd):
         run = run + b["dem_cell"] * DLEN[h] if abs(gg) > b["steep_grade"] else 0.0
         run_max = max(run_max, run)
-    return dict(max_grade=float(np.abs(g).max()), max_turn_deg=45 * max(turns), max_steep_run=run_max)
+    # deflection vertices = interior vertices where the heading changes
+    defl = [k + 1 for k in range(len(hd) - 1) if hd[k] != hd[k + 1]]
+    ch = np.concatenate([[0.0], np.cumsum([b["dem_cell"] * DLEN[h] for h in hd])])
+    tans = [ch[q] - ch[p] for p, q in zip(defl[:-1], defl[1:])]
+    Ls = np.array([b["dem_cell"] * DLEN[h] for h in hd])
+    dg = np.abs(np.diff(g))
+    kk = (Ls[:-1] + Ls[1:]) / 2 / np.maximum(dg, 1e-12)
+    return dict(max_grade=float(np.abs(g).max()), max_turn_deg=45 * max(turns), max_steep_run=run_max,
+                max_adverse_loaded=float(max(0.0, (-g).max())), max_rise=float(g.max()),
+                max_grade_change=float(dg.max()), min_k=float(kk.min()),
+                min_tangent=float(min(tans)) if tans else float("inf"), n_deflections=len(defl),
+                start_tangent=float(ch[defl[0]]) if defl else float("inf"),
+                end_tangent=float(ch[-1] - ch[defl[-1]]) if defl else float("inf"))
 
 
 def clearances(res):
@@ -334,19 +453,35 @@ def xing(rows):
 
 VARIANTS = {
     "golden": {},
+    # Rev D levers
+    "no_adverse": {"no_adverse": True},           # also the 9 % effective limit read as grade
+    "adv_flip": {"adv_flip": True},               # adverse limit applied to chainage-rising moves
+    "adv_abs": {"adv_abs": True},                 # 6 % applied in both directions
+    "no_vc": {"no_vc": True},
+    "vc_flat_orth": {"vc_flat": 10.0 / 1.4},      # K applied with L = 10 m for every pair
+    "vc_flat_diag": {"vc_flat": 10.0 * SQ2 / 1.4},
+    "no_radius": {"no_tangent": True},
+    "radius_single": {"tan_single": True},        # R tan(22.5) between deflections
+    "radius_no_ends": {"tan_no_ends": True},
+    "no_haul": {"no_haul": True},                 # construction cost only
+    "haul_flip": {"haul_flip": True},             # rise charged in chainage direction
+    "haul_no_rr": {"haul_no_rr": True},           # 4.0 % threshold read as grade, not effective grade
+    "haul_linear": {"haul_linear": True},         # every loaded rise charged (threshold ignored)
+    "end_revc": {"end_revc": True},               # superseded Rev C gate
+    "end_intl": {"end_intl": True},               # EPSG:2277 read as international feet
+    "end_nosaf": {"end_nosaf": True},             # surface coordinates used as grid (SAF ignored)
+    "revC_rules": {"no_adverse": True, "no_vc": True, "no_tangent": True, "no_haul": True, "end_revc": True},
+    # Rev C levers (with Rev D rules on)
     "no_width": {"no_width": True},
     "no_turn": {"no_turn": True},
     "no_sustain": {"no_sustain": True},
-    "no_turn_no_sustain": {"no_turn": True, "no_sustain": True},
-    "no_width_no_turn": {"no_width": True, "no_turn": True},
-    "no_width_no_sustain": {"no_width": True, "no_sustain": True},
-    "revB_only": {"no_width": True, "no_turn": True, "no_sustain": True},
-    "vertex_only": {"vertex_only": True},
-    "intl_ft": {"intl_ft": True},
-    "rev_order": {"rev_order": True},
     "no_setback": {"no_setback": True},
     "no_heritage": {"no_heritage": True},
     "only_X1": {"drop_X2": True},
+    # robustness
+    "intl_ft_dem": {"intl_ft": True},
+    "vertex_only": {"vertex_only": True},
+    "rev_order": {"rev_order": True},
 }
 
 
@@ -360,5 +495,6 @@ if __name__ == "__main__":
         rows, L = summarise(r)
         c = check_path(r)
         print(f"{name:22s} cost ${r['cost']:,.0f}  L={L:,.1f} m  cells={len(rows)}  maxg={c['max_grade']:.2f}%  "
-              f"turn<={c['max_turn_deg']}  run<={c['max_steep_run']:.1f}  {xing(rows)}  "
+              f"turn<={c['max_turn_deg']}  run<={c['max_steep_run']:.1f}  adv={c['max_adverse_loaded']:.2f}  "
+              f"dg={c['max_grade_change']:.2f}  tan>={c['min_tangent']:.1f}  {xing(rows)}  "
               f"Nmax={max(x['northing'] for x in rows):.0f}")

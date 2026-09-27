@@ -31,6 +31,9 @@ def main():
     for k, (e, n) in S.PTS_UTM.items():
         lon, lat = to_ll.transform(e, n)
         pts[k] = [round(lat, 7), round(lon, 7)]
+    pts["END_REVC"] = pts.pop("END")
+    t_spcs = Transformer.from_crs(S.EPSG, 2277, always_xy=True)
+    g1_ft = [round(v * S.G1_SAF, 2) for v in t_spcs.transform(*S.G1_REVD_UTM)]
     brief = dict(
         epsg=S.EPSG, dem_file=DEM_FILE, lc_file=LC_FILE,
         dem_ul_e=S.DEM_UL_E, dem_ul_n=S.DEM_UL_N, dem_cell=S.DEM_CELL,
@@ -41,10 +44,12 @@ def main():
         wetland_setback=S.WETLAND_SETBACK, heritage_radius=S.HERITAGE_RADIUS,
         max_grade=S.MAX_GRADE, formation_width=S.FORMATION_WIDTH, steep_grade=S.STEEP_GRADE,
         steep_run_max=S.STEEP_RUN_MAX, max_deflection_deg=S.MAX_DEFLECTION_DEG, points_latlon=pts,
+        rolling_resistance=S.ROLLING_RESISTANCE, eff_adverse_max=S.EFF_ADVERSE_MAX, adverse_max=S.ADVERSE_MAX,
+        min_k=S.MIN_K, min_radius=S.MIN_RADIUS, haul_rise_cost=S.HAUL_RISE_COST, haul_eff_threshold=S.HAUL_EFF_THRESHOLD,
+        loaded_direction=S.LOADED_DIRECTION, g1_spcs_epsg=2277, g1_surface_ftus=g1_ft, g1_saf=S.G1_SAF,
     )
     (WORK / "brief_values.json").write_text(json.dumps(brief, indent=1))
     print(json.dumps(pts, indent=1))
-    z = S.terrain_m(0, 0)
     print("DN range", dn.min(), dn.max())
 
 

@@ -1,0 +1,17 @@
+items 58 {9: 10, 7: 11, 5: 14, 3: 2, 1: 17, -3: 1, -5: 2, -7: 1} positive total 260
+A  C-004 not applied (Rev C rules, Rev C gate)             6.5%  lost: R1 R2 R3 R4 R5 R6 R7 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C1 C2 C3 S3 S4 S5 S6 S7
+B  all but D6 radius (curves treated as out of scope)     39.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P5 P6 P11 P12 P13 R20 R21 R22 R23 R24 R13 R14 R15 C3 S4
+C  D6 as R tan(22.5) between deflections                  26.9%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P5 P6 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C3 S4
+D  all but D7 haulage (construction cost only)            38.1%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P7 P8 P9 P10 P11 R20 R21 R22 R23 R24 R12 R13 R14 R15 S6
+E  all but D5 vertical curvature                          59.6%  lost: R1 R2 R4 R5 R6 P3 P4 P5 P6 R20 R22 R23 R13 C2 S5
+F  D3 9.0 % read as grade limit                           43.1%  lost: R1 R2 R3 R4 R6 P1 P2 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C1 S3
+G  G1 from superseded C-002 Table 3                       52.7%  lost: R1 R2 R3 R4 R5 R7 P7 P8 P9 P10 P11 P12 P13 R20 R24 R13 S7
+H  G1 surface coordinates used as grid (SAF ignored)      50.0%  lost: R1 R2 R3 R4 R5 R6 R7 P7 P8 P9 P10 P11 P12 P13 R20 R24 R13 S7
+H2 EPSG:2277 read as international feet                   50.0%  lost: R1 R2 R3 R4 R5 R6 R7 P7 P8 P9 P10 P11 P12 P13 R20 R24 R13 S7
+I  D7 rise charged in chainage direction                  48.1%  lost: R1 R2 R3 R4 R6 P1 P2 P3 P7 P8 P9 P10 R20 R21 R22 R23 R24 R15 S6
+L  D7 threshold read as 4.0 % grade (rolling resistance dropped)  34.2%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 S6
+M  D7 threshold ignored (every loaded rise charged)       57.3%  lost: R1 R2 R3 R6 P1 P2 P7 P8 P9 P10 R20 R21 R22 R24 S6
+N  'effective grade' misread twice (D3 and D7 without rolling resistance)  29.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P7 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R12 R13 R14 R15 C1 S3 S6
+J  D5 and D6 both missed (geometry treated as out of scope)  30.4%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P3 P4 P5 P6 P11 P12 P13 R20 R21 R22 R23 R24 R13 R14 R15 C2 C3 S4 S5
+K  D6 and D7 both missed                                  29.6%  lost: R1 R2 R3 R4 R5 R6 P1 P2 P5 P6 P8 P9 P10 P11 P12 P13 R20 R21 R22 R23 R24 R13 R14 R15 C3 S4 S6
+mean 39.7%

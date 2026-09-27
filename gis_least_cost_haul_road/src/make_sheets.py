@@ -1,4 +1,4 @@
-"""Render drawing sheets C-001 / C-002 as raster images and embed them in a PDF."""
+"""Render drawing sheets C-001 to C-004 (Rev D) as raster images and embed them in an image-only PDF."""
 import json
 from pathlib import Path
 
@@ -38,24 +38,27 @@ def title_block(fig, sheet, name):
         line(t, 12, "bold", 0.028)
     y -= 0.02
     line("REVISIONS", 8, "bold", 0.025)
-    line("A  2026-08-03  Issued for route study", 9, dy=0.022)
-    line("B  2026-09-14  Woodland clearing rate", 9, dy=0.018)
-    line("                   revised (C-002 Table 2)", 9, dy=0.022)
-    line("C  2026-09-24  Plant gate G1 relocated;", 9, dy=0.018)
-    line("                   haul truck criteria and", 9, dy=0.018)
-    line("                   typical section added", 9, dy=0.018)
-    line("                   (Sheet C-003)", 9, dy=0.03)
-    line("Rev C supersedes Rev B in full.", 9, "bold", 0.04)
+    line("A  2026-08-03  Issued for route study", 8.5, dy=0.02)
+    line("B  2026-09-14  Woodland clearing rate", 8.5, dy=0.016)
+    line("                   revised (C-002 Table 2)", 8.5, dy=0.02)
+    line("C  2026-09-24  Plant gate G1 relocated;", 8.5, dy=0.016)
+    line("                   haul truck criteria and", 8.5, dy=0.016)
+    line("                   typical section (C-003)", 8.5, dy=0.02)
+    line("D  2026-09-26  G1 re-surveyed; loaded", 8.5, dy=0.016)
+    line("                   haul, curve geometry and", 8.5, dy=0.016)
+    line("                   life-cycle cost basis", 8.5, dy=0.016)
+    line("                   added (Sheet C-004)", 8.5, dy=0.024)
+    line("Rev D supersedes Rev C in full.", 9, "bold", 0.035)
     line("Horizontal: WGS 84 / UTM zone 14N", 9, dy=0.02)
     line("(EPSG:32614), metres", 9, dy=0.025)
-    line("Vertical: NAVD 88, US survey feet", 9, dy=0.05)
+    line("Vertical: NAVD 88, US survey feet", 9, dy=0.04)
     line("NOT FOR CONSTRUCTION", 12, "bold", 0.06)
     ax.plot([0, 1], [0.16, 0.16], "k", lw=1)
     ax.text(0.05, 0.14, "SHEET", fontsize=8, weight="bold", va="top")
     ax.text(0.05, 0.11, sheet, fontsize=30, weight="bold", va="top")
     ax.text(0.62, 0.14, "REV", fontsize=8, weight="bold", va="top")
-    ax.text(0.62, 0.11, "C", fontsize=30, weight="bold", va="top")
-    ax.text(0.05, 0.035, "Drawn: R.O.  Checked: J.M.  Date: 2026-09-24", fontsize=8)
+    ax.text(0.62, 0.11, "D", fontsize=30, weight="bold", va="top")
+    ax.text(0.05, 0.035, "Drawn: R.O.  Checked: J.M.  Date: 2026-09-26", fontsize=8)
 
 
 def hillshade(z, cell, az=315, alt=45):
@@ -89,6 +92,7 @@ def sheet1(path):
 
     to_utm = Transformer.from_crs(4326, B["epsg"], always_xy=True)
     P = {k: to_utm.transform(v[1], v[0]) for k, v in B["points_latlon"].items()}
+    P["END"] = P.pop("END_REVC")
     # indicative 2025 desk-study route (superseded)
     ind = [P["START"], (583420, 3349390), (583760, 3349700), (583980, 3350260), (584060, 3350600),
            (584180, 3350760), P["X1"], (584700, 3350700), (585250, 3350505), (585900, 3350505),
@@ -101,7 +105,7 @@ def sheet1(path):
     # county road
     ax.plot([583000, 583000], [3348700, 3351500], color="k", lw=4, solid_capstyle="butt")
     ax.text(583030, 3348760, "COUNTY ROAD CR-114 (EXISTING PAVED)", rotation=90, fontsize=8, weight="bold", va="bottom")
-    sym = dict(START=("s", "TIE-IN T1\n(CR-114)"), END=("s", "QUARRY PLANT\nGATE G1"),
+    sym = dict(START=("s", "TIE-IN T1\n(CR-114)"), END=("s", "QUARRY PLANT\nGATE G1 (SEE C-004)"),
                X1=("D", "APPROVED CROSSING\nWINDOW X-1"), X2=("D", "APPROVED CROSSING\nWINDOW X-2"),
                HERITAGE=("*", "HERITAGE SITE HS-1\n(SYMBOL NOT TO SCALE)"))
     offs = dict(START=(40, 60), END=(-420, 90), X1=(60, 40), X2=(60, -120), HERITAGE=(60, -140))
@@ -172,7 +176,7 @@ def sheet2(path):
         ["Value", "Elevation = 1150.00 + 0.01 x DN  (US survey feet, NAVD 88)", "Exact RGB triplet = class (no anti-aliasing)"],
     ], [0.15, 0.40, 0.40], size=9)
 
-    ax.text(0.0, y - 0.012, "TABLE 2 - LAND-COVER CLASSES AND BASE UNIT RATES (REV B, UNCHANGED AT REV C)", fontsize=11, weight="bold", va="top")
+    ax.text(0.0, y - 0.012, "TABLE 2 - LAND-COVER CLASSES AND BASE UNIT RATES (REV B, UNCHANGED AT REV C AND REV D)", fontsize=11, weight="bold", va="top")
     rows = []
     for c in sorted(B["classes"]):
         info = B["classes"][c]
@@ -189,11 +193,13 @@ def sheet2(path):
               [0.06, 0.29, 0.13, 0.47], size=9)
 
     ax.text(0.0, y - 0.012, "TABLE 3 - CONTROL POINTS (WGS 84 geographic, decimal degrees)", fontsize=11, weight="bold", va="top")
-    lab = dict(START="T1  Tie-in to CR-114 (route start)", END="G1  Quarry plant gate (route end)",
+    lab = dict(START="T1  Tie-in to CR-114 (route start)",
+               END_REVC="G1  Quarry plant gate (route end) - REV C VALUE, SUPERSEDED: SEE C-004 TABLE 6",
                X1="X-1  Approved crossing window centre", X2="X-2  Approved crossing window centre",
                HERITAGE="HS-1  Heritage site (recorded point)")
-    rows = [[lab[k], f"{v[0]:.7f}", f"{v[1]:.7f}"] for k, v in B["points_latlon"].items()]
-    y = table(ax, 0.0, y - 0.027, ["Point", "Latitude", "Longitude"], rows, [0.45, 0.2, 0.2], size=9)
+    order = ["START", "END_REVC", "X1", "X2", "HERITAGE"]
+    rows = [[lab[k], f"{B['points_latlon'][k][0]:.7f}", f"{B['points_latlon'][k][1]:.7f}"] for k in order]
+    y = table(ax, 0.0, y - 0.027, ["Point", "Latitude", "Longitude"], rows, [0.55, 0.15, 0.15], size=9)
 
     notes = [
         "NOTES",
@@ -205,7 +211,7 @@ def sheet2(path):
         "5. Heritage site HS-1: exclusion zone of radius 150.0 m about the recorded point (Texas Historical Commission consultation, 2026).",
         "6. Maximum grade 10.0 percent for loaded 40 t haul trucks, in either direction of travel.",
         "7. The indicative route on C-001 is from a 2025 desk study that pre-dates the LiDAR, the land-cover survey and Notes 3 to 5.",
-        "8. Haul truck operating criteria and the road typical section are on Sheet C-003. Where C-003 and these notes differ, C-003 governs.",
+        "8. Haul truck criteria: Sheets C-003 and C-004. Precedence where sheets differ: C-004, then C-003, then this sheet.",
     ]
     yy = y - 0.02
     for i, t in enumerate(notes):
@@ -290,15 +296,71 @@ def sheet3(path):
     plt.close(fig)
 
 
+def sheet4(path):
+    fig = plt.figure(figsize=(W_IN, H_IN), dpi=DPI)
+    fig.add_artist(Rectangle((0.005, 0.005), 0.99, 0.99, fill=False, lw=2.5, transform=fig.transFigure))
+    ax0 = fig.add_axes([0.02, 0.02, 0.77, 0.96]); ax0.axis("off"); ax0.set_xlim(0, 1); ax0.set_ylim(0, 1)
+    ax0.text(0.0, 0.985, "LOADED HAUL, ROUTE GEOMETRY AND LIFE-CYCLE COST BASIS  (REV D)", fontsize=15, weight="bold", va="top")
+    ax0.text(0.0, 0.948, "TABLE 5 - ADDITIONAL ROUTE SCREENING CRITERIA (APPLY WITH C-003 TABLE 4)", fontsize=11, weight="bold", va="top")
+    y = table(ax0, 0.0, 0.933, ["Ref", "Criterion", "Value", "Definition / application"], [
+        ["D1", "Direction of loaded travel", "G1 to T1", "Product leaves the plant gate loaded and is hauled to CR-114; trucks return empty"],
+        ["D2", "Rolling resistance, running surface", "3.0 %", "Section A-A crushed limestone surface - applies to every move of the route"],
+        ["D3", "Max. effective grade, loaded uphill", "9.0 %", "Effective grade = grade resistance + rolling resistance, loaded direction (D1)"],
+        ["D4", "Max. grade, loaded downhill / empty", "T1", "C-003 Table 4 T1 (10.0 %) - unchanged"],
+        ["D5", "Min. rate of vertical curvature  K", "1.4 m/%", "K = L / A  (m per 1 % grade change) for every pair of consecutive moves; A = algebraic"],
+        ["", "", "", "   difference of the two grades (%); L = distance along the centreline between the two move midpoints"],
+        ["D6", "Min. horizontal curve radius  R", "45.0 m", "A circular arc of radius R is fitted at every deflection vertex, tangent to both moves;"],
+        ["", "", "", "   arcs may not overlap and may not extend past the start or end cell centre (Note D3)"],
+        ["D7", "Loaded haulage cost (PV, 20-year life)", f"{B['haul_rise_cost']:,.0f} /m", "USD per metre of vertical rise climbed by loaded trucks (D1), charged only on moves whose"],
+        ["", "", "", f"   effective grade (as D3) exceeds {B['haul_eff_threshold']:.1f} % (top-gear range); falls are not credited"],
+    ], [0.04, 0.26, 0.09, 0.56], size=9)
+    y -= 0.012
+    ax0.text(0.0, y, "TABLE 6 - CONTROL POINT G1, RE-SURVEYED 2026-09-25 (SUPERSEDES C-002 TABLE 3 ROW G1)", fontsize=11, weight="bold", va="top")
+    e_ft, n_ft = B["g1_surface_ftus"]
+    y = table(ax0, 0.0, y - 0.015, ["Point", "CRS / coordinate type", "Easting", "Northing"], [
+        ["G1  Quarry plant gate (route end)", "NAD83 / Texas Central (ftUS), EPSG:2277 - TxDOT SURFACE", f"{e_ft:,.2f} ft", f"{n_ft:,.2f} ft"],
+        ["", f"Surface adjustment factor SAF = {B['g1_saf']:.5f}, scaled about grid origin (0, 0): grid = surface / SAF", "", ""],
+    ], [0.22, 0.47, 0.11, 0.11], size=9)
+    y -= 0.012
+    ax0.text(0.0, y, "TABLE 7 - REFERENCE VALUES (INFORMATION ONLY - NOT ROUTE CRITERIA)", fontsize=11, weight="bold", va="top")
+    y = table(ax0, 0.0, y - 0.015, ["Item", "Value", "Source"], [
+        ["Rolling resistance, in-pit ramps (not this road)", "2.0 %", "Mine plan 2025"],
+        ["Rolling resistance, unsurfaced haul road (not permitted)", "6.0 %", "Mine plan 2025"],
+        ["Haul truck minimum turning radius (outer front wheel)", "8.9 m", "Manufacturer data"],
+        ["Haulage cost per metre of fall, loaded (brake wear, info)", "450 USD", "Operator estimate - not in life-cycle basis"],
+        ["Top-gear effective grade limit, empty truck", "6.0 %", "Manufacturer data"],
+    ], [0.44, 0.09, 0.28], size=9)
+    notes = [
+        "NOTES",
+        "D1. The route to be selected minimises the TOTAL route cost = construction cost (C-002 Table 2 rates x grade factor, unchanged)",
+        "       + loaded haulage cost (Table 5 D7). Report both components and the total.",
+        "D2. Grades on long sections and in vertex schedules are signed in the direction of increasing chainage (T1 to G1). Criteria D3 and D7",
+        "       are defined in the loaded direction (D1), which is opposite to increasing chainage.",
+        "D3. A deflection vertex is an interior route vertex at which the direction of travel changes; on the 10 m grid each deflection is 45 deg",
+        "       (C-003 T4). The start and end cell centres are not deflection vertices. The arcs are a screening check only: costs, grades and",
+        "       clearances stay on the straight moves between cell centres.",
+        "D4. D5 applies to every pair of consecutive moves, including pairs meeting at a deflection vertex. It does not apply before the first move.",
+        "D5. Table 6 replaces the G1 latitude/longitude on C-002. C-001 still shows G1 at its Rev C position (presentation only).",
+        "D6. Where this sheet differs from C-002 or C-003 this sheet governs. C-003 Table 4 T1 to T4 remain in force.",
+    ]
+    yy = y - 0.022
+    for i, t in enumerate(notes):
+        ax0.text(0.0, yy, t, fontsize=9.5 if i else 11, weight="bold" if i == 0 else "normal", va="top")
+        yy -= 0.021
+    title_block(fig, "C-004", ["LOADED HAUL,", "GEOMETRY AND", "COST BASIS"])
+    fig.savefig(path, dpi=DPI)
+    plt.close(fig)
+
+
 def main():
     w = ROOT / "work"
-    p1, p2, p3 = w / "C-001.png", w / "C-002.png", w / "C-003.png"
-    sheet1(p1); sheet2(p2); sheet3(p3)
+    ps = [w / f"C-00{k}.png" for k in (1, 2, 3, 4)]
+    sheet1(ps[0]); sheet2(ps[1]); sheet3(ps[2]); sheet4(ps[3])
     for old in (ROOT / "inputs").glob("CB-HR-*.pdf"):
         old.unlink()
-    out = ROOT / "inputs" / "CB-HR-C001-C003_RevC.pdf"
+    out = ROOT / "inputs" / "CB-HR-C001-C004_RevD.pdf"
     c = canvas.Canvas(str(out), pagesize=landscape((11 * 72, 17 * 72)))
-    for p in (p1, p2, p3):
+    for p in ps:
         c.drawImage(str(p), 0, 0, width=17 * 72, height=11 * 72)
         c.showPage()
     c.save()
